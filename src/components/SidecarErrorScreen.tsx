@@ -11,7 +11,7 @@ interface Props {
  * connect button would be meaningless to show at all in this state. */
 export function SidecarErrorScreen({ message, onRetry }: Props) {
   return (
-    <div className="flex h-full min-h-svh flex-col items-center justify-center gap-4 p-6 text-center">
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
       <AlertTriangle size={40} className="text-status-error" />
       <h1 className="text-base font-medium text-foreground">
         Aether engine failed to start

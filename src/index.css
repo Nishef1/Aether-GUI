@@ -107,6 +107,13 @@
   body {
     @apply bg-background text-foreground;
     }
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    }
   html {
     @apply font-sans;
     }
@@ -115,12 +122,4 @@
 /* Radix's Collapsible exposes the measured content height as this CSS var
    specifically so height can be animated without JS measurement — no Motion
    dependency needed for this interaction (see LogsPanel.tsx). */
-@keyframes collapsible-down {
-  from { height: 0; }
-  to { height: var(--radix-collapsible-content-height); }
-}
-@keyframes collapsible-up {
-  from { height: var(--radix-collapsible-content-height); }
-  to { height: 0; }
-}
 

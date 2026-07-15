@@ -1,5 +1,6 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Glass } from "@samasante/liquid-glass";
 import { useConnectionStore } from "@/state/connectionStore";
 import type { ScanMode } from "@/types/connection";
 
@@ -28,14 +29,19 @@ export function ScanModeToggle() {
   const locked = status.state !== "Idle" && status.state !== "Error";
 
   return (
-    <ToggleGroup
+    <Glass
+      className="block w-full overflow-hidden rounded-full"
+      radius={999}
+      optics={{ curvature: 0.28, depth: 0.85, frost: 0.5, glow: 0.2, sheen: 0.7, strength: 0.08 }}
+    >
+      <ToggleGroup
       type="single"
       value={scanMode}
       onValueChange={(v) => {
         if (v) setScanMode(v as ScanMode);
       }}
       disabled={locked}
-      className="w-full gap-0 rounded-full bg-surface-2 p-1"
+      className="w-full gap-0 rounded-full bg-black/20 p-1"
     >
       {(Object.keys(LABELS) as ScanMode[]).map((mode) => (
         <Tooltip key={mode}>
@@ -48,7 +54,7 @@ export function ScanModeToggle() {
                 value={mode}
                 size="sm"
                 aria-label={LABELS[mode]}
-                className="w-full rounded-full text-muted-foreground data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                className="w-full rounded-full text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
               >
                 {LABELS[mode]}
               </ToggleGroupItem>
@@ -57,6 +63,7 @@ export function ScanModeToggle() {
           <TooltipContent>{DESCRIPTIONS[mode]}</TooltipContent>
         </Tooltip>
       ))}
-    </ToggleGroup>
+      </ToggleGroup>
+    </Glass>
   );
 }

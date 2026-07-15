@@ -17,6 +17,7 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@react-three/fiber": "^9.6.1",
     "@react-three/postprocessing": "^3.0.4",
+    "@samasante/liquid-glass": "^0.1.1",
     "@tailwindcss/vite": "^4",
     "@tauri-apps/api": "^2.11.1",
     "class-variance-authority": "^0.7.1",

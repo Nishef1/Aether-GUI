@@ -17,6 +17,7 @@
         "height": 640,
         "resizable": false,
         "center": true,
+        "decorations": false,
         "backgroundColor": "#0D0D0F"
       }
     ],

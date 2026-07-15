@@ -6,18 +6,19 @@ import { AdvancedPanel } from "@/components/AdvancedPanel";
 import { Backdrop } from "@/components/three/Backdrop";
 import { SidecarErrorScreen } from "@/components/SidecarErrorScreen";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { TitleBar } from "@/components/TitleBar";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
 
 const SCREEN_TRANSITION = {
-  initial: { opacity: 0, scale: 0.98 },
-  animate: { opacity: 1, scale: 1 },
-  exit: { opacity: 0, scale: 0.98 },
-  transition: { duration: 0.25, ease: [0.4, 0, 0.2, 1] as const },
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -4 },
+  transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] as const },
 };
 
 function MainScreen() {
   return (
-    <div className="relative z-10 flex h-svh flex-col items-center p-6">
+    <div className="relative z-10 flex h-full flex-col items-center p-6">
       <div className="flex flex-1 flex-col items-center justify-center gap-6">
         <ConnectButton />
         <ConnectionStatusLine />
@@ -42,25 +43,28 @@ export function App() {
   return (
     <TooltipProvider>
       <MotionConfig reducedMotion="user">
-        <div className="relative h-svh w-full overflow-hidden bg-background">
+        <div className="relative flex h-svh w-full flex-col overflow-hidden bg-background">
           <Backdrop />
-          <AnimatePresence mode="wait">
-            {sidecarError ? (
-              <motion.div key="error" className="relative z-10" {...SCREEN_TRANSITION}>
-                <SidecarErrorScreen
-                  message={sidecarError}
-                  onRetry={() => {
-                    retryAfterSidecarError();
-                    void connect();
-                  }}
-                />
-              </motion.div>
-            ) : (
-              <motion.div key="main" {...SCREEN_TRANSITION}>
-                <MainScreen />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <TitleBar />
+          <div className="relative min-h-0 flex-1">
+            <AnimatePresence mode="sync">
+              {sidecarError ? (
+                <motion.div key="error" className="absolute inset-0 z-10" {...SCREEN_TRANSITION}>
+                  <SidecarErrorScreen
+                    message={sidecarError}
+                    onRetry={() => {
+                      retryAfterSidecarError();
+                      void connect();
+                    }}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div key="main" className="absolute inset-0" {...SCREEN_TRANSITION}>
+                  <MainScreen />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </MotionConfig>
     </TooltipProvider>

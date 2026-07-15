@@ -1,4 +1,5 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Glass } from "@samasante/liquid-glass";
 import { useConnectionStore } from "@/state/connectionStore";
 import type { IpVersion } from "@/types/connection";
 
@@ -17,14 +18,19 @@ export function IpVersionToggle() {
   const locked = status.state !== "Idle" && status.state !== "Error";
 
   return (
-    <ToggleGroup
+    <Glass
+      className="block w-full overflow-hidden rounded-full"
+      radius={999}
+      optics={{ curvature: 0.28, depth: 0.85, frost: 0.5, glow: 0.2, sheen: 0.7, strength: 0.08 }}
+    >
+      <ToggleGroup
       type="single"
       value={ipVersion}
       onValueChange={(v) => {
         if (v) setIpVersion(v as IpVersion);
       }}
       disabled={locked}
-      className="w-full gap-0 rounded-full bg-surface-2 p-1"
+      className="w-full gap-0 rounded-full bg-black/20 p-1"
     >
       {(Object.keys(LABELS) as IpVersion[]).map((v) => (
         <ToggleGroupItem
@@ -32,11 +38,12 @@ export function IpVersionToggle() {
           value={v}
           size="sm"
           aria-label={LABELS[v]}
-          className="flex-1 rounded-full text-muted-foreground data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+          className="flex-1 rounded-full text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
         >
           {LABELS[v]}
         </ToggleGroupItem>
       ))}
-    </ToggleGroup>
+      </ToggleGroup>
+    </Glass>
   );
 }
