@@ -1,4 +1,4 @@
-use super::profiles::ScanMode;
+use super::profiles::{MasqueNoize, Protocol, ScanMode, WgNoize};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
@@ -17,18 +17,35 @@ pub fn port_is_live() -> bool {
     TcpStream::connect_timeout(&socks_addr(), Duration::from_millis(300)).is_ok()
 }
 
-/// Aether's own route-discovery budget varies by scan mode — turbo finishes
-/// in seconds, ironclad opens a real tunnel through every candidate and can
-/// run for minutes. Each timeout is set to Aether's typical budget for that
-/// mode plus a margin, so the GUI never kills a scan that's still working.
-pub fn connect_timeout(scan_mode: &ScanMode) -> Duration {
-    match scan_mode {
-        ScanMode::Turbo => Duration::from_secs(60),
-        ScanMode::Balanced => Duration::from_secs(150),
-        ScanMode::Thorough => Duration::from_secs(180),
-        ScanMode::Stealth => Duration::from_secs(180),
-        ScanMode::Ironclad => Duration::from_secs(240),
-    }
+/// Aether's own route-discovery budget varies by scan mode and obfuscation
+/// profile — ironclad opens a real tunnel through every candidate and heavier
+/// noize profiles add decoy traffic and inter-packet delays, both stretching
+/// the scan. The GUI's timeout must exceed the expected budget or it would
+/// kill Aether while it's still legitimately scanning.
+pub fn connect_timeout(scan_mode: &ScanMode, protocol: &Protocol, masque_noize: &MasqueNoize, wg_noize: &WgNoize) -> Duration {
+    let base = match scan_mode {
+        ScanMode::Turbo => 60u64,
+        ScanMode::Balanced => 150,
+        ScanMode::Thorough => 180,
+        ScanMode::Stealth => 180,
+        ScanMode::Ironclad => 240,
+    };
+    // Heavier obfuscation profiles pad handshakes and add inter-packet
+    // delays, so scans take longer. Add a percentage on top of the base.
+    let noize_extra_pct = match protocol {
+        Protocol::Auto | Protocol::Masque => match masque_noize {
+            MasqueNoize::Firewall => 0,
+            MasqueNoize::Gfw => 25,
+            MasqueNoize::Off => 0,
+        },
+        Protocol::Wireguard | Protocol::Gool => match wg_noize {
+            WgNoize::Balanced => 0,
+            WgNoize::Aggressive => 30,
+            WgNoize::Light => 0,
+            WgNoize::Off => 0,
+        },
+    };
+    Duration::from_secs(base + base * noize_extra_pct / 100)
 }
 
 /// How long to wait after sending Ctrl-C before force-killing. Manually
