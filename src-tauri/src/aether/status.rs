@@ -1,4 +1,4 @@
-use super::profiles::{MasqueNoize, Protocol, ScanMode, WgNoize};
+use super::profiles::ScanMode;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
@@ -22,35 +22,25 @@ pub fn port_is_live(addr: &SocketAddr) -> bool {
     TcpStream::connect_timeout(&probe_addr(addr), Duration::from_millis(300)).is_ok()
 }
 
-/// Aether's own route-discovery budget varies by scan mode and obfuscation
-/// profile — ironclad opens a real tunnel through every candidate and heavier
-/// noize profiles add decoy traffic and inter-packet delays, both stretching
-/// the scan. The GUI's timeout must exceed the expected budget or it would
-/// kill Aether while it's still legitimately scanning.
-pub fn connect_timeout(scan_mode: &ScanMode, protocol: &Protocol, masque_noize: &MasqueNoize, wg_noize: &WgNoize) -> Duration {
-    let base = match scan_mode {
-        ScanMode::Turbo => 60u64,
+/// The GUI's connect timeout must exceed Aether's own per-mode scan deadline
+/// (`overall_deadline` in upstream v1.3.0 prober.rs / wg_prober.rs — MASQUE:
+/// 45/120/300/180/180s, WireGuard: 30/80/250/150/180s) or it would kill
+/// Aether while it's still legitimately scanning. Each value below is the
+/// larger of the two probers' deadlines plus margin for tunnel establishment
+/// and data-plane validation. Noize profiles don't factor in: their delays
+/// are per-handshake milliseconds, and the scan deadline is a fixed
+/// wall-clock cap upstream regardless of profile.
+/// ponytail: WG retries up to 4 noize profiles back to back on failure, which
+/// can legitimately exceed any sane timeout — this stays a backstop for the
+/// common first-scan path, and the auto-retry policy below covers the rest.
+pub fn connect_timeout(scan_mode: &ScanMode) -> Duration {
+    Duration::from_secs(match scan_mode {
+        ScanMode::Turbo => 90,
         ScanMode::Balanced => 150,
-        ScanMode::Thorough => 180,
-        ScanMode::Stealth => 180,
+        ScanMode::Thorough => 330,
+        ScanMode::Stealth => 210,
         ScanMode::Ironclad => 240,
-    };
-    // Heavier obfuscation profiles pad handshakes and add inter-packet
-    // delays, so scans take longer. Add a percentage on top of the base.
-    let noize_extra_pct = match protocol {
-        Protocol::Auto | Protocol::Masque => match masque_noize {
-            MasqueNoize::Firewall => 0,
-            MasqueNoize::Gfw => 25,
-            MasqueNoize::Off => 0,
-        },
-        Protocol::Wireguard | Protocol::Gool => match wg_noize {
-            WgNoize::Balanced => 0,
-            WgNoize::Aggressive => 30,
-            WgNoize::Light => 0,
-            WgNoize::Off => 0,
-        },
-    };
-    Duration::from_secs(base + base * noize_extra_pct / 100)
+    })
 }
 
 /// How long to wait after sending Ctrl-C before force-killing. Manually
@@ -118,18 +108,13 @@ mod tests {
     }
 
     #[test]
-    fn connect_timeout_ironclad() {
-        assert_eq!(
-            connect_timeout(&ScanMode::Ironclad, &Protocol::Masque, &MasqueNoize::Firewall, &WgNoize::Balanced),
-            Duration::from_secs(240)
-        );
-    }
-
-    #[test]
-    fn connect_timeout_gfw_adds_25pct() {
-        assert_eq!(
-            connect_timeout(&ScanMode::Balanced, &Protocol::Masque, &MasqueNoize::Gfw, &WgNoize::Balanced),
-            Duration::from_secs(150 + 150 * 25 / 100)
-        );
+    fn connect_timeout_exceeds_upstream_scan_deadlines() {
+        // Each right-hand value is the larger of upstream v1.3.0's MASQUE/WG
+        // prober overall_deadline for that mode — the GUI must outlast it.
+        assert!(connect_timeout(&ScanMode::Turbo) > Duration::from_secs(45));
+        assert!(connect_timeout(&ScanMode::Balanced) > Duration::from_secs(120));
+        assert!(connect_timeout(&ScanMode::Thorough) > Duration::from_secs(300));
+        assert!(connect_timeout(&ScanMode::Stealth) > Duration::from_secs(180));
+        assert!(connect_timeout(&ScanMode::Ironclad) > Duration::from_secs(180));
     }
 }
