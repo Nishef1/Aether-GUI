@@ -135,7 +135,20 @@ pub async fn list_core_versions(
 
 #[tauri::command]
 pub fn get_core_status(app: AppHandle, kind: CoreKind) -> Result<CoreStatus, AetherError> {
-    core_manager::status(&app, kind)
+    let mut status = core_manager::status(&app, kind)?;
+    let current = core_manager::current_info(&app, kind)?;
+
+    // A persisted managed-version pointer is not authoritative when its binary
+    // has disappeared or was quarantined. `current_info` resolves the same path
+    // the connection runtime will actually launch, so expose a managed active
+    // version only when the resolved source is genuinely managed. This also
+    // prevents a bundled version metadata file from masquerading as a usable
+    // core when the corresponding executable was not packaged.
+    if current.source != "managed" {
+        status.active_version = None;
+    }
+
+    Ok(status)
 }
 
 #[tauri::command]
