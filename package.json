@@ -17,7 +17,9 @@
     "build:windows:setup": "pnpm prepare:cores:windows && tauri build --bundles nsis",
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "clippy:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings"
+    "clippy:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "validate": "pnpm typecheck && pnpm lint && pnpm check:rust && pnpm test:rust && pnpm clippy:rust && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+    "release:windows": "pnpm validate && pnpm build:windows:setup"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
