@@ -38,8 +38,10 @@ pnpm release:windows
 
 `release:windows` validates TypeScript/Rust/version synchronization, prepares the pinned cores, verifies all required runtime resources, requires `TAURI_SIGNING_PRIVATE_KEY`, and builds the signed NSIS updater artifact. Set these environment variables only in your secure local shell or CI secret store:
 
-- `TAURI_SIGNING_PRIVATE_KEY` — private-key content (GitHub Actions commonly receives the content, not merely a file path).
+- `TAURI_SIGNING_PRIVATE_KEY` — private-key content (required for GitHub Actions, which receives the content rather than a filesystem path).
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — password if the key was encrypted.
+
+For a local build, Tauri also supports `TAURI_SIGNING_PRIVATE_KEY_PATH` with the path to the private-key file.
 
 For a local, non-updater test build only:
 
