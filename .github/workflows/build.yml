@@ -59,7 +59,7 @@ jobs:
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: Aether-GUI ${{ env.RELEASE_TAG }}
-          releaseDraft: true
+          releaseDraft: false
           args: --bundles nsis
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
