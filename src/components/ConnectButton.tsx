@@ -15,6 +15,7 @@ function phaseOf(status: ConnectionStatus): Phase {
     case "Disconnecting":
       return "connecting";
     case "Connected":
+    case "Tunneling":
       return "connected";
     case "Error":
       return "error";
@@ -23,17 +24,11 @@ function phaseOf(status: ConnectionStatus): Phase {
   }
 }
 
-/** Motion handles ONLY one-shots here (error shake, tap). Every infinite
- * loop is a CSS animation from index.css on a compositor-promoted layer —
- * Motion's JS-driven loops cost a style recalc every frame at 60fps, and
- * its box-shadow tweens with var()/color-mix() values never converge at all
- * (traced live: an endless per-frame write pinned the compositor forever). */
 const SHAKE_VARIANTS: Variants = {
   rest: { x: 0 },
   error: { x: [0, -6, 6, -4, 4, 0], transition: { x: { duration: 0.4, ease: "easeInOut" } } },
 };
 
-/** Static per-phase; the phase-change fade is a plain CSS transition. */
 const RING_SHADOW: Record<Phase, string> = {
   idle: "0 0 0 3px var(--color-status-idle)",
   connecting: "0 0 0 3px var(--color-status-connecting)",
@@ -41,7 +36,6 @@ const RING_SHADOW: Record<Phase, string> = {
   error: "0 0 0 3px var(--color-status-error)",
 };
 
-/** CSS loop class per phase for the disc+ring layer (see index.css). */
 const RING_ANIM: Record<Phase, string> = {
   idle: "anim-ring-breathe",
   connecting: "anim-ring-pulse-fast",
@@ -49,7 +43,6 @@ const RING_ANIM: Record<Phase, string> = {
   error: "",
 };
 
-/** Painted once onto the glow span, then pulsed via opacity/scale only. */
 const GLOW: Partial<Record<Phase, string>> = {
   connecting:
     "0 0 20px 3px color-mix(in oklch, var(--color-status-connecting) 50%, transparent)",
@@ -78,13 +71,6 @@ export function ConnectButton() {
 
   const phase = phaseOf(status);
   const Icon = ICONS[phase];
-  // Unfocused = nobody is watching, and any running animation keeps the
-  // WebView2 compositor redrawing at 60fps in the background — pause (not
-  // remove) so nothing jumps on refocus. Inline style, NOT a Tailwind
-  // [animation-play-state:paused] class: the .anim-* shorthands are
-  // unlayered CSS and silently beat layered utilities in the cascade
-  // (verified live — the class was applied yet computed state stayed
-  // "running"). Reduced motion is handled in CSS.
   const playState = { animationPlayState: focused ? ("running" as const) : ("paused" as const) };
 
   const handleClick = () => {
@@ -106,11 +92,6 @@ export function ConnectButton() {
       variants={SHAKE_VARIANTS}
       className="relative flex size-40 items-center justify-center rounded-full text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none"
     >
-      {/* Disc + status ring. will-change promotes it to its own compositor
-        * layer so the breathing/pulse loop composites without repainting the
-        * window (unpromoted, it was 60 full-window Paints/sec ≈ 45% of a
-        * core). Key insight: the loop animates THIS span, not the button, so
-        * Motion's tap/shake transforms never fight the CSS animation. */}
       <span
         aria-hidden
         className={cn("absolute inset-0 rounded-full bg-surface-2", RING_ANIM[phase])}
