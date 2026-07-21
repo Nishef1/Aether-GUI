@@ -64,15 +64,22 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
     let active = true
 
     const checkForUpdates = async () => {
-      const [, , appResult, elevatedResult] = await Promise.allSettled([
+      const elevated = await invoke<boolean>("get_is_elevated").catch(() => false)
+      if (!active) return
+      setIsElevated(elevated)
+
+      // Network-backed update discovery belongs to the normal user process. TUN
+      // elevation exists only for routing privileges; it must not broaden the
+      // privilege level of GitHub release queries or core downloads.
+      if (elevated) return
+
+      const [, , appResult] = await Promise.allSettled([
         refreshCore("aether", true),
         refreshCore("singbox", true),
         invoke<AppUpdateInfo | null>("check_app_update"),
-        invoke<boolean>("get_is_elevated"),
       ])
       if (!active) return
       if (appResult.status === "fulfilled") setAppUpdate(appResult.value)
-      if (elevatedResult.status === "fulfilled") setIsElevated(elevatedResult.value)
     }
 
     const initial = window.setTimeout(() => void checkForUpdates(), 1200)
