@@ -39,7 +39,9 @@ pub fn init(app_data_dir: &Path) -> std::io::Result<PathBuf> {
 }
 
 pub fn path() -> Option<PathBuf> {
-    DIAGNOSTICS.get().map(|diagnostics| diagnostics.path.clone())
+    DIAGNOSTICS
+        .get()
+        .map(|diagnostics| diagnostics.path.clone())
 }
 
 fn redact_home_path(message: &str) -> String {
@@ -85,7 +87,10 @@ fn redact_sensitive(message: &str) -> String {
         "password=",
         "password:",
     ];
-    if SENSITIVE_MARKERS.iter().any(|marker| lower.contains(marker)) {
+    if SENSITIVE_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
         "[redacted sensitive log line]".into()
     } else {
         redact_home_path(message)
@@ -139,6 +144,9 @@ mod tests {
             redact_sensitive("apiKey=xyz"),
             "[redacted sensitive log line]"
         );
-        assert_eq!(redact_sensitive("connected to gateway"), "connected to gateway");
+        assert_eq!(
+            redact_sensitive("connected to gateway"),
+            "connected to gateway"
+        );
     }
 }
