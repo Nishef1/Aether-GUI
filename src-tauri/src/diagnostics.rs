@@ -1,15 +1,17 @@
 use crate::events::now_millis;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 const MAX_LOG_BYTES: usize = 2 * 1024 * 1024;
+const FLUSH_INTERVAL_BYTES: usize = 16 * 1024;
 const LOG_FILE: &str = "aether-gui.jsonl";
 
 struct DiagnosticsFile {
-    file: File,
+    file: BufWriter<File>,
     written: usize,
+    unflushed: usize,
     capped: bool,
 }
 
@@ -25,9 +27,8 @@ pub fn init(app_data_dir: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(&log_dir)?;
     let path = log_dir.join(LOG_FILE);
 
-    // Diagnostics are intentionally session-scoped: every process launch starts
-    // with a fresh file. A hard in-session byte cap below prevents runaway core
-    // output from continuously writing to disk.
+    // Each launch starts a fresh session log. A hard byte cap limits total disk
+    // writes, and buffered writes avoid flushing every individual runtime line.
     let file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -36,8 +37,9 @@ pub fn init(app_data_dir: &Path) -> std::io::Result<PathBuf> {
     let _ = DIAGNOSTICS.set(Diagnostics {
         path: path.clone(),
         file: Mutex::new(DiagnosticsFile {
-            file,
+            file: BufWriter::with_capacity(FLUSH_INTERVAL_BYTES, file),
             written: 0,
+            unflushed: 0,
             capped: false,
         }),
     });
@@ -141,16 +143,24 @@ pub fn record(component: &str, level: &str, message: impl AsRef<str>) {
             && writeln!(diagnostics_file.file, "{marker}").is_ok()
         {
             diagnostics_file.written += marker_required;
-            let _ = diagnostics_file.file.flush();
+            diagnostics_file.unflushed += marker_required;
         }
+        let _ = diagnostics_file.file.flush();
+        diagnostics_file.unflushed = 0;
         diagnostics_file.capped = true;
         return;
     }
 
     if writeln!(diagnostics_file.file, "{entry}").is_ok() {
         diagnostics_file.written += required;
-        // Crash diagnostics favor durability over buffering a few final lines.
-        let _ = diagnostics_file.file.flush();
+        diagnostics_file.unflushed += required;
+
+        let should_flush = diagnostics_file.unflushed >= FLUSH_INTERVAL_BYTES
+            || matches!(level, "warn" | "error");
+        if should_flush {
+            let _ = diagnostics_file.file.flush();
+            diagnostics_file.unflushed = 0;
+        }
     }
 }
 
