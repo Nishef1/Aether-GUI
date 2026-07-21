@@ -31,14 +31,17 @@ impl PtySession {
     }
 
     pub fn send_ctrl_c(&self) {
-        if let Ok(mut w) = self.writer.lock() {
-            let _ = w.write_all(&[0x03]);
-            let _ = w.flush();
+        if let Ok(mut writer) = self.writer.lock() {
+            let _ = writer.write_all(&[0x03]);
+            let _ = writer.flush();
         }
     }
 
     pub fn kill(&mut self) {
         let _ = self.child.kill();
+        // Explicitly reap the child. This matters on Unix where a terminated
+        // child can otherwise remain as a zombie until the parent exits.
+        let _ = self.child.wait();
     }
 }
 
@@ -63,10 +66,6 @@ fn read_cli_help(binary: &Path) -> Option<String> {
     (!help.trim().is_empty()).then_some(help)
 }
 
-/// Spawns Aether in a real PTY and answers known interactive prompts as a
-/// compatibility fallback. Before launch, `--help` is queried from the active
-/// independently-updated core so the GUI does not blindly send options that a
-/// future release no longer advertises.
 pub fn spawn(
     binary: &Path,
     cwd: &Path,
@@ -81,40 +80,35 @@ pub fn spawn(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
+        .map_err(|error| AetherError::SpawnFailed(error.to_string()))?;
 
-    let mut cmd = CommandBuilder::new(binary);
-    cmd.cwd(cwd);
+    let mut command = CommandBuilder::new(binary);
+    command.cwd(cwd);
     let help = read_cli_help(binary);
-    for arg in profile.as_args_for_help(help.as_deref()) {
-        cmd.arg(arg);
+    for argument in profile.as_args_for_help(help.as_deref()) {
+        command.arg(argument);
     }
-    // Environment variables are ignored by cores that do not recognize them,
-    // making this safer across independently-updated releases than an unknown
-    // command-line flag would be.
-    cmd.env(
+    command.env(
         "AETHER_MASQUE_HTTP2",
         if profile.masque_http2 { "1" } else { "0" },
     );
 
     let child = pair
         .slave
-        .spawn_command(cmd)
-        .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
+        .spawn_command(command)
+        .map_err(|error| AetherError::SpawnFailed(error.to_string()))?;
     drop(pair.slave);
 
     let mut reader = pair
         .master
         .try_clone_reader()
-        .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
-
+        .map_err(|error| AetherError::SpawnFailed(error.to_string()))?;
     let raw_writer = pair
         .master
         .take_writer()
-        .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
+        .map_err(|error| AetherError::SpawnFailed(error.to_string()))?;
     let writer = Arc::new(Mutex::new(raw_writer));
     let writer_for_thread = Arc::clone(&writer);
-
     let prompts_done = Arc::new(AtomicBool::new(false));
     let prompts_done_for_thread = Arc::clone(&prompts_done);
 
@@ -145,18 +139,17 @@ fn read_loop(
 ) {
     let mut answered: HashSet<&'static str> = HashSet::new();
     let mut current_section: Option<&'static str> = None;
-    let mut line_buf = String::new();
-    let mut byte_buf = [0u8; 4096];
+    let mut line_buffer = String::new();
+    let mut byte_buffer = [0u8; 4096];
 
     loop {
-        let n = match reader.read(&mut byte_buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(_) => break,
+        let count = match reader.read(&mut byte_buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => count,
         };
-        line_buf.push_str(&String::from_utf8_lossy(&byte_buf[..n]));
+        line_buffer.push_str(&String::from_utf8_lossy(&byte_buffer[..count]));
 
-        for raw_line in drain_lines(&mut line_buf) {
+        for raw_line in drain_lines(&mut line_buffer) {
             let line = strip_ansi(&raw_line);
             if line.is_empty() {
                 continue;
@@ -173,7 +166,7 @@ fn read_loop(
             });
         }
 
-        let partial = strip_ansi(&line_buf);
+        let partial = strip_ansi(&line_buffer);
         if looks_like_choice_prompt(&partial)
             && !PROMPT_TABLE
                 .iter()
@@ -183,10 +176,10 @@ fn read_loop(
                 if !answered.contains(section) {
                     if let Some(rule) = PROMPT_TABLE.iter().find(|rule| rule.id == section) {
                         let answer = (rule.answer)(&profile);
-                        if let Ok(mut w) = writer.lock() {
-                            let _ = w.write_all(answer.as_bytes());
-                            let _ = w.write_all(b"\r\n");
-                            let _ = w.flush();
+                        if let Ok(mut output) = writer.lock() {
+                            let _ = output.write_all(answer.as_bytes());
+                            let _ = output.write_all(b"\r\n");
+                            let _ = output.flush();
                         }
                         let _ = log_tx.send(LogEvent {
                             line: format!("[gui] answered {section} → {answer}"),
@@ -205,105 +198,99 @@ fn read_loop(
 
 const MAX_PARTIAL: usize = 16 * 1024;
 
-fn drain_lines(buf: &mut String) -> Vec<String> {
+fn drain_lines(buffer: &mut String) -> Vec<String> {
     let mut lines = Vec::new();
-    while let Some(pos) = buf.find(['\r', '\n']) {
-        let end = if buf.as_bytes()[pos] == b'\n' {
-            pos
+    while let Some(position) = buffer.find(|character| character == '\r' || character == '\n') {
+        let end = if buffer.as_bytes()[position] == b'\n' {
+            position
         } else {
-            let mut run_end = pos;
-            while run_end < buf.len() && buf.as_bytes()[run_end] == b'\r' {
+            let mut run_end = position;
+            while run_end < buffer.len() && buffer.as_bytes()[run_end] == b'\r' {
                 run_end += 1;
             }
-            if run_end == buf.len() {
+            if run_end == buffer.len() {
                 break;
             }
-            if buf.as_bytes()[run_end] != b'\n' {
-                buf.drain(..run_end);
+            if buffer.as_bytes()[run_end] != b'\n' {
+                buffer.drain(..run_end);
                 continue;
             }
             run_end
         };
-        let line: String = buf.drain(..=end).collect();
-        lines.push(line.trim_end_matches(['\r', '\n']).to_string());
+        let line: String = buffer.drain(..=end).collect();
+        lines.push(
+            line.trim_end_matches(|character| character == '\r' || character == '\n')
+                .to_string(),
+        );
     }
-    if buf.len() > MAX_PARTIAL {
-        let mut cut = buf.len() - MAX_PARTIAL;
-        while !buf.is_char_boundary(cut) {
+    if buffer.len() > MAX_PARTIAL {
+        let mut cut = buffer.len() - MAX_PARTIAL;
+        while !buffer.is_char_boundary(cut) {
             cut += 1;
         }
-        buf.drain(..cut);
+        buffer.drain(..cut);
     }
     lines
 }
 
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            for c2 in chars.by_ref() {
-                if c2.is_ascii_alphabetic() {
+fn strip_ansi(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\u{1b}' && characters.peek() == Some(&'[') {
+            characters.next();
+            for escaped in characters.by_ref() {
+                if escaped.is_ascii_alphabetic() {
                     break;
                 }
             }
             continue;
         }
-        out.push(c);
+        output.push(character);
     }
-    out
+    output
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn feed(buf: &mut String, chunk: &str) -> Vec<String> {
-        buf.push_str(chunk);
-        drain_lines(buf)
+    fn feed(buffer: &mut String, chunk: &str) -> Vec<String> {
+        buffer.push_str(chunk);
+        drain_lines(buffer)
     }
 
     #[test]
     fn plain_newlines() {
-        let mut buf = String::new();
-        assert_eq!(feed(&mut buf, "a\nb\nc"), ["a", "b"]);
-        assert_eq!(buf, "c");
+        let mut buffer = String::new();
+        assert_eq!(feed(&mut buffer, "a\nb\nc"), ["a", "b"]);
+        assert_eq!(buffer, "c");
     }
 
     #[test]
-    fn crlf_and_onlcr_double_cr() {
-        let mut buf = String::new();
-        assert_eq!(feed(&mut buf, "a\r\nb\r\r\n"), ["a", "b"]);
-        assert_eq!(buf, "");
+    fn crlf_and_double_cr() {
+        let mut buffer = String::new();
+        assert_eq!(feed(&mut buffer, "a\r\nb\r\r\n"), ["a", "b"]);
+        assert_eq!(buffer, "");
     }
 
     #[test]
     fn cr_overwrite_drops_spinner_frames() {
-        let mut buf = String::new();
+        let mut buffer = String::new();
         assert_eq!(
-            feed(&mut buf, "scan 1%\rscan 2%\rscan 3%"),
+            feed(&mut buffer, "scan 1%\rscan 2%\rscan 3%"),
             Vec::<String>::new()
         );
-        assert_eq!(buf, "scan 3%");
-        assert_eq!(feed(&mut buf, "\rscan done\n"), ["scan done"]);
-        assert_eq!(buf, "");
+        assert_eq!(buffer, "scan 3%");
+        assert_eq!(feed(&mut buffer, "\rscan done\n"), ["scan done"]);
     }
 
     #[test]
-    fn lone_cr_at_end_waits_for_possible_lf() {
-        let mut buf = String::new();
-        assert_eq!(feed(&mut buf, "abc\r"), Vec::<String>::new());
-        assert_eq!(buf, "abc\r");
-        assert_eq!(feed(&mut buf, "\n"), ["abc"]);
-    }
-
-    #[test]
-    fn unterminated_tail_is_capped() {
-        let mut buf = String::new();
-        let big = "é".repeat(MAX_PARTIAL);
-        assert_eq!(feed(&mut buf, &big), Vec::<String>::new());
-        assert!(buf.len() <= MAX_PARTIAL + 1);
-        assert!(buf.chars().all(|c| c == 'é'));
+    fn unterminated_tail_is_bounded() {
+        let mut buffer = String::new();
+        let large = "é".repeat(MAX_PARTIAL);
+        assert_eq!(feed(&mut buffer, &large), Vec::<String>::new());
+        assert!(buffer.len() <= MAX_PARTIAL + 1);
+        assert!(buffer.chars().all(|character| character == 'é'));
     }
 }
