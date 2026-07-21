@@ -17,7 +17,10 @@ pub fn generate_config(
 
     let config = Config {
         log: LogConfig {
-            level: "info".into(),
+            // Per-flow info logs are extremely high volume in TUN mode and can
+            // overwhelm the WebView event bridge. Lifecycle/health information
+            // is emitted by the GUI itself, while sing-box still surfaces warnings.
+            level: "warn".into(),
             timestamp: true,
         },
         dns: DnsConfig {
@@ -184,5 +187,6 @@ mod tests {
         assert_eq!(value["inbounds"][0]["address"][0], TUN_ADDRESS);
         assert_eq!(value["inbounds"][0]["address"][1], TUN_ADDRESS_V6);
         assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
+        assert_eq!(value["log"]["level"], "warn");
     }
 }
