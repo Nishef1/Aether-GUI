@@ -53,16 +53,51 @@ fn visual_for_state(state: &str) -> ([u8; 3], &'static str) {
     }
 }
 
-fn tinted_icon(base: &Image<'_>, color: [u8; 3]) -> Image<'static> {
+fn status_badged_icon(base: &Image<'_>, color: [u8; 3]) -> Image<'static> {
+    let width = base.width() as i32;
+    let height = base.height() as i32;
     let mut rgba = base.rgba().to_vec();
-    for pixel in rgba.chunks_exact_mut(4) {
-        if pixel[3] == 0 {
-            continue;
-        }
-        pixel[0] = color[0];
-        pixel[1] = color[1];
-        pixel[2] = color[2];
+
+    if width <= 0 || height <= 0 {
+        return Image::new_owned(rgba, base.width(), base.height());
     }
+
+    // Preserve the original artwork completely and add a small, high-contrast
+    // status badge in the lower-right corner. Tray icons are often rendered at
+    // 16–24 px on Windows, so scale the badge from the source icon dimensions.
+    let shortest = width.min(height);
+    let radius = (shortest / 6).max(2);
+    let border = (radius / 3).max(1);
+    let margin = (shortest / 18).max(1);
+    let center_x = width - radius - margin;
+    let center_y = height - radius - margin;
+    let outer_radius = radius + border;
+
+    for y in (center_y - outer_radius).max(0)..=(center_y + outer_radius).min(height - 1) {
+        for x in (center_x - outer_radius).max(0)..=(center_x + outer_radius).min(width - 1) {
+            let dx = x - center_x;
+            let dy = y - center_y;
+            let distance_squared = dx * dx + dy * dy;
+            let pixel_index = ((y * width + x) * 4) as usize;
+
+            if distance_squared <= outer_radius * outer_radius {
+                if distance_squared > radius * radius {
+                    // A dark outline keeps the status dot readable on both light
+                    // and dark parts of the existing icon without replacing it.
+                    rgba[pixel_index] = 22;
+                    rgba[pixel_index + 1] = 24;
+                    rgba[pixel_index + 2] = 29;
+                    rgba[pixel_index + 3] = 255;
+                } else {
+                    rgba[pixel_index] = color[0];
+                    rgba[pixel_index + 1] = color[1];
+                    rgba[pixel_index + 2] = color[2];
+                    rgba[pixel_index + 3] = 255;
+                }
+            }
+        }
+    }
+
     Image::new_owned(rgba, base.width(), base.height())
 }
 
@@ -78,7 +113,7 @@ pub fn set_visual_state(app: &AppHandle, state: &str) {
         return;
     };
     let (color, label) = visual_for_state(state);
-    let _ = tray.set_icon(Some(tinted_icon(base, color)));
+    let _ = tray.set_icon(Some(status_badged_icon(base, color)));
     let _ = tray.set_tooltip(Some(format!("Aether-GUI — {label}")));
 }
 
@@ -111,7 +146,7 @@ pub fn init(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         });
 
     if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(tinted_icon(icon, [148, 163, 184]));
+        builder = builder.icon(status_badged_icon(icon, [148, 163, 184]));
     }
 
     builder.build(app)?;
