@@ -222,28 +222,31 @@ const STORE_FILE: &str = "profile.json";
 const STORE_KEY: &str = "last_successful_profile";
 const PENDING_ELEVATION_KEY: &str = "pending_elevated_profile";
 
-/// Load a one-shot profile saved just before UAC elevation, otherwise the last
-/// profile that reached a proven Connected/Tunneling state.
+/// Load only the last profile that reached a proven Connected/Tunneling state.
+/// Elevation-resume state is intentionally handled by `take_pending_elevation`
+/// so a normal app launch never auto-connects just because TUN was used before.
 pub fn load(app: &tauri::AppHandle) -> ConnectionProfile {
     use tauri_plugin_store::StoreExt;
     let Ok(store) = app.store(STORE_FILE) else {
         return ConnectionProfile::default();
     };
-
-    if let Some(profile) = store
-        .get(PENDING_ELEVATION_KEY)
-        .and_then(|v| serde_json::from_value::<ConnectionProfile>(v).ok())
-    {
-        store.set(PENDING_ELEVATION_KEY, serde_json::Value::Null);
-        let _ = store.save();
-        return profile.sanitized();
-    }
-
     store
         .get(STORE_KEY)
         .and_then(|v| serde_json::from_value::<ConnectionProfile>(v).ok())
         .unwrap_or_default()
         .sanitized()
+}
+
+pub fn take_pending_elevation(app: &tauri::AppHandle) -> Option<ConnectionProfile> {
+    use tauri_plugin_store::StoreExt;
+    let store = app.store(STORE_FILE).ok()?;
+    let profile = store
+        .get(PENDING_ELEVATION_KEY)
+        .and_then(|v| serde_json::from_value::<ConnectionProfile>(v).ok())?
+        .sanitized();
+    store.set(PENDING_ELEVATION_KEY, serde_json::Value::Null);
+    let _ = store.save();
+    Some(profile)
 }
 
 pub fn save(app: &tauri::AppHandle, profile: &ConnectionProfile) {
