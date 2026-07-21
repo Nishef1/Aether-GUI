@@ -98,6 +98,8 @@ pub fn start_tunnel(
     app: AppHandle,
     manager: Arc<Mutex<SingboxManager>>,
     aether_socks_port: u16,
+    connection_generation: u64,
+    connection_manager: Arc<Mutex<crate::aether::AetherManager>>,
 ) -> Result<(), AetherError> {
     {
         let mgr = manager.lock().unwrap();
@@ -123,9 +125,11 @@ pub fn start_tunnel(
         ),
     );
 
+    emit_log(&app, "info", "starting sing-box TUN process");
     let (log_tx, log_rx) = mpsc::channel();
     let process = process::spawn(&binary, &config_path, log_tx)?;
-    write_pid(&app, process.pid());
+    let pid = process.pid();
+    write_pid(&app, pid);
 
     {
         let mut mgr = manager.lock().unwrap();
@@ -134,6 +138,7 @@ pub fn start_tunnel(
         mgr.active = false;
         mgr.socks_port = Some(aether_socks_port);
     }
+    emit_log(&app, "info", format!("TUN process started (pid {pid})"));
 
     let app_for_logs = app.clone();
     std::thread::spawn(move || {
@@ -151,11 +156,39 @@ pub fn start_tunnel(
     loop {
         std::thread::sleep(Duration::from_millis(750));
 
+        // The previous connection can still be inside a blocking curl health
+        // probe when the user cancels and starts another attempt. Its result
+        // must not inspect, stop, or report on the newer TUN process.
+        if !connection_manager
+            .lock()
+            .unwrap()
+            .is_current_generation(connection_generation)
+        {
+            emit_log(
+                &app,
+                "info",
+                "TUN startup superseded by a newer connection attempt",
+            );
+            return Err(AetherError::TunHealthFailed(
+                "TUN startup superseded by a newer connection attempt".into(),
+            ));
+        }
+
         if manager.lock().unwrap().process.is_none() {
+            emit_log(
+                &app,
+                "warn",
+                "TUN startup cancelled before data-plane verification",
+            );
             return Err(AetherError::TunHealthFailed("TUN startup cancelled".into()));
         }
 
         if let Some(exit) = process_exit_status(&manager)? {
+            emit_log(
+                &app,
+                "error",
+                format!("TUN process exited during startup ({exit})"),
+            );
             stop_tunnel(&app, &manager);
             return Err(AetherError::TunHealthFailed(format!(
                 "sing-box exited during startup ({exit})"
@@ -170,9 +203,28 @@ pub fn start_tunnel(
             }
             Err(error) => error.to_string(),
         };
+        if !connection_manager
+            .lock()
+            .unwrap()
+            .is_current_generation(connection_generation)
+        {
+            emit_log(
+                &app,
+                "info",
+                "TUN health result superseded by a newer connection attempt",
+            );
+            return Err(AetherError::TunHealthFailed(
+                "TUN health result superseded by a newer connection attempt".into(),
+            ));
+        }
         diagnostics::record("tun-health", "warn", &health_error);
 
         if Instant::now() >= deadline {
+            emit_log(
+                &app,
+                "error",
+                format!("TUN data-plane verification timed out: {health_error}"),
+            );
             stop_tunnel(&app, &manager);
             return Err(AetherError::TunHealthFailed(health_error));
         }

@@ -22,6 +22,7 @@ pub struct AetherManager {
     session: Option<PtySession>,
     state: ConnectionState,
     user_requested_stop: bool,
+    connection_generation: u64,
     retry_count: u32,
     tun_enabled: bool,
 }
@@ -32,6 +33,7 @@ impl AetherManager {
             session: None,
             state: ConnectionState::Idle,
             user_requested_stop: false,
+            connection_generation: 0,
             retry_count: 0,
             tun_enabled: false,
         }
@@ -47,6 +49,10 @@ impl AetherManager {
             ConnectionState::Idle | ConnectionState::Error { .. }
         )
     }
+
+    pub fn is_current_generation(&self, generation: u64) -> bool {
+        self.connection_generation == generation && !self.user_requested_stop
+    }
 }
 
 fn app_data_dir(app: &AppHandle) -> PathBuf {
@@ -60,7 +66,21 @@ fn set_state_and_emit(
     manager: &Arc<Mutex<AetherManager>>,
     new_state: ConnectionState,
 ) {
-    manager.lock().unwrap().state = new_state.clone();
+    // Process and TUN health checks run on independent threads. A cancellation
+    // can race a final startup/health error; never surface that stale error as
+    // a failure after the user has already asked to disconnect.
+    {
+        let mut mgr = manager.lock().unwrap();
+        if mgr.user_requested_stop && matches!(new_state, ConnectionState::Error { .. }) {
+            diagnostics::record(
+                "supervisor",
+                "info",
+                "ignored late error after user cancellation",
+            );
+            return;
+        }
+        mgr.state = new_state.clone();
+    }
     diagnostics::record_status(&new_state);
     let _ = app.emit(STATUS_EVENT, &new_state);
 }
@@ -113,6 +133,7 @@ pub fn start_connect(
             return Err(AetherError::PortInUse(socks.port()));
         }
         mgr.state = ConnectionState::Launching;
+        mgr.connection_generation = mgr.connection_generation.wrapping_add(1);
         mgr.retry_count = 0;
         mgr.tun_enabled = profile.tun_enabled;
         mgr.user_requested_stop = false;
@@ -367,25 +388,35 @@ fn monitor_connect(
 
         if status::port_is_live(&socks) {
             let connected_at_ms = now_millis();
-            let connected_state = ConnectionState::Connected {
-                socks_addr: profile.bind_address.clone(),
-                connected_at_ms,
-            };
-            mgr.state = connected_state.clone();
-            mgr.retry_count = 0;
             let tun_enabled = mgr.tun_enabled;
-            drop(mgr);
-            diagnostics::record_status(&connected_state);
-            let _ = app.emit(STATUS_EVENT, &connected_state);
+            let connection_generation = mgr.connection_generation;
 
             if tun_enabled {
-                match singbox::start_tunnel(app.clone(), singbox_manager.clone(), socks.port()) {
+                let starting_tunnel = ConnectionState::StartingTunnel {
+                    socks_addr: profile.bind_address.clone(),
+                };
+                mgr.state = starting_tunnel.clone();
+                mgr.retry_count = 0;
+                drop(mgr);
+                diagnostics::record_status(&starting_tunnel);
+                let _ = app.emit(STATUS_EVENT, &starting_tunnel);
+
+                match singbox::start_tunnel(
+                    app.clone(),
+                    singbox_manager.clone(),
+                    socks.port(),
+                    connection_generation,
+                    Arc::clone(&manager),
+                ) {
                     Ok(()) => {
                         // The user may have clicked Disconnect while the TUN
                         // startup health probe was running. Never resurrect a
                         // cancelled connection into Tunneling afterward.
-                        if manager.lock().unwrap().user_requested_stop {
-                            singbox::stop_tunnel(&app, &singbox_manager);
+                        if !manager
+                            .lock()
+                            .unwrap()
+                            .is_current_generation(connection_generation)
+                        {
                             return;
                         }
                         let tunneling = ConnectionState::Tunneling {
@@ -402,7 +433,11 @@ fn monitor_connect(
                         // request_disconnect() removed its owned process. The
                         // disconnect thread owns the state transition to Idle;
                         // do not overwrite it with a stale Error.
-                        if manager.lock().unwrap().user_requested_stop {
+                        if !manager
+                            .lock()
+                            .unwrap()
+                            .is_current_generation(connection_generation)
+                        {
                             return;
                         }
                         diagnostics::record("supervisor", "error", e.to_string());
@@ -420,6 +455,15 @@ fn monitor_connect(
                     }
                 }
             } else {
+                let connected_state = ConnectionState::Connected {
+                    socks_addr: profile.bind_address.clone(),
+                    connected_at_ms,
+                };
+                mgr.state = connected_state.clone();
+                mgr.retry_count = 0;
+                drop(mgr);
+                diagnostics::record_status(&connected_state);
+                let _ = app.emit(STATUS_EVENT, &connected_state);
                 profiles::save(&app, &profile);
                 monitor_connected(app, manager, binary, data_dir, profile, singbox_manager);
             }
@@ -565,6 +609,7 @@ pub fn request_disconnect(
             return Err(AetherError::NotConnected);
         }
         mgr.user_requested_stop = true;
+        mgr.connection_generation = mgr.connection_generation.wrapping_add(1);
         mgr.retry_count = 0;
         if let Some(session) = mgr.session.as_ref() {
             session.send_ctrl_c();
@@ -572,6 +617,11 @@ pub fn request_disconnect(
         mgr.session.is_some()
     };
 
+    diagnostics::record(
+        "supervisor",
+        "info",
+        "user requested disconnect; stopping TUN",
+    );
     singbox::stop_tunnel(app, singbox_manager);
 
     if !had_session {

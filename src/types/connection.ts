@@ -5,6 +5,7 @@ export type ConnectionStatus =
   | { state: "Idle" }
   | { state: "Launching" }
   | { state: "Connecting" }
+  | { state: "StartingTunnel"; socks_addr: string }
   | { state: "Connected"; socks_addr: string; connected_at_ms: number }
   | {
       state: "Tunneling";
@@ -34,6 +35,11 @@ export interface ConnectionProfile {
   wg_noize: WgNoize;
   /** Loopback-only SOCKS5 address. The port is configurable. */
   bind_address: string;
+}
+
+export interface TrafficStats {
+  received_bytes: number;
+  sent_bytes: number;
 }
 
 export interface LogLine {

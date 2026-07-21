@@ -26,10 +26,21 @@ pub fn connect(
         .sanitized();
 
     if profile.uses_tun() && !crate::is_admin() {
-        let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
-        let _ = core_manager::ensure_active(&app, CoreKind::Singbox)?;
-        aether::profiles::save_pending_elevation(&app, &profile);
-        return Err(AetherError::ElevationRequired);
+        #[cfg(debug_assertions)]
+        {
+            return Err(AetherError::Internal(
+                "TUN development mode requires running `pnpm tauri dev` from an Administrator terminal"
+                    .into(),
+            ));
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
+            let _ = core_manager::ensure_active(&app, CoreKind::Singbox)?;
+            aether::profiles::save_pending_elevation(&app, &profile);
+            return Err(AetherError::ElevationRequired);
+        }
     }
 
     aether::start_connect(
@@ -81,18 +92,37 @@ pub fn set_close_to_tray(app: AppHandle, enabled: bool) {
 }
 
 #[tauri::command]
-pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
+pub fn elevate(_app: AppHandle) -> Result<(), AetherError> {
     if crate::is_admin() {
         return Ok(());
     }
-    if crate::relaunch_as_admin() {
-        std::process::exit(0);
+
+    #[cfg(debug_assertions)]
+    {
+        Err(AetherError::Internal(
+            "TUN development mode requires running `pnpm tauri dev` from an Administrator terminal"
+                .into(),
+        ))
     }
 
-    let _ = aether::profiles::take_pending_elevation(&app);
-    Err(AetherError::Internal(
-        "administrator elevation was cancelled or failed".into(),
-    ))
+    #[cfg(not(debug_assertions))]
+    {
+        let profile = aether::profiles::load(&_app);
+        if profile.uses_tun() {
+            let _ = core_manager::ensure_active(&_app, CoreKind::Aether)?;
+            let _ = core_manager::ensure_active(&_app, CoreKind::Singbox)?;
+            aether::profiles::save_pending_elevation(&_app, &profile);
+        }
+
+        if crate::relaunch_as_admin() {
+            std::process::exit(0);
+        }
+
+        let _ = aether::profiles::take_pending_elevation(&_app);
+        Err(AetherError::Internal(
+            "administrator elevation was cancelled or failed".into(),
+        ))
+    }
 }
 
 #[tauri::command]
@@ -101,8 +131,18 @@ pub fn get_tun_status(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
-pub fn list_core_versions(app: AppHandle, kind: CoreKind) -> Result<Vec<CoreRelease>, AetherError> {
-    core_manager::list_releases(&app, kind)
+pub fn get_traffic() -> crate::traffic::TrafficStats {
+    crate::traffic::current()
+}
+
+#[tauri::command]
+pub async fn list_core_versions(
+    app: AppHandle,
+    kind: CoreKind,
+) -> Result<Vec<CoreRelease>, AetherError> {
+    tauri::async_runtime::spawn_blocking(move || core_manager::list_releases(&app, kind))
+        .await
+        .map_err(|error| AetherError::Internal(format!("core release task failed: {error}")))?
 }
 
 #[tauri::command]

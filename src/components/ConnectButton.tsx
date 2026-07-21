@@ -1,92 +1,100 @@
-import { AnimatePresence, motion, type Variants } from "motion/react";
-import { AlertTriangle, Check, Loader2, Power } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useConnectionStore } from "@/state/connectionStore";
-import { useWindowFocused } from "@/state/windowFocus";
-import type { ConnectionStatus } from "@/types/connection";
+import { AnimatePresence, motion, type Variants } from "motion/react"
+import { AlertTriangle, Check, Loader2, Power } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { useConnectionStore } from "@/state/connectionStore"
+import { useWindowFocused } from "@/state/windowFocus"
+import type { ConnectionStatus } from "@/types/connection"
 
-type Phase = "idle" | "connecting" | "connected" | "error";
+type Phase = "idle" | "connecting" | "connected" | "error"
 
 function phaseOf(status: ConnectionStatus): Phase {
   switch (status.state) {
     case "Launching":
     case "Connecting":
+    case "StartingTunnel":
     case "Reconnecting":
     case "Disconnecting":
-      return "connecting";
+      return "connecting"
     case "Connected":
     case "Tunneling":
-      return "connected";
+      return "connected"
     case "Error":
-      return "error";
+      return "error"
     default:
-      return "idle";
+      return "idle"
   }
 }
 
 const SHAKE_VARIANTS: Variants = {
   rest: { x: 0 },
-  error: { x: [0, -6, 6, -4, 4, 0], transition: { x: { duration: 0.4, ease: "easeInOut" } } },
-};
+  error: {
+    x: [0, -6, 6, -4, 4, 0],
+    transition: { x: { duration: 0.4, ease: "easeInOut" } },
+  },
+}
 
 const RING_SHADOW: Record<Phase, string> = {
   idle: "0 0 0 3px var(--color-status-idle)",
   connecting: "0 0 0 3px var(--color-status-connecting)",
-  connected: "0 0 0 1px color-mix(in oklch, var(--color-status-connected) 40%, transparent)",
+  connected:
+    "0 0 0 1px color-mix(in oklch, var(--color-status-connected) 40%, transparent)",
   error: "0 0 0 3px var(--color-status-error)",
-};
+}
 
 const RING_ANIM: Record<Phase, string> = {
   idle: "anim-ring-breathe",
   connecting: "anim-ring-pulse-fast",
   connected: "anim-ring-pulse-slow",
   error: "",
-};
+}
 
 const GLOW: Partial<Record<Phase, string>> = {
   connecting:
     "0 0 20px 3px color-mix(in oklch, var(--color-status-connecting) 50%, transparent)",
   connected: "0 0 32px 6px var(--color-status-connected)",
-};
+}
 
 const ICONS: Record<Phase, typeof Power> = {
   idle: Power,
   connecting: Loader2,
   connected: Check,
   error: AlertTriangle,
-};
+}
 
 const ARIA_LABEL: Record<Phase, string> = {
   idle: "Connect",
   connecting: "Cancel connecting",
   connected: "Disconnect",
   error: "Retry connection",
-};
+}
 
 export function ConnectButton() {
-  const status = useConnectionStore((s) => s.status);
-  const connect = useConnectionStore((s) => s.connect);
-  const disconnect = useConnectionStore((s) => s.disconnect);
-  const focused = useWindowFocused();
+  const status = useConnectionStore((s) => s.status)
+  const connect = useConnectionStore((s) => s.connect)
+  const disconnect = useConnectionStore((s) => s.disconnect)
+  const preparingCores = useConnectionStore((s) => s.preparingCores)
+  const focused = useWindowFocused()
 
-  const phase = phaseOf(status);
-  const Icon = ICONS[phase];
-  const playState = { animationPlayState: focused ? ("running" as const) : ("paused" as const) };
+  const phase = preparingCores ? "connecting" : phaseOf(status)
+  const Icon = ICONS[phase]
+  const playState = {
+    animationPlayState: focused ? ("running" as const) : ("paused" as const),
+  }
 
   const handleClick = () => {
     if (phase === "idle" || phase === "error") {
-      void connect();
+      void connect()
     } else {
-      void disconnect();
+      void disconnect()
     }
-  };
+  }
 
   return (
     <motion.button
       type="button"
       aria-label={ARIA_LABEL[phase]}
       onClick={handleClick}
-      disabled={status.state === "Disconnecting"}
+      disabled={status.state === "Disconnecting" || preparingCores}
       whileTap={{ scale: 0.97 }}
       animate={phase === "error" ? "error" : "rest"}
       variants={SHAKE_VARIANTS}
@@ -94,7 +102,10 @@ export function ConnectButton() {
     >
       <span
         aria-hidden
-        className={cn("absolute inset-0 rounded-full bg-surface-2", RING_ANIM[phase])}
+        className={cn(
+          "absolute inset-0 rounded-full bg-surface-2",
+          RING_ANIM[phase]
+        )}
         style={{
           boxShadow: RING_SHADOW[phase],
           transition: "box-shadow 0.15s ease",
@@ -108,9 +119,13 @@ export function ConnectButton() {
           aria-hidden
           className={cn(
             "pointer-events-none absolute inset-0 rounded-full",
-            phase === "connecting" ? "anim-glow-fast" : "anim-glow-slow",
+            phase === "connecting" ? "anim-glow-fast" : "anim-glow-slow"
           )}
-          style={{ boxShadow: GLOW[phase], willChange: "transform, opacity", ...playState }}
+          style={{
+            boxShadow: GLOW[phase],
+            willChange: "transform, opacity",
+            ...playState,
+          }}
         />
       )}
 
@@ -128,7 +143,10 @@ export function ConnectButton() {
             }}
             initial={{ scale: 0.9, opacity: 0.55 }}
             animate={{ scale: phase === "connected" ? 2 : 1.7, opacity: 0 }}
-            transition={{ duration: phase === "connected" ? 0.9 : 0.7, ease: "easeOut" }}
+            transition={{
+              duration: phase === "connected" ? 0.9 : 0.7,
+              ease: "easeOut",
+            }}
           />
         )}
       </AnimatePresence>
@@ -159,5 +177,5 @@ export function ConnectButton() {
         </motion.span>
       </AnimatePresence>
     </motion.button>
-  );
+  )
 }

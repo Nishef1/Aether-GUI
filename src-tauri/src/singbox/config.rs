@@ -189,4 +189,35 @@ mod tests {
         assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
         assert_eq!(value["log"]["level"], "warn");
     }
+
+    /// Offline TUN smoke test: protects the routing contract without needing
+    /// administrator privileges, a network connection, or installed cores.
+    #[test]
+    fn tun_smoke_config_routes_system_and_dns_through_aether_socks() {
+        let core = PathBuf::from("C:/test/aether.exe");
+        let value: serde_json::Value =
+            serde_json::from_str(&generate_config(1919, &core).unwrap()).unwrap();
+
+        let tun = &value["inbounds"][0];
+        assert_eq!(tun["type"], "tun");
+        assert_eq!(tun["tag"], "tun-in");
+        assert_eq!(tun["interface_name"], TUN_INTERFACE_NAME);
+        assert_eq!(tun["auto_route"], true);
+        assert_eq!(tun["strict_route"], true);
+        assert_eq!(tun["stack"], "mixed");
+
+        let proxy = value["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|outbound| outbound["tag"] == "proxy")
+            .expect("TUN must have an Aether SOCKS outbound");
+        assert_eq!(proxy["type"], "socks");
+        assert_eq!(proxy["server"], "127.0.0.1");
+        assert_eq!(proxy["server_port"], 1919);
+
+        assert_eq!(value["route"]["final"], "proxy");
+        assert_eq!(value["dns"]["final"], "dns-proxy");
+        assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
+    }
 }

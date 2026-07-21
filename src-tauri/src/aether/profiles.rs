@@ -305,6 +305,7 @@ pub fn save(app: &tauri::AppHandle, profile: &ConnectionProfile) {
     }
 }
 
+#[cfg_attr(debug_assertions, allow(dead_code))]
 pub fn save_pending_elevation(app: &tauri::AppHandle, profile: &ConnectionProfile) {
     use tauri_plugin_store::StoreExt;
     if let Ok(store) = app.store(STORE_FILE) {

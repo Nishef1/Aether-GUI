@@ -9,6 +9,7 @@ mod events;
 mod focus;
 mod singbox;
 mod state;
+mod traffic;
 mod tray;
 
 use state::AppState;
@@ -21,6 +22,7 @@ pub(crate) fn is_admin() -> bool {
 }
 
 #[cfg(windows)]
+#[cfg_attr(debug_assertions, allow(dead_code))]
 pub(crate) fn relaunch_as_admin() -> bool {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
@@ -55,6 +57,7 @@ pub(crate) fn is_admin() -> bool {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg_attr(debug_assertions, allow(dead_code))]
 pub(crate) fn relaunch_as_admin() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
@@ -66,6 +69,7 @@ pub(crate) fn relaunch_as_admin() -> bool {
 }
 
 #[cfg(target_os = "macos")]
+#[cfg_attr(debug_assertions, allow(dead_code))]
 pub(crate) fn relaunch_as_admin() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
@@ -119,6 +123,16 @@ fn main() {
             singbox::reap_orphan(app.handle());
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                // Temporarily pin the window while focusing it. This works
+                // around Windows foreground restrictions after elevation;
+                // the window is not left permanently always-on-top.
+                let _ = window.set_always_on_top(true);
+                let _ = window.set_focus();
+                let _ = window.set_always_on_top(false);
+            }
             aether::updater::refresh_in_background(app.handle().clone());
             Ok(())
         })
@@ -133,6 +147,7 @@ fn main() {
             commands::set_close_to_tray,
             commands::elevate,
             commands::get_tun_status,
+            commands::get_traffic,
             commands::list_core_versions,
             commands::get_core_status,
             commands::install_core_version,

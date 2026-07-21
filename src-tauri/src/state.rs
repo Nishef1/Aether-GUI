@@ -15,6 +15,11 @@ pub enum ConnectionState {
         socks_addr: String,
         connected_at_ms: u64,
     },
+    /// Aether SOCKS is ready, but system routing has not yet been proven.
+    /// This must never be presented to the user as a completed connection.
+    StartingTunnel {
+        socks_addr: String,
+    },
     /// Full system traffic path through sing-box -> Aether SOCKS is verified.
     Tunneling {
         tun_addr: String,
@@ -35,6 +40,21 @@ pub enum ConnectionState {
 pub struct AppState {
     pub manager: Arc<Mutex<AetherManager>>,
     pub singbox: Arc<Mutex<SingboxManager>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConnectionState;
+
+    #[test]
+    fn tun_is_not_reported_as_connected_before_data_plane_verification() {
+        let state = ConnectionState::StartingTunnel {
+            socks_addr: "127.0.0.1:1819".into(),
+        };
+        let value = serde_json::to_value(state).unwrap();
+        assert_eq!(value["state"], "StartingTunnel");
+        assert!(value.get("connected_at_ms").is_none());
+    }
 }
 
 impl Default for AppState {

@@ -1,23 +1,27 @@
-import { useEffect, useState } from "react";
-import { AnimatePresence, motion, MotionConfig } from "motion/react";
-import { ConnectButton } from "@/components/ConnectButton";
-import { ConnectionStatusLine } from "@/components/ConnectionStatusLine";
-import { ConnectionModeToggle } from "@/components/ConnectionModeToggle";
-import { AdvancedPanel } from "@/components/AdvancedPanel";
-import { CloseToTrayToggle } from "@/components/CloseToTrayToggle";
-import { AmbientBackground } from "@/components/AmbientBackground";
-import { SidecarErrorScreen } from "@/components/SidecarErrorScreen";
-import { SettingsPanel } from "@/components/SettingsPanel";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { TitleBar } from "@/components/TitleBar";
-import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
+import { useEffect, useState } from "react"
+import { AnimatePresence, motion, MotionConfig } from "motion/react"
+import { ConnectButton } from "@/components/ConnectButton"
+import { ConnectionStatusLine } from "@/components/ConnectionStatusLine"
+import { ConnectionModeToggle } from "@/components/ConnectionModeToggle"
+import { AdvancedPanel } from "@/components/AdvancedPanel"
+import { CloseToTrayToggle } from "@/components/CloseToTrayToggle"
+import { AmbientBackground } from "@/components/AmbientBackground"
+import { SidecarErrorScreen } from "@/components/SidecarErrorScreen"
+import { SettingsPanel } from "@/components/SettingsPanel"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { TitleBar } from "@/components/TitleBar"
+import {
+  initConnectionListeners,
+  useConnectionStore,
+} from "@/state/connectionStore"
+import { useCoreStore } from "@/state/coreStore"
 
 const SCREEN_TRANSITION = {
   initial: { opacity: 0, y: 8 },
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -4 },
   transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const },
-};
+}
 
 function MainScreen() {
   return (
@@ -30,21 +34,30 @@ function MainScreen() {
       <AdvancedPanel />
       <CloseToTrayToggle />
     </div>
-  );
+  )
 }
 
 export function App() {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const sidecarError = useConnectionStore((s) => s.sidecarError);
-  const retryAfterSidecarError = useConnectionStore((s) => s.retryAfterSidecarError);
-  const connect = useConnectionStore((s) => s.connect);
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const sidecarError = useConnectionStore((s) => s.sidecarError)
+  const retryAfterSidecarError = useConnectionStore(
+    (s) => s.retryAfterSidecarError
+  )
+  const connect = useConnectionStore((s) => s.connect)
+  const loadCores = useCoreStore((s) => s.loadAll)
 
   useEffect(() => {
-    const cleanup = initConnectionListeners();
+    const cleanup = initConnectionListeners()
     return () => {
-      void cleanup.then((unlisten) => unlisten());
-    };
-  }, []);
+      void cleanup.then((unlisten) => unlisten())
+    }
+  }, [])
+
+  useEffect(() => {
+    // Only inspect locally installed/bundled cores at startup. Online version
+    // checks are opt-in from the corresponding core's refresh button.
+    void loadCores()
+  }, [loadCores])
 
   return (
     <TooltipProvider>
@@ -55,28 +68,38 @@ export function App() {
           <div className="relative min-h-0 flex-1">
             <AnimatePresence mode="sync">
               {sidecarError ? (
-                <motion.div key="error" className="absolute inset-0 z-10" {...SCREEN_TRANSITION}>
+                <motion.div
+                  key="error"
+                  className="absolute inset-0 z-10"
+                  {...SCREEN_TRANSITION}
+                >
                   <SidecarErrorScreen
                     message={sidecarError}
                     onRetry={() => {
-                      retryAfterSidecarError();
-                      void connect();
+                      retryAfterSidecarError()
+                      void connect()
                     }}
                   />
                 </motion.div>
               ) : (
-                <motion.div key="main" className="absolute inset-0" {...SCREEN_TRANSITION}>
+                <motion.div
+                  key="main"
+                  className="absolute inset-0"
+                  {...SCREEN_TRANSITION}
+                >
                   <MainScreen />
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+            {settingsOpen && (
+              <SettingsPanel onClose={() => setSettingsOpen(false)} />
+            )}
           </div>
         </div>
       </MotionConfig>
     </TooltipProvider>
-  );
+  )
 }
 
-export default App;
+export default App

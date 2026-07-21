@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager};
 
 const ACTIVE_VERSION_FILE: &str = "active-version.txt";
 const REJECTED_VERSION_FILE: &str = "rejected-version.txt";
-const RELEASE_LIMIT: usize = 30;
+const RELEASE_LIMIT: usize = 8;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
