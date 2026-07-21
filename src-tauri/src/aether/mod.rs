@@ -42,7 +42,10 @@ impl AetherManager {
     }
 
     pub fn is_busy(&self) -> bool {
-        !matches!(self.state, ConnectionState::Idle | ConnectionState::Error { .. })
+        !matches!(
+            self.state,
+            ConnectionState::Idle | ConnectionState::Error { .. }
+        )
     }
 }
 
@@ -204,14 +207,7 @@ fn spawn_and_monitor(
         let binary = binary.clone();
         let data_dir = data_dir.clone();
         std::thread::spawn(move || {
-            monitor_connect(
-                app,
-                manager,
-                binary,
-                data_dir,
-                profile,
-                singbox_manager,
-            )
+            monitor_connect(app, manager, binary, data_dir, profile, singbox_manager)
         });
     }
 
@@ -279,14 +275,7 @@ fn handle_unexpected_failure(
             }
         }
         set_state_and_emit(&app, &manager, ConnectionState::Launching);
-        let _ = spawn_and_monitor(
-            app,
-            manager,
-            binary,
-            data_dir,
-            profile,
-            singbox_manager,
-        );
+        let _ = spawn_and_monitor(app, manager, binary, data_dir, profile, singbox_manager);
     });
 }
 
@@ -406,14 +395,7 @@ fn monitor_connect(
                         };
                         set_state_and_emit(&app, &manager, tunneling);
                         profiles::save(&app, &profile);
-                        monitor_connected(
-                            app,
-                            manager,
-                            binary,
-                            data_dir,
-                            profile,
-                            singbox_manager,
-                        );
+                        monitor_connected(app, manager, binary, data_dir, profile, singbox_manager);
                     }
                     Err(e) => {
                         // start_tunnel returns a cancellation error when
@@ -439,14 +421,7 @@ fn monitor_connect(
                 }
             } else {
                 profiles::save(&app, &profile);
-                monitor_connected(
-                    app,
-                    manager,
-                    binary,
-                    data_dir,
-                    profile,
-                    singbox_manager,
-                );
+                monitor_connected(app, manager, binary, data_dir, profile, singbox_manager);
             }
             return;
         }
