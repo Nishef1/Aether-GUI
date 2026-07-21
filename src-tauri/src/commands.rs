@@ -66,13 +66,18 @@ pub fn set_close_to_tray(app: AppHandle, enabled: bool) {
 }
 
 #[tauri::command]
-pub fn elevate() -> Result<(), AetherError> {
+pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
     if crate::is_admin() {
         return Ok(());
     }
     if crate::relaunch_as_admin() {
         std::process::exit(0);
     }
+
+    // UAC/pkexec/osascript was cancelled or failed. Consume the one-shot
+    // pending profile now so a later unrelated manual Administrator launch
+    // cannot unexpectedly resume an old connection request.
+    let _ = aether::profiles::take_pending_elevation(&app);
     Err(AetherError::Internal(
         "administrator elevation was cancelled or failed".into(),
     ))
