@@ -26,12 +26,33 @@ const incorrect = required
   )
   .map(([name, expected]) => `${name} must contain ${expected}`)
 
-if (missing.length || incorrect.length) {
+const tauriConfig = JSON.parse(
+  readFileSync(resolve(root, "src-tauri", "tauri.conf.json"), "utf8")
+)
+const resources = tauriConfig?.bundle?.resources
+const requiredResourceMappings = {
+  "binaries/*.exe": "binaries/",
+  "binaries/*.dll": "binaries/",
+  "binaries/*-version.txt": "binaries/",
+  "binaries/*.ps1": "binaries/",
+}
+const invalidMappings = Object.entries(requiredResourceMappings)
+  .filter(([source, destination]) => resources?.[source] !== destination)
+  .map(
+    ([source, destination]) =>
+      `tauri bundle.resources must map ${source} to ${destination}`
+  )
+
+if (missing.length || incorrect.length || invalidMappings.length) {
   throw new Error(
-    `Bundled core verification failed: ${[...missing, ...incorrect].join(", ")}`
+    `Bundled core verification failed: ${[
+      ...missing,
+      ...incorrect,
+      ...invalidMappings,
+    ].join(", ")}`
   )
 }
 
 console.log(
-  "Bundled Windows core runtime resources and installer helpers are present and match the pinned baselines."
+  "Bundled Windows core runtime resources, installer helpers, and Tauri resource mappings match the pinned release contract."
 )
