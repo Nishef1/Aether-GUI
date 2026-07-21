@@ -59,6 +59,19 @@ function CoreCard({ kind }: { kind: CoreKind }) {
     false
   const active = entry.status?.active_version === selected
 
+  const useSelectedVersion = () => {
+    const action = installed ? selectVersion : installAndUse
+    void action(kind, selected).catch(() => {
+      // The store preserves the message in entry.error for inline display.
+    })
+  }
+
+  const removeSelectedVersion = () => {
+    void removeVersion(kind, selected).catch(() => {
+      // The store preserves the message in entry.error for inline display.
+    })
+  }
+
   return (
     <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -111,11 +124,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
         <button
           type="button"
           disabled={!selected || active || entry.loading || locked}
-          onClick={() =>
-            void (installed
-              ? selectVersion(kind, selected)
-              : installAndUse(kind, selected))
-          }
+          onClick={useSelectedVersion}
           className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
         >
           <Download size={13} />
@@ -127,7 +136,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
           disabled={
             !selected || !installed || active || entry.loading || locked
           }
-          onClick={() => void removeVersion(kind, selected)}
+          onClick={removeSelectedVersion}
           className="rounded-md p-1.5 text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-30"
           aria-label={`Remove ${CORE_LABELS[kind]} ${selected}`}
         >
