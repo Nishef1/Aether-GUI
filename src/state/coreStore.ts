@@ -37,29 +37,29 @@ export const useCoreStore = create<CoreStore>((set, get) => ({
         [kind]: { ...state.cores[kind], loading: true, error: null },
       },
     }));
+
+    let status: CoreStatus | null = null;
+    let releases: CoreRelease[] = [];
+    let error: string | null = null;
+
     try {
-      const [releases, status] = await Promise.all([
-        invoke<CoreRelease[]>("list_core_versions", { kind }),
-        invoke<CoreStatus>("get_core_status", { kind }),
-      ]);
-      set((state) => ({
-        cores: {
-          ...state.cores,
-          [kind]: { releases, status, loading: false, error: null },
-        },
-      }));
-    } catch (error) {
-      set((state) => ({
-        cores: {
-          ...state.cores,
-          [kind]: {
-            ...state.cores[kind],
-            loading: false,
-            error: String(error),
-          },
-        },
-      }));
+      status = await invoke<CoreStatus>("get_core_status", { kind });
+    } catch (statusError) {
+      error = String(statusError);
     }
+
+    try {
+      releases = await invoke<CoreRelease[]>("list_core_versions", { kind });
+    } catch (releaseError) {
+      error ??= `Online release list unavailable: ${String(releaseError)}`;
+    }
+
+    set((state) => ({
+      cores: {
+        ...state.cores,
+        [kind]: { releases, status, loading: false, error },
+      },
+    }));
   },
 
   installAndUse: async (kind, version) => {
