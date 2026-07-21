@@ -62,6 +62,26 @@ impl IpVersion {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+pub enum ConnectionMode {
+    Proxy,
+    Tunnel,
+    Both,
+}
+
+impl Default for ConnectionMode {
+    fn default() -> Self {
+        Self::Proxy
+    }
+}
+
+impl ConnectionMode {
+    pub fn uses_tun(&self) -> bool {
+        matches!(self, Self::Tunnel | Self::Both)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum MasqueNoize {
     Firewall,
     Gfw,
@@ -103,6 +123,8 @@ pub struct ConnectionProfile {
     pub protocol: Protocol,
     pub scan_mode: ScanMode,
     pub ip_version: IpVersion,
+    #[serde(default)]
+    pub connection_mode: ConnectionMode,
     #[serde(default = "default_true")]
     pub quick_reconnect: bool,
     #[serde(default)]
@@ -116,9 +138,6 @@ pub struct ConnectionProfile {
     /// rejected in the backend as well as hidden from the UI.
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
-    /// Route the whole system through Aether's SOCKS proxy using sing-box TUN.
-    #[serde(default)]
-    pub tun_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -138,8 +157,6 @@ fn default_bind_address() -> String {
 }
 
 /// Preserve a valid custom port while forcing the listener back to loopback.
-/// This also repairs profiles saved by older GUI versions that allowed
-/// `0.0.0.0`, which exposed Aether's unauthenticated SOCKS proxy to the LAN.
 pub fn sanitize_bind_address(value: &str) -> String {
     let Ok(addr) = value.parse::<SocketAddr>() else {
         return default_bind_address();
@@ -152,7 +169,6 @@ pub fn sanitize_bind_address(value: &str) -> String {
 
 fn help_supports(help: Option<&str>, flag: &str) -> bool {
     let Some(help) = help else {
-        // If capability discovery itself fails, preserve current behavior.
         return true;
     };
     help.lines().any(|line| {
@@ -168,10 +184,11 @@ impl ConnectionProfile {
         self
     }
 
-    /// Build arguments against the *active* independently-updated Aether core.
-    /// When `--help` is available we only pass flags advertised by that binary;
-    /// unsupported settings fall back to Aether's interactive prompts/defaults
-    /// instead of making a future core fail immediately on an unknown option.
+    pub fn uses_tun(&self) -> bool {
+        self.connection_mode.uses_tun()
+    }
+
+    /// Build arguments against the active independently-updated Aether core.
     pub fn as_args_for_help(&self, help: Option<&str>) -> Vec<String> {
         let mut args = Vec::with_capacity(12);
 
@@ -240,12 +257,12 @@ impl Default for ConnectionProfile {
             protocol: Protocol::Auto,
             scan_mode: ScanMode::Balanced,
             ip_version: IpVersion::V4,
+            connection_mode: ConnectionMode::Proxy,
             quick_reconnect: true,
             masque_http2: false,
             masque_noize: MasqueNoize::Firewall,
             wg_noize: WgNoize::Balanced,
             bind_address: default_bind_address(),
-            tun_enabled: false,
         }
     }
 }
@@ -254,9 +271,6 @@ const STORE_FILE: &str = "profile.json";
 const STORE_KEY: &str = "last_successful_profile";
 const PENDING_ELEVATION_KEY: &str = "pending_elevated_profile";
 
-/// Load only the last profile that reached a proven Connected/Tunneling state.
-/// Elevation-resume state is intentionally handled by `take_pending_elevation`
-/// so a normal app launch never auto-connects just because TUN was used before.
 pub fn load(app: &tauri::AppHandle) -> ConnectionProfile {
     use tauri_plugin_store::StoreExt;
     let Ok(store) = app.store(STORE_FILE) else {
@@ -327,12 +341,25 @@ mod tests {
     }
 
     #[test]
-    fn old_profile_json_gets_safe_defaults() {
-        let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4","quick_reconnect":true,"masque_http2":false,"bind_address":"0.0.0.0:1919"}"#;
+    fn missing_connection_mode_defaults_to_proxy() {
+        let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4","quick_reconnect":true,"masque_http2":false,"bind_address":"127.0.0.1:1919"}"#;
         let p: ConnectionProfile = serde_json::from_str(json).unwrap();
-        let p = p.sanitized();
-        assert_eq!(p.bind_address, "127.0.0.1:1919");
-        assert!(!p.tun_enabled);
+        assert_eq!(p.connection_mode, ConnectionMode::Proxy);
+        assert!(!p.uses_tun());
+    }
+
+    #[test]
+    fn tunnel_modes_require_tun() {
+        let tunnel = ConnectionProfile {
+            connection_mode: ConnectionMode::Tunnel,
+            ..ConnectionProfile::default()
+        };
+        let both = ConnectionProfile {
+            connection_mode: ConnectionMode::Both,
+            ..ConnectionProfile::default()
+        };
+        assert!(tunnel.uses_tun());
+        assert!(both.uses_tun());
     }
 
     #[test]
