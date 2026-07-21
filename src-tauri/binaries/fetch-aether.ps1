@@ -11,7 +11,7 @@ $Headers = @{ "User-Agent" = "Aether-GUI-Core-Updater" }
 $AssetName = "aether-windows-x86_64.zip"
 
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
-$Target = Join-Path $DestDir "aether.exe"
+$FallbackTarget = Join-Path $DestDir "aether.exe"
 $VersionFile = Join-Path $DestDir "aether-version.txt"
 
 Write-Host "[core-updater] Checking latest stable Aether release..."
@@ -20,11 +20,16 @@ $Version = [string]$Release.tag_name
 if ([string]::IsNullOrWhiteSpace($Version)) {
     throw "Latest Aether release did not contain a tag name"
 }
+$SafeVersion = $Version -replace '[^A-Za-z0-9._-]', '_'
+$VersionedTarget = Join-Path $DestDir "aether-$SafeVersion.exe"
 
-if ((Test-Path $Target) -and (Test-Path $VersionFile)) {
+if ((Test-Path $VersionedTarget) -and (Test-Path $VersionFile)) {
     $InstalledVersion = (Get-Content $VersionFile -Raw).Trim()
     if ($InstalledVersion -eq $Version) {
         Write-Host "[core-updater] Aether $Version is already installed"
+        if (-not (Test-Path $FallbackTarget)) {
+            Copy-Item $VersionedTarget $FallbackTarget -Force
+        }
         exit 0
     }
 }
@@ -67,28 +72,25 @@ try {
         throw "aether.exe was not found inside $AssetName"
     }
 
-    $NewTarget = "$Target.new"
-    $BackupTarget = "$Target.old"
-    Remove-Item $NewTarget -Force -ErrorAction SilentlyContinue
-    Copy-Item $DownloadedExe.FullName $NewTarget -Force
+    # Install the new core under an immutable versioned filename. A connection
+    # already using an older version keeps that file untouched; only the small
+    # version pointer changes for future connections.
+    $VersionedNew = "$VersionedTarget.new"
+    Remove-Item $VersionedNew -Force -ErrorAction SilentlyContinue
+    Copy-Item $DownloadedExe.FullName $VersionedNew -Force
+    Move-Item $VersionedNew $VersionedTarget -Force
 
-    Remove-Item $BackupTarget -Force -ErrorAction SilentlyContinue
-    $HadExisting = Test-Path $Target
-    if ($HadExisting) {
-        Move-Item $Target $BackupTarget -Force
-    }
+    $VersionFileNew = "$VersionFile.new"
+    Set-Content -Path $VersionFileNew -Value $Version -NoNewline
+    Move-Item $VersionFileNew $VersionFile -Force
 
+    # Keep a conventional filename as a build/manual-run fallback. Failure to
+    # refresh this alias must not invalidate the verified versioned install.
     try {
-        Move-Item $NewTarget $Target -Force
-        Set-Content -Path $VersionFile -Value $Version -NoNewline
-        Remove-Item $BackupTarget -Force -ErrorAction SilentlyContinue
+        Copy-Item $VersionedTarget $FallbackTarget -Force
     }
     catch {
-        Remove-Item $Target -Force -ErrorAction SilentlyContinue
-        if (Test-Path $BackupTarget) {
-            Move-Item $BackupTarget $Target -Force
-        }
-        throw
+        Write-Warning "Could not refresh aether.exe fallback alias: $_"
     }
 
     Write-Host "[core-updater] Aether core updated to $Version"
