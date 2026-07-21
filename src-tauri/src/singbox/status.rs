@@ -8,12 +8,6 @@ pub const MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
 const PROBE_TIMEOUT_SECS: &str = "8";
 const TRACE_URL: &str = "https://www.cloudflare.com/cdn-cgi/trace";
 
-#[derive(Debug)]
-struct Trace {
-    ip: Option<String>,
-    warp: Option<String>,
-}
-
 fn no_window(command: &mut Command) {
     #[cfg(windows)]
     {
@@ -42,19 +36,13 @@ fn run_curl(args: &[String]) -> Result<String, AetherError> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn parse_trace(body: &str) -> Trace {
-    let mut trace = Trace { ip: None, warp: None };
-    for line in body.lines() {
-        if let Some(value) = line.strip_prefix("ip=") {
-            trace.ip = Some(value.trim().to_string());
-        } else if let Some(value) = line.strip_prefix("warp=") {
-            trace.warp = Some(value.trim().to_string());
-        }
-    }
-    trace
+fn parse_ip(body: &str) -> Option<String> {
+    body.lines()
+        .find_map(|line| line.strip_prefix("ip="))
+        .map(|value| value.trim().to_string())
 }
 
-fn socks_trace(port: u16) -> Result<Trace, AetherError> {
+fn socks_ip(port: u16) -> Result<String, AetherError> {
     let args = vec![
         "--silent".into(),
         "--show-error".into(),
@@ -65,46 +53,41 @@ fn socks_trace(port: u16) -> Result<Trace, AetherError> {
         format!("socks5h://127.0.0.1:{port}"),
         TRACE_URL.into(),
     ];
-    Ok(parse_trace(&run_curl(&args)?))
+    parse_ip(&run_curl(&args)?)
+        .ok_or_else(|| AetherError::TunHealthFailed("SOCKS probe returned no public IP".into()))
 }
 
-fn system_trace() -> Result<Trace, AetherError> {
+fn system_ip() -> Result<String, AetherError> {
     let args = vec![
         "--silent".into(),
         "--show-error".into(),
         "--fail".into(),
         "--max-time".into(),
         PROBE_TIMEOUT_SECS.into(),
+        // Ignore user-level proxy environment variables. This request must be
+        // captured by the operating-system TUN route itself.
         "--noproxy".into(),
         "*".into(),
         TRACE_URL.into(),
     ];
-    Ok(parse_trace(&run_curl(&args)?))
+    parse_ip(&run_curl(&args)?)
+        .ok_or_else(|| AetherError::TunHealthFailed("system probe returned no public IP".into()))
 }
 
 /// Verify the complete path instead of treating an alive sing-box process as
-/// proof of connectivity. We compare an explicit request through Aether SOCKS
-/// with a normal system request that must be intercepted by the TUN route.
+/// proof of connectivity. A direct system request must leave through the exact
+/// same public egress IP as an explicit request through Aether's SOCKS proxy.
+/// We intentionally do not accept a generic `warp=on` signal because another
+/// independently-running WARP client could otherwise create a false positive.
 pub fn verify_tunnel(aether_socks_port: u16) -> Result<(), AetherError> {
-    let via_socks = socks_trace(aether_socks_port)?;
-    let via_system = system_trace()?;
+    let via_socks = socks_ip(aether_socks_port)?;
+    let via_system = system_ip()?;
 
-    let socks_ip = via_socks.ip.as_deref().ok_or_else(|| {
-        AetherError::TunHealthFailed("SOCKS probe returned no public IP".into())
-    })?;
-    let system_ip = via_system.ip.as_deref().ok_or_else(|| {
-        AetherError::TunHealthFailed("system probe returned no public IP".into())
-    })?;
-
-    let same_ip = socks_ip == system_ip;
-    let same_active_warp = via_socks.warp.as_deref() == via_system.warp.as_deref()
-        && via_socks.warp.as_deref().is_some_and(|value| value != "off");
-
-    if same_ip || same_active_warp {
+    if via_socks == via_system {
         Ok(())
     } else {
         Err(AetherError::TunHealthFailed(format!(
-            "system traffic bypassed the tunnel (SOCKS IP {socks_ip}, system IP {system_ip})"
+            "system traffic bypassed the Aether TUN (SOCKS IP {via_socks}, system IP {via_system})"
         )))
     }
 }
@@ -114,9 +97,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_cloudflare_trace_fields() {
-        let trace = parse_trace("fl=1\nip=203.0.113.5\nwarp=on\n");
-        assert_eq!(trace.ip.as_deref(), Some("203.0.113.5"));
-        assert_eq!(trace.warp.as_deref(), Some("on"));
+    fn parses_cloudflare_trace_ip() {
+        assert_eq!(
+            parse_ip("fl=1\nip=203.0.113.5\nwarp=on\n").as_deref(),
+            Some("203.0.113.5")
+        );
+        assert_eq!(parse_ip("fl=1\nwarp=off\n"), None);
     }
 }
