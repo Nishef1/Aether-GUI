@@ -2,6 +2,7 @@
 
 mod aether;
 mod commands;
+mod core_manager;
 mod diagnostics;
 mod error;
 mod events;
@@ -109,7 +110,6 @@ fn main() {
 
             aether::orphan::reap_orphan(&data_dir);
             singbox::reap_orphan(app.handle());
-
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
             aether::updater::refresh_in_background(app.handle().clone());
@@ -126,8 +126,11 @@ fn main() {
             commands::set_close_to_tray,
             commands::elevate,
             commands::get_tun_status,
-            commands::get_core_info,
-            commands::refresh_core,
+            commands::list_core_versions,
+            commands::get_core_status,
+            commands::install_core_version,
+            commands::select_core_version,
+            commands::remove_core_version,
             commands::get_diagnostics_path,
         ])
         .on_window_event(|window, event| {
