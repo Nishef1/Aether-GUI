@@ -38,10 +38,11 @@ impl PtySession {
     }
 
     pub fn kill(&mut self) {
-        let _ = self.child.kill();
-        // Explicitly reap the child. This matters on Unix where a terminated
-        // child can otherwise remain as a zombie until the parent exits.
-        let _ = self.child.wait();
+        // Only block in wait after the termination signal was accepted. If the
+        // kill itself fails, waiting could otherwise block forever on a live child.
+        if self.child.kill().is_ok() {
+            let _ = self.child.wait();
+        }
     }
 }
 
