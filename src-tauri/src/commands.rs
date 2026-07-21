@@ -90,16 +90,9 @@ pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
         return Ok(());
     }
 
-    // connect() normally prepares this state before returning
-    // ElevationRequired. Repeating the preparation here makes the command safe
-    // when invoked directly and keeps the elevated process download-free.
-    let profile = aether::profiles::load(&app);
-    if profile.uses_tun() {
-        let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
-        let _ = core_manager::ensure_active(&app, CoreKind::Singbox)?;
-        aether::profiles::save_pending_elevation(&app, &profile);
-    }
-
+    // connect() has already verified dependencies and stored the exact profile
+    // selected by the user. Do not reload or overwrite it here: doing so could
+    // replace a pending Tunnel/Both selection with the last successful profile.
     if crate::relaunch_as_admin() {
         std::process::exit(0);
     }
