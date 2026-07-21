@@ -90,44 +90,43 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const disconnected = connectionStatus === "Idle" || connectionStatus === "Error"
   const hasCoreUpdates = coreUpdates.length > 0
   const hasUpdate = Boolean(appUpdate) || hasCoreUpdates
-  const coreUpdateBlocked = hasCoreUpdates && (!disconnected || isElevated)
+  const canUpdateCores = hasCoreUpdates && disconnected && !isElevated
 
-  const updateLabel = appUpdate
-    ? "Update app"
-    : coreUpdates.length > 1
-      ? "Update cores"
-      : "Update core"
+  const updateLabel = appUpdate && hasCoreUpdates
+    ? "Updates"
+    : appUpdate
+      ? "Update app"
+      : coreUpdates.length > 1
+        ? "Update cores"
+        : "Update core"
 
   const updateTitle = updateError
     ? updateError
-    : appUpdate
-      ? `Aether-GUI ${appUpdate.latest_version} is available`
-      : !disconnected
-        ? "Disconnect before updating cores"
-        : isElevated
-          ? "Restart Aether-GUI normally before updating cores"
-          : coreUpdates.map((update) => `${update.kind} ${update.version}`).join(" · ")
+    : appUpdate && hasCoreUpdates
+      ? `Aether-GUI ${appUpdate.latest_version} and ${coreUpdates.length} core update${coreUpdates.length > 1 ? "s" : ""} available`
+      : appUpdate
+        ? `Aether-GUI ${appUpdate.latest_version} is available`
+        : !disconnected
+          ? "Disconnect before updating cores"
+          : isElevated
+            ? "Restart Aether-GUI normally before updating cores"
+            : coreUpdates.map((update) => `${update.kind} ${update.version}`).join(" · ")
 
   const handleUpdate = async () => {
     setUpdateError(null)
-
-    if (appUpdate) {
-      try {
-        await invoke("open_app_update", { releaseUrl: appUpdate.release_url })
-      } catch (error) {
-        setUpdateError(String(error))
-      }
-      return
-    }
-
-    if (coreUpdateBlocked || coreUpdates.length === 0) return
-
     setUpdating(true)
+
     try {
-      for (const update of coreUpdates) {
-        await installAndUse(update.kind, update.version)
-        const error = useCoreStore.getState().cores[update.kind].error
-        if (error) throw new Error(error)
+      if (canUpdateCores) {
+        for (const update of coreUpdates) {
+          await installAndUse(update.kind, update.version)
+          const error = useCoreStore.getState().cores[update.kind].error
+          if (error) throw new Error(error)
+        }
+      }
+
+      if (appUpdate) {
+        await invoke("open_app_update", { releaseUrl: appUpdate.release_url })
       }
     } catch (error) {
       setUpdateError(String(error))
@@ -135,6 +134,8 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
       setUpdating(false)
     }
   }
+
+  const buttonDisabled = updating || (!appUpdate && hasCoreUpdates && !canUpdateCores)
 
   return (
     <header
@@ -144,7 +145,7 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
       {hasUpdate && (
         <button
           type="button"
-          disabled={updating || (!appUpdate && coreUpdateBlocked)}
+          disabled={buttonDisabled}
           title={updateTitle}
           aria-label={updateLabel}
           className="mr-1 flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
