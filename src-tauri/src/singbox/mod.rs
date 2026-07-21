@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
+pub const COMPATIBLE_VERSION_TAG: &str = "v1.13.12";
+
 pub struct SingboxManager {
     process: Option<SingboxProcess>,
     config_path: Option<PathBuf>,
@@ -74,32 +76,43 @@ fn ensure_executable(path: &Path) {
     }
 }
 
-fn existing_binary(app: &AppHandle) -> Option<PathBuf> {
-    let managed = managed_dir(app).join(binary_name());
-    if managed.exists() {
-        ensure_executable(&managed);
-        return Some(managed);
+/// Accept a TUN engine only when it carries the metadata written by our
+/// verified fetcher for the exact config schema tested by this GUI. On Windows,
+/// the Wintun driver must also be present beside the executable.
+fn compatible_binary_in(dir: &Path) -> Option<PathBuf> {
+    let version = fs::read_to_string(dir.join("sing-box-version.txt")).ok()?;
+    if version.trim() != COMPATIBLE_VERSION_TAG {
+        return None;
     }
 
-    let resource = app
-        .path()
-        .resource_dir()
-        .ok()
-        .map(|dir| dir.join("binaries").join(binary_name()))
-        .filter(|path| path.exists());
-    if let Some(path) = resource {
-        ensure_executable(&path);
+    #[cfg(windows)]
+    if !dir.join("wintun.dll").exists() {
+        return None;
+    }
+
+    let binary = dir.join(binary_name());
+    if !binary.exists() {
+        return None;
+    }
+    ensure_executable(&binary);
+    Some(binary)
+}
+
+fn existing_binary(app: &AppHandle) -> Option<PathBuf> {
+    if let Some(path) = compatible_binary_in(&managed_dir(app)) {
         return Some(path);
     }
 
-    let development = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(binary_name());
-    if development.exists() {
-        ensure_executable(&development);
-        return Some(development);
+    if let Some(path) = app
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|dir| compatible_binary_in(&dir.join("binaries")))
+    {
+        return Some(path);
     }
-    None
+
+    compatible_binary_in(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"))
 }
 
 fn fetch_script(app: &AppHandle) -> Option<PathBuf> {
@@ -152,7 +165,9 @@ fn fetch_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
     emit_log(
         app,
         "info",
-        "TUN dependency is missing; fetching a verified stable sing-box release",
+        format!(
+            "validated TUN dependency {COMPATIBLE_VERSION_TAG} is missing; fetching a verified release"
+        ),
     );
     let mut command = if cfg!(windows) {
         let mut cmd = Command::new("powershell.exe");
@@ -192,7 +207,10 @@ fn fetch_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
     }
 
     existing_binary(app).ok_or_else(|| {
-        AetherError::SingboxBinaryMissing(dest.join(binary_name()).display().to_string())
+        AetherError::SingboxBinaryMissing(format!(
+            "verified sing-box {COMPATIBLE_VERSION_TAG} was not installed correctly in {}",
+            dest.display()
+        ))
     })
 }
 
@@ -228,7 +246,10 @@ pub fn start_tunnel(
     emit_log(
         &app,
         "info",
-        format!("configuration validated with {}", binary.display()),
+        format!(
+            "configuration validated with {COMPATIBLE_VERSION_TAG} ({})",
+            binary.display()
+        ),
     );
 
     let (log_tx, log_rx) = mpsc::channel();
