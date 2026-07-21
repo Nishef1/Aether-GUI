@@ -178,6 +178,7 @@ fn main() {
                     .unwrap_or_else(|_| std::env::temp_dir());
                 diagnostics::record("app", "info", "application exit requested");
                 aether::shutdown_blocking(&state.manager, &state.singbox, &data_dir);
+                diagnostics::flush();
             }
         });
 }
