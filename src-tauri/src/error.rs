@@ -12,6 +12,8 @@ pub enum AetherError {
     PortInUse(u16),
     #[error("no active connection")]
     NotConnected,
+    #[error("core manager error: {0}")]
+    CoreManager(String),
     #[error("core update failed: {0}")]
     CoreUpdateFailed(String),
     #[error("administrator privileges are required for system-wide TUN mode")]
@@ -28,8 +30,6 @@ pub enum AetherError {
     Internal(String),
 }
 
-// Tauri v2 command errors must be Serialize; the frontend only needs the
-// human-readable message, so errors cross IPC as strings.
 impl serde::Serialize for AetherError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
