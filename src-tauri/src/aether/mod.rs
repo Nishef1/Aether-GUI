@@ -144,10 +144,11 @@ fn spawn_and_monitor(
         Err(e) => {
             // Integrity verification proves the download is authentic, not that
             // a newly released core remains compatible with this GUI/runtime.
-            // If the independently managed core cannot even launch, retry once
-            // with the tested core shipped with this GUI before surfacing Error.
+            // If the independently managed core cannot even launch, quarantine
+            // that release and retry once with the tested bundled core.
             if updater::is_managed_binary(&app, &binary) {
                 if let Some(fallback) = updater::bundled_recovery_binary(&app) {
+                    updater::reject_managed_binary(&app, &binary, &format!("launch failed: {e}"));
                     diagnostics::record(
                         "core-updater",
                         "warn",
@@ -315,10 +316,15 @@ fn monitor_connect(
 
             // A managed core that starts as a process but exits before it ever
             // exposes SOCKS is treated as a possible compatibility regression.
-            // Fall back once to the core bundled with this GUI. Once on the
-            // bundled core, ordinary bounded reconnect logic applies normally.
+            // Quarantine that tag and fall back once to the core bundled with
+            // this GUI. Once on bundled core, ordinary recovery applies.
             if updater::is_managed_binary(&app, &binary) {
                 if let Some(fallback) = updater::bundled_recovery_binary(&app) {
+                    updater::reject_managed_binary(
+                        &app,
+                        &binary,
+                        &format!("exited before connecting: {exit}"),
+                    );
                     diagnostics::record(
                         "core-updater",
                         "warn",
