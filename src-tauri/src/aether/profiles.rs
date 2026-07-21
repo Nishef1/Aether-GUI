@@ -125,6 +125,10 @@ pub struct ConnectionProfile {
     pub ip_version: IpVersion,
     #[serde(default)]
     pub connection_mode: ConnectionMode,
+    /// Runtime-only derived cache used by the supervisor. `connection_mode` is
+    /// the only persisted source of truth.
+    #[serde(skip)]
+    pub(crate) tun_enabled: bool,
     #[serde(default = "default_true")]
     pub quick_reconnect: bool,
     #[serde(default)]
@@ -156,7 +160,6 @@ fn default_bind_address() -> String {
     "127.0.0.1:1819".into()
 }
 
-/// Preserve a valid custom port while forcing the listener back to loopback.
 pub fn sanitize_bind_address(value: &str) -> String {
     let Ok(addr) = value.parse::<SocketAddr>() else {
         return default_bind_address();
@@ -181,6 +184,7 @@ fn help_supports(help: Option<&str>, flag: &str) -> bool {
 impl ConnectionProfile {
     pub fn sanitized(mut self) -> Self {
         self.bind_address = sanitize_bind_address(&self.bind_address);
+        self.tun_enabled = self.connection_mode.uses_tun();
         self
     }
 
@@ -188,7 +192,6 @@ impl ConnectionProfile {
         self.connection_mode.uses_tun()
     }
 
-    /// Build arguments against the active independently-updated Aether core.
     pub fn as_args_for_help(&self, help: Option<&str>) -> Vec<String> {
         let mut args = Vec::with_capacity(12);
 
@@ -258,6 +261,7 @@ impl Default for ConnectionProfile {
             scan_mode: ScanMode::Balanced,
             ip_version: IpVersion::V4,
             connection_mode: ConnectionMode::Proxy,
+            tun_enabled: false,
             quick_reconnect: true,
             masque_http2: false,
             masque_noize: MasqueNoize::Firewall,
@@ -349,17 +353,19 @@ mod tests {
     }
 
     #[test]
-    fn tunnel_modes_require_tun() {
+    fn tunnel_modes_derive_runtime_tun_flag() {
         let tunnel = ConnectionProfile {
             connection_mode: ConnectionMode::Tunnel,
             ..ConnectionProfile::default()
-        };
+        }
+        .sanitized();
         let both = ConnectionProfile {
             connection_mode: ConnectionMode::Both,
             ..ConnectionProfile::default()
-        };
-        assert!(tunnel.uses_tun());
-        assert!(both.uses_tun());
+        }
+        .sanitized();
+        assert!(tunnel.tun_enabled);
+        assert!(both.tun_enabled);
     }
 
     #[test]
