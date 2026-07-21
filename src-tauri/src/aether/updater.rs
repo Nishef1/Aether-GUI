@@ -1,5 +1,4 @@
 use crate::core_manager::{self, CoreKind};
-use crate::diagnostics;
 use crate::error::AetherError;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
@@ -35,38 +34,4 @@ pub fn current_info(app: &AppHandle) -> Result<CoreInfo, AetherError> {
 pub fn refresh_now(app: &AppHandle) -> Result<CoreInfo, AetherError> {
     core_manager::install_latest_stable(app, CoreKind::Aether)?;
     current_info(app)
-}
-
-/// Background startup work checks metadata only. It never changes the active
-/// version, and it is skipped entirely in the elevated TUN process.
-pub fn refresh_in_background(app: AppHandle) {
-    if crate::is_admin() {
-        diagnostics::record(
-            "core-manager",
-            "info",
-            "skipping background release check in elevated process",
-        );
-        return;
-    }
-
-    std::thread::spawn(
-        move || match core_manager::latest_stable(&app, CoreKind::Aether) {
-            Ok(latest) => {
-                let active = core_manager::status(&app, CoreKind::Aether)
-                    .ok()
-                    .and_then(|status| status.active_version)
-                    .unwrap_or_else(|| "bundled".into());
-                diagnostics::record(
-                    "core-manager",
-                    "info",
-                    format!("Aether release check: active={active}, latest-stable={latest}"),
-                );
-            }
-            Err(error) => diagnostics::record(
-                "core-manager",
-                "warn",
-                format!("Aether release check skipped: {error}"),
-            ),
-        },
-    );
 }
