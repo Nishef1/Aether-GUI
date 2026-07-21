@@ -19,6 +19,7 @@ export type ConnectionStatus =
 export type Protocol = "auto" | "masque" | "wireguard" | "gool";
 export type ScanMode = "turbo" | "balanced" | "thorough" | "stealth" | "ironclad";
 export type IpVersion = "v4" | "v6" | "both";
+export type ConnectionMode = "proxy" | "tunnel" | "both";
 export type MasqueNoize = "firewall" | "gfw" | "off";
 export type WgNoize = "balanced" | "aggressive" | "light" | "off";
 
@@ -26,14 +27,13 @@ export interface ConnectionProfile {
   protocol: Protocol;
   scan_mode: ScanMode;
   ip_version: IpVersion;
+  connection_mode: ConnectionMode;
   quick_reconnect: boolean;
   masque_http2: boolean;
   masque_noize: MasqueNoize;
   wg_noize: WgNoize;
   /** Loopback-only SOCKS5 address. The port is configurable. */
   bind_address: string;
-  /** Route all system traffic through a supervised sing-box TUN. */
-  tun_enabled: boolean;
 }
 
 export interface LogLine {
