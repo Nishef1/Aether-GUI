@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  ConnectionMode,
   ConnectionProfile,
   ConnectionStatus,
   LogLine,
@@ -24,12 +25,12 @@ interface ConnectionState {
   setProtocol: (protocol: ConnectionProfile["protocol"]) => void;
   setScanMode: (scan_mode: ConnectionProfile["scan_mode"]) => void;
   setIpVersion: (ip_version: ConnectionProfile["ip_version"]) => void;
+  setConnectionMode: (connection_mode: ConnectionMode) => void;
   setQuickReconnect: (quick_reconnect: boolean) => void;
   setMasqueHttp2: (masque_http2: boolean) => void;
   setMasqueNoize: (masque_noize: MasqueNoize) => void;
   setWgNoize: (wg_noize: WgNoize) => void;
   setBindAddress: (bind_address: string) => void;
-  setTunEnabled: (tun_enabled: boolean) => void;
   retryAfterSidecarError: () => void;
 }
 
@@ -39,12 +40,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     protocol: "auto",
     scan_mode: "balanced",
     ip_version: "v4",
+    connection_mode: "proxy",
     quick_reconnect: true,
     masque_http2: false,
     masque_noize: "firewall",
     wg_noize: "balanced",
     bind_address: "127.0.0.1:1819",
-    tun_enabled: false,
   },
   logs: [],
   sidecarError: null,
@@ -91,6 +92,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   setProtocol: (protocol) => set((s) => ({ profile: { ...s.profile, protocol } })),
   setScanMode: (scan_mode) => set((s) => ({ profile: { ...s.profile, scan_mode } })),
   setIpVersion: (ip_version) => set((s) => ({ profile: { ...s.profile, ip_version } })),
+  setConnectionMode: (connection_mode) =>
+    set((s) => ({ profile: { ...s.profile, connection_mode } })),
   setQuickReconnect: (quick_reconnect) =>
     set((s) => ({ profile: { ...s.profile, quick_reconnect } })),
   setMasqueHttp2: (masque_http2) =>
@@ -100,7 +103,6 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   setWgNoize: (wg_noize) => set((s) => ({ profile: { ...s.profile, wg_noize } })),
   setBindAddress: (bind_address) =>
     set((s) => ({ profile: { ...s.profile, bind_address } })),
-  setTunEnabled: (tun_enabled) => set((s) => ({ profile: { ...s.profile, tun_enabled } })),
   retryAfterSidecarError: () => set({ sidecarError: null }),
 }));
 
@@ -157,9 +159,6 @@ export async function initConnectionListeners(): Promise<() => void> {
     const activeProfile = pendingElevationProfile ?? profile;
     useConnectionStore.setState({ status, profile: activeProfile });
 
-    // The normal process saved this profile immediately before requesting UAC.
-    // Only an elevated process can consume it, so resuming here cannot turn a
-    // regular app launch into an unexpected auto-connect.
     if (pendingElevationProfile && status.state === "Idle") {
       queueMicrotask(() => void useConnectionStore.getState().connect());
     }
