@@ -9,85 +9,203 @@
 
 **English** · [فارسی](README_fa.md)
 
-A one-click desktop GUI for [**Aether**](https://github.com/CluvexStudio/Aether), a censorship-circumvention tunnel built for heavily restricted networks. Aether itself is a terminal tool: it discovers a working route out, establishes an encrypted tunnel, and exposes a local SOCKS5 proxy. Aether-GUI wraps that terminal tool in a small, animated desktop app so you don't have to touch a command line to use it — press Connect, and everything else (identity provisioning, route discovery, prompt answering) happens automatically in the background.
+Aether-GUI is a desktop GUI for [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether), a censorship-circumvention client designed for heavily restricted networks. Aether discovers a working route, establishes the encrypted tunnel, and exposes a local SOCKS5 proxy. The GUI drives the real Aether core in a pseudo-terminal and can optionally place a supervised [sing-box](https://github.com/SagerNet/sing-box) TUN layer on top for system-wide routing.
 
-This project does not reimplement any of Aether's tunneling logic. It drives the real `aether` binary in a pseudo-terminal, answers its interactive setup prompts on your behalf, and watches its output to tell you what's happening. All the actual censorship-circumvention work — MASQUE/QUIC obfuscation, WireGuard, route probing — is [Aether's](https://github.com/CluvexStudio/Aether), not this repo's.
-
-<p align="center">
-  <img src="docs/screenshot-idle.png" alt="Aether-GUI — one-click connect screen with an animated 3D backdrop" width="380">
-</p>
+The GUI and the Aether core have **independent release lifecycles**. A GUI release is not tied to one permanent core version.
 
 ## Features
 
-- **Auto mode** — the default screen is just a single button. No configuration is required; it connects using your last-successful settings (or sensible defaults on first run).
-- **Advanced panel** — for when you want control, a collapsible panel exposes the real options Aether's setup supports:
-  - **Protocol**: MASQUE (disguises traffic as normal HTTPS), WireGuard (lighter, faster), or WARP-in-WARP/gool (two nested WireGuard tunnels for extra security at a speed cost)
-  - **Scan Mode**: Turbo, Balanced, Thorough, Stealth, or Ironclad — trading route-discovery speed against how much probe traffic it generates; Ironclad opens a real tunnel through each candidate and sends a real HTTP request before trusting it (slowest, but guaranteed working)
-  - **IP Version**: IPv4, IPv6, or both
-  - **MASQUE Transport**: HTTP/3 (QUIC — fastest handshake) or HTTP/2 (TCP — looks like ordinary HTTPS, works where UDP is blocked or throttled)
-  - **Obfuscation**: how heavily the handshake is disguised from DPI — profiles adapt to the selected protocol; escalate if the default can't get through
-  - **Quick reconnect**: remember the last working gateway and re-test it first, skipping the full scan when it still works
-  
-  Each option has an explanation on hover.
-- **Live progress** — while Aether searches for a working route, the GUI shows real elapsed time and, once Aether reports its own scan budget, an actual percentage and progress bar — not just a spinner.
-- **Automatic reconnect** — if the tunnel drops unexpectedly mid-session (observed occasionally with WARP-in-WARP, but handled the same way for every protocol), the GUI retries automatically with backoff, shown as a visible "Reconnecting… (attempt N of 3)" rather than silently dying or dumping you back to a bare error. A user-requested disconnect is never retried.
+- **One-click connection** — use the last successful profile or sensible defaults.
+- **Advanced controls** — protocol, scan mode, IP version, MASQUE transport, obfuscation profile, quick reconnect, and local SOCKS port.
+- **System-wide TUN mode** — optionally routes system traffic through `sing-box -> Aether SOCKS`. Administrator/root privileges are requested only when TUN mode is enabled.
+- **Real TUN health supervision** — the GUI does not consider an alive `sing-box` process proof of a working tunnel. Startup and periodic checks verify the full data path; repeated failures tear down the broken chain and enter recovery instead of leaving the UI falsely connected.
+- **Independent Aether core updates** — the app checks the latest stable Aether release separately from GUI updates. Downloads are verified against Aether's official `SHA256SUMS.txt`, installed into the app-data managed-core directory, and the bundled core remains a fallback.
+- **Core capability detection** — before launching an independently updated core, the GUI reads `aether --help` and avoids blindly forwarding CLI flags that the active core no longer advertises.
+- **Verified TUN dependencies** — sing-box release assets require a SHA-256 digest. On Windows, Wintun is accepted from the verified sing-box archive or from the official Wintun distribution after a valid Authenticode signature check.
+- **Persistent diagnostics** — Aether output, sing-box output, state changes, updater events, TUN health failures, and Rust panics are written to a rotating JSONL diagnostics file. Obvious credential-bearing lines are redacted before persistent storage.
+- **Automatic recovery** — unexpected Aether or TUN failures are supervised as one connection lifecycle with bounded retries.
+- **Crash-safe process cleanup** — orphan cleanup validates both the saved PID and expected process identity before force-killing anything. It never kills every `sing-box.exe` process on the machine.
+- **Local-only SOCKS proxy** — the GUI deliberately binds Aether's unauthenticated SOCKS server to loopback. Older saved `0.0.0.0`/LAN profiles are sanitized back to `127.0.0.1` while preserving their port.
 
-## Installing
+## Connection model
 
-Grab the latest installer from the [Releases page](https://github.com/MatinSenPai/Aether-GUI/releases):
+Without TUN:
 
-- `Aether-GUI_x.y.z_x64-setup.exe` — standard installer (recommended)
-- `Aether-GUI_x.y.z_x64_en-US.msi` — MSI package, for scripted or enterprise installs
+```text
+Aether core -> local SOCKS5 (127.0.0.1:1819 by default) -> applications configured to use SOCKS
+```
 
-Windows x64 only for now — see [Building from source](#building-from-source) for other platforms.
+With TUN:
+
+```text
+System traffic -> sing-box TUN -> Aether SOCKS5 -> Aether encrypted tunnel -> internet
+```
+
+The high-level state flow is:
+
+```text
+Idle -> Launching -> Connecting -> Connected
+                                  -> Tunneling   (when system-wide TUN is enabled and verified)
+```
+
+`Connected` means the Aether SOCKS endpoint is ready. `Tunneling` means the full system-wide path has passed an end-to-end health check.
+
+## Aether core updates
+
+At startup, Aether-GUI performs a best-effort background check for the latest **stable** Aether release. The managed core lives under the application's data directory and takes precedence over the bundled fallback.
+
+Safety rules:
+
+1. The GUI never replaces a working core with an unverified download.
+2. Aether release archives are checked against the release's official `SHA256SUMS.txt`.
+3. Replacement uses a `.new`/`.old` rollback path so a failed install does not destroy the previous binary.
+4. If the update service is unreachable, the currently managed or bundled core continues to work.
+5. On a true first run with no usable core, pressing Connect performs the verified fetch synchronously instead of racing the background updater.
+
+Because the core can advance independently, launch arguments are filtered using the active core's own `--help` output. The existing pseudo-terminal prompt handler remains as a compatibility fallback.
+
+## TUN mode and privileges
+
+TUN mode uses sing-box with automatic routing and interface detection. On Windows, strict routing is enabled to reduce DNS leakage from the multi-homed DNS behavior of the OS. Strict routing can conflict with some virtual-network software, so if TUN mode fails, check the diagnostics log and test without conflicting virtual adapters.
+
+The normal proxy-only mode does **not** require elevation. When TUN is enabled and you press Connect, the app requests elevation on demand and resumes the pending connection after relaunch.
+
+The TUN supervisor continuously drains both `stdout` and `stderr` from sing-box, validates its configuration before launch, checks process health, and periodically probes the actual data path. After three consecutive data-path failures, the broken TUN/Aether chain is torn down and recovery is attempted.
+
+## Diagnostics
+
+Persistent diagnostics are stored in the app-data directory:
+
+```text
+logs/aether-gui.jsonl
+logs/aether-gui.jsonl.1   # previous rotated log
+```
+
+The active file rotates at approximately 5 MiB. Each line is JSON containing a timestamp, component, level, and message.
+
+The log records:
+
+- GUI startup/version/OS/architecture
+- Aether core version and path
+- core update activity
+- Aether output
+- sing-box output
+- connection state transitions
+- TUN health checks and failures
+- recovery attempts
+- Rust panics and application exit
+
+Lines containing obvious secrets such as authorization headers, bearer tokens, access tokens, private keys, passwords, or similar credential markers are replaced with a redacted placeholder before being written to disk.
+
+## Installing a release
+
+For normal use, install a release build from the upstream project's Releases page. Windows x64 is the primary packaged target at the moment.
 
 ## Building from source
 
-1. **Prerequisites**
-   - [Node.js](https://nodejs.org/) and npm
-   - [Rust](https://rustup.rs/) (stable toolchain)
-   - Tauri's platform prerequisites — see the [Tauri v2 prerequisites guide](https://v2.tauri.app/start/prerequisites/) (on Windows this is the MSVC C++ Build Tools + WebView2 Runtime, both usually already present; macOS needs Xcode Command Line Tools; Linux needs `webkit2gtk` and friends)
+### 1. Prerequisites
 
-2. **Install frontend dependencies**
+- [Node.js](https://nodejs.org/) and npm
+- [Rust stable via rustup](https://rustup.rs/)
+- [Tauri v2 platform prerequisites](https://v2.tauri.app/start/prerequisites/)
+  - Windows: Microsoft C++ Build Tools / Windows SDK and WebView2 Runtime
+  - macOS: Xcode Command Line Tools
+  - Linux: the WebKitGTK and system packages required by Tauri
 
-   ```sh
-   npm install
-   ```
+Confirm Rust is available:
 
-3. **Fetch the Aether binary**
+```sh
+rustc --version
+cargo --version
+```
 
-   Aether-GUI bundles the real `aether` binary from [CluvexStudio/Aether releases](https://github.com/CluvexStudio/Aether/releases) rather than building it — this repo only ships the GUI. Fetch and checksum-verify it for your platform:
+### 2. Install frontend dependencies
 
-   ```sh
-   ./src-tauri/binaries/fetch-aether.sh
-   ```
+```sh
+npm install
+```
 
-   This script covers Linux and macOS directly. On Windows, download the matching `aether-windows-*.zip` from the [Aether releases page](https://github.com/CluvexStudio/Aether/releases) yourself, verify it against the published `SHA256SUMS.txt`, and extract `aether.exe` into `src-tauri/binaries/`.
+### 3. Fetch verified fallback binaries
 
-4. **Run in development mode**
+Fetching binaries before a release build gives the application an offline fallback in addition to its runtime managed-core updater.
 
-   ```sh
-   npm run tauri dev
-   ```
+Windows:
 
-5. **Build a release installer**
+```powershell
+npm run fetch:binaries:windows
+```
 
-   ```sh
-   npm run tauri build
-   ```
+Linux/macOS:
 
-   Installers land under `src-tauri/target/release/bundle/` (NSIS `.exe` and `.msi` on Windows; `.dmg`/`.app` on macOS; `.deb`/`.AppImage`/`.rpm` on Linux — cross-platform bundles must each be built on their own OS, or via CI).
+```sh
+npm run fetch:binaries:unix
+```
 
-## How it works
+The Aether fetcher resolves the latest stable release dynamically and verifies `SHA256SUMS.txt`. The sing-box fetcher resolves the latest stable release dynamically and verifies the release asset digest.
 
-- **Frontend**: React 19 + Tailwind v4, state managed with Zustand, animated with [Motion](https://motion.dev/) — all talking to the Rust backend over Tauri's IPC. Deliberately lightweight: the ambient background is two compositor-only CSS gradient orbs, and every looping animation freezes while the window is unfocused, so the app costs next to nothing sitting in the background.
-- **Backend**: Rust, using [`portable-pty`](https://docs.rs/portable-pty) to spawn the real `aether` binary (v1.3.0) in a genuine pseudo-terminal. Your chosen profile — protocol, scan mode, IP version, MASQUE transport (HTTP/3 or HTTP/2), obfuscation profile, quick reconnect — is passed as CLI flags/environment up front, so Aether's interactive prompts normally never appear; a background thread still watches the output and can answer any prompt that does, while forwarding every line live to the GUI's log panel.
-- **Ground truth for "connected"**: the GUI doesn't trust Aether's log wording alone (that's fragile across releases) — it treats a successful TCP connection to the local SOCKS5 port (`127.0.0.1:1819`) as the actual proof the tunnel is up.
-- **State machine**: `Idle → Launching → Connecting → Connected`, with `Reconnecting` and `Error` as the two ways a connection attempt can end up needing your attention — `Reconnecting` retries automatically (with backoff, capped at 3 attempts), `Error` is the final word once retries are exhausted or something isn't retriable (e.g. the binary itself is missing).
+### 4. Run in development mode
+
+```sh
+npm run tauri dev
+```
+
+### 5. Build installers
+
+```sh
+npm run tauri build
+```
+
+Bundles are generated under `src-tauri/target/release/bundle/`.
+
+## Local validation
+
+Run these before submitting changes:
+
+```sh
+npm run typecheck
+npm run lint
+npm run check:rust
+npm run test:rust
+npm run clippy:rust
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+```
+
+For dependency vulnerability auditing, install `cargo-audit` once and run it against the Rust project:
+
+```sh
+cargo install cargo-audit
+cargo audit --file src-tauri/Cargo.lock
+```
+
+For an end-to-end TUN test on Windows:
+
+1. Start the app normally, not as Administrator.
+2. Enable **System-wide TUN** in Advanced.
+3. Press Connect and accept the UAC prompt.
+4. Wait for **Protected system-wide**, which is emitted only after the data-path probe succeeds.
+5. Keep the connection active long enough to exercise periodic health checks.
+6. Disconnect during both normal operation and TUN startup to verify cancellation cleanup.
+7. Review `aether-gui.jsonl` for the complete state/process/health sequence.
+
+## Security notes
+
+- Aether's SOCKS endpoint is intentionally loopback-only in this GUI because the core SOCKS server does not provide proxy authentication.
+- External binaries are not trusted solely because they downloaded successfully; the fetch paths perform integrity/signature verification before installation.
+- TUN elevation is requested only when needed. The regular application path remains non-elevated.
+- The WebView CSP blocks objects, frames, base URL changes, and form submissions in addition to the default same-origin restrictions.
+- The project supervises only processes it owns; broad process-name killing is intentionally avoided.
+
+## Architecture
+
+- **Frontend:** React 19, TypeScript, Tailwind CSS v4, Zustand, Motion.
+- **Desktop shell/backend:** Tauri 2 + Rust.
+- **Aether process:** spawned in a real pseudo-terminal using `portable-pty` so current and fallback interactive behavior can be handled safely.
+- **TUN process:** sing-box is spawned as a separately supervised child with continuously drained output and pre-launch config validation.
+- **Ground truth:** local SOCKS readiness is a connection milestone; system-wide TUN requires a separate end-to-end data-path check.
 
 ## About Aether
 
-[Aether](https://github.com/CluvexStudio/Aether) is the actual censorship-circumvention engine this app wraps — a standalone terminal tool that discovers reachable routes and establishes the tunnel, independent of any GUI. If you'd rather use it directly from a terminal, or want to understand exactly what it's doing under the hood, that's the repo to read. Aether-GUI exists purely to make that tool one click away for people who don't want to live in a terminal.
+Aether-GUI does not reimplement Aether's censorship-circumvention protocols. The actual MASQUE, WireGuard, gool/WARP-in-WARP, endpoint discovery, obfuscation, data-plane validation, and tunnel behavior belong to [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether).
 
 ## License
 
