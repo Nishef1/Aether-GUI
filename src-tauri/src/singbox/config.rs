@@ -5,16 +5,19 @@ pub const TUN_INTERFACE_NAME: &str = "aether-tun";
 pub const TUN_ADDRESS: &str = "172.19.0.1/30";
 pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
 
+/// Match both Core Registry binaries such as
+/// `.../cores/singbox/sing-box-v1.13.14.exe` and the bundled recovery binary
+/// `.../binaries/sing-box.exe`. Keeping this rule tied to Aether-GUI's known
+/// directory layout avoids coupling TUN routing to one selected core version.
+fn singbox_process_path_regex() -> String {
+    r"(?i)^.*[\\/](?:cores[\\/]singbox[\\/]sing-box-[A-Za-z0-9._-]+|binaries[\\/]sing-box)(?:\.exe)?$"
+        .into()
+}
+
 pub fn generate_config(
     aether_socks_port: u16,
     aether_binary: &Path,
 ) -> Result<String, serde_json::Error> {
-    let singbox_process = if cfg!(windows) {
-        "sing-box.exe"
-    } else {
-        "sing-box"
-    };
-
     let config = Config {
         log: LogConfig {
             // Per-flow info logs are extremely high volume in TUN mode and can
@@ -25,7 +28,10 @@ pub fn generate_config(
         },
         dns: DnsConfig {
             servers: vec![DnsServer {
-                type_: "udp".into(),
+                // DNS-over-TCP keeps system name resolution on the protected
+                // Aether path without making bootstrap DNS depend on SOCKS5 UDP
+                // ASSOCIATE behavior. General TUN UDP traffic is still supported.
+                type_: "tcp".into(),
                 tag: "dns-proxy".into(),
                 server: "1.1.1.1".into(),
                 server_port: 53,
@@ -45,18 +51,17 @@ pub fn generate_config(
         outbounds: vec![Outbound::socks(aether_socks_port), Outbound::direct()],
         route: RouteConfig {
             rules: vec![
-                // The core's outer transport must never be captured by the TUN,
-                // otherwise it can recursively route its own Cloudflare session
-                // back through the SOCKS listener it provides.
+                // Aether's outer Cloudflare transport must never be captured by
+                // the TUN, otherwise it recursively routes through its own SOCKS.
                 RouteRule::route_process_path(aether_binary.to_string_lossy().into_owned()),
-                RouteRule::route_process_name(singbox_process.into()),
-                // Windows may point interface DNS at the synthetic TUN peer
-                // (172.19.0.2 / fdfe:...::2). Treating that as ordinary traffic
-                // sends an unreachable private destination through SOCKS and makes
-                // the whole system appear offline. Explicit DNS hijacking keeps the
-                // query inside sing-box's DNS module, whose upstream is detoured
-                // through Aether's SOCKS path.
-                RouteRule::hijack_dns(),
+                // Core Registry installs sing-box with a versioned filename while
+                // recovery resources use sing-box(.exe). Match both layouts so a
+                // core upgrade/downgrade cannot silently break the self-bypass.
+                RouteRule::route_process_path_regex(singbox_process_path_regex()),
+                // `protocol: dns` only matches after protocol sniffing. We do not
+                // sniff all TUN traffic, so match DNS by destination port instead.
+                // This handles both UDP and TCP DNS without extra sniff overhead.
+                RouteRule::hijack_dns_port(),
             ],
             final_: "proxy".into(),
             auto_detect_interface: true,
@@ -152,11 +157,11 @@ struct RouteConfig {
 #[derive(Serialize)]
 struct RouteRule {
     #[serde(skip_serializing_if = "Option::is_none")]
-    protocol: Option<Vec<String>>,
+    port: Option<Vec<u16>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     process_path: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    process_name: Option<Vec<String>>,
+    process_path_regex: Option<Vec<String>>,
     action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     outbound: Option<String>,
@@ -165,29 +170,29 @@ struct RouteRule {
 impl RouteRule {
     fn route_process_path(path: String) -> Self {
         Self {
-            protocol: None,
+            port: None,
             process_path: Some(vec![path]),
-            process_name: None,
+            process_path_regex: None,
             action: "route".into(),
             outbound: Some("direct".into()),
         }
     }
 
-    fn route_process_name(name: String) -> Self {
+    fn route_process_path_regex(pattern: String) -> Self {
         Self {
-            protocol: None,
+            port: None,
             process_path: None,
-            process_name: Some(vec![name]),
+            process_path_regex: Some(vec![pattern]),
             action: "route".into(),
             outbound: Some("direct".into()),
         }
     }
 
-    fn hijack_dns() -> Self {
+    fn hijack_dns_port() -> Self {
         Self {
-            protocol: Some(vec!["dns".into()]),
+            port: Some(vec![53]),
             process_path: None,
-            process_name: None,
+            process_path_regex: None,
             action: "hijack-dns".into(),
             outbound: None,
         }
@@ -200,7 +205,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn config_is_dual_stack_and_bypasses_core_with_separate_rules() {
+    fn config_is_dual_stack_and_bypasses_cores_before_dns_hijack() {
         let core = PathBuf::from(if cfg!(windows) {
             r"C:\Users\test\AppData\Roaming\Aether-GUI\cores\aether\aether-v1.3.0.exe"
         } else {
@@ -213,17 +218,20 @@ mod tests {
             value["route"]["rules"][0]["process_path"][0],
             core.to_string_lossy().as_ref()
         );
-        assert!(value["route"]["rules"][0].get("process_name").is_none());
-        assert!(value["route"]["rules"][1].get("process_path").is_none());
         assert_eq!(value["route"]["rules"][0]["outbound"], "direct");
+        assert!(value["route"]["rules"][1]["process_path_regex"][0]
+            .as_str()
+            .unwrap()
+            .contains("cores"));
         assert_eq!(value["route"]["rules"][1]["outbound"], "direct");
-        assert_eq!(value["route"]["rules"][2]["protocol"][0], "dns");
+        assert_eq!(value["route"]["rules"][2]["port"][0], 53);
         assert_eq!(value["route"]["rules"][2]["action"], "hijack-dns");
         assert!(value["route"]["rules"][2].get("outbound").is_none());
         assert_eq!(value["route"]["auto_detect_interface"], true);
         assert_eq!(value["inbounds"][0]["strict_route"], true);
         assert_eq!(value["inbounds"][0]["address"][0], TUN_ADDRESS);
         assert_eq!(value["inbounds"][0]["address"][1], TUN_ADDRESS_V6);
+        assert_eq!(value["dns"]["servers"][0]["type"], "tcp");
         assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
         assert_eq!(value["log"]["level"], "warn");
     }
@@ -256,7 +264,9 @@ mod tests {
 
         assert_eq!(value["route"]["final"], "proxy");
         assert_eq!(value["dns"]["final"], "dns-proxy");
+        assert_eq!(value["dns"]["servers"][0]["type"], "tcp");
         assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
+        assert_eq!(value["route"]["rules"][2]["port"][0], 53);
         assert_eq!(value["route"]["rules"][2]["action"], "hijack-dns");
     }
 }
