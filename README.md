@@ -13,7 +13,7 @@ The GUI, Aether core, and sing-box core have independent version lifecycles.
 
 ## Core management
 
-Open **Advanced → Core management** to manage external core versions.
+Open **Settings → Core management** to manage external core versions.
 
 For both Aether and sing-box you can:
 
@@ -27,6 +27,8 @@ For both Aether and sing-box you can:
 A newly downloaded version does not overwrite older managed versions. The selected version is stored as a small active-version pointer.
 
 A bundled recovery core is separate from managed versions and remains available as a safety fallback.
+
+The title bar also checks for newer stable core releases. When an update is available, an **Update core** / **Update cores** action appears. Core updates remain disabled while connected or while the GUI is elevated.
 
 ## Connection model
 
@@ -66,7 +68,8 @@ Before system routes are considered protected:
 - automatic route creation and default-interface detection are enabled;
 - strict routing is enabled;
 - the TUN interface is dual-stack;
-- IPv4 and IPv6 paths with real system egress are checked against the Aether SOCKS egress;
+- DNS on port 53 is hijacked into sing-box's DNS module and resolved through the protected Aether path;
+- IPv4 and IPv6 system paths are verified against the protected Aether/WARP data path without persisting public IP values;
 - repeated data-plane failures tear down the broken chain instead of leaving a false Connected state.
 
 The SOCKS listener is deliberately loopback-only.
@@ -78,9 +81,10 @@ The SOCKS listener is deliberately loopback-only.
 - stdout/stderr and PTY output are continuously drained.
 - forced Aether and sing-box termination reaps child processes.
 - reconnect attempts are bounded.
-- frontend live logs retain only the latest 500 entries.
+- frontend live logs retain only the latest 200 entries and are rendered in a lightweight bounded viewer.
 - PTY partial input is bounded.
-- persistent JSONL diagnostics rotate at approximately 5 MiB.
+- the structured JSONL diagnostics file is truncated on each application launch and stops writing after approximately 2 MiB in that session.
+- diagnostic writes are buffered to avoid unnecessary per-line disk flushes.
 - obvious credentials and the user's home-directory path are redacted before logs are written.
 - public IP values used by TUN health checks are not persisted in diagnostics.
 
@@ -90,6 +94,29 @@ Proxy-only mode runs without Administrator/root privileges.
 
 When TUN is requested, verified core binaries are prepared before elevation. The elevated instance resumes the one-shot pending connection and uses already-installed binaries. Core installation and version changes are disabled while elevated.
 
+## Tray status
+
+The tray icon reflects connection state at a glance:
+
+- gray — disconnected;
+- orange — connecting, reconnecting, starting/stopping TUN, or disconnecting;
+- green — connected/protected;
+- red — connection error.
+
+## Updates and releases
+
+Aether-GUI ships a tested baseline Aether core and sing-box/Wintun resources inside the desktop bundle, while newer managed core versions remain independently installable.
+
+The title bar checks for:
+
+- stable Aether core updates;
+- stable sing-box core updates;
+- newer stable Aether-GUI GitHub Releases.
+
+Core updates can be installed and activated in place while disconnected. A desktop-app update currently opens the exact official GitHub Release page. Seamless in-app installation is intentionally reserved for Tauri's signed updater flow rather than an unsigned custom executable download.
+
+See [`docs/RELEASING.md`](docs/RELEASING.md) for the release model, signing guidance, and reproducible bundled-core baseline.
+
 ## Architecture
 
 See:
@@ -97,6 +124,7 @@ See:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Core Registry, engine boundaries, TUN safety, future Xray integration.
 - [`docs/UPSTREAM.md`](docs/UPSTREAM.md) — how to consume future changes from `MatinSenPai/Aether-GUI` safely.
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — beginner-friendly Windows build, run, test, upgrade and downgrade instructions.
+- [`docs/RELEASING.md`](docs/RELEASING.md) — bundled cores, NSIS distribution, app/core update strategy and release checklist.
 
 The central rule is:
 
@@ -125,7 +153,7 @@ Install dependencies:
 pnpm install
 ```
 
-Prepare bundled recovery cores:
+Prepare the tested bundled baseline cores:
 
 ```powershell
 pnpm prepare:cores:windows
@@ -148,11 +176,19 @@ Run in development mode:
 pnpm tauri dev
 ```
 
-Build installers:
+Build the recommended one-file Windows setup executable, including the bundled baseline cores:
 
 ```powershell
-pnpm tauri build
+pnpm build:windows:setup
 ```
+
+Build only the raw release-mode application executable for local testing:
+
+```powershell
+pnpm build:windows:exe
+```
+
+The raw executable is not the preferred standalone distribution artifact because bundled core resources are installed alongside the application by the desktop bundle.
 
 ## Upstream projects
 
