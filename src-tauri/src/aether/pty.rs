@@ -201,7 +201,7 @@ const MAX_PARTIAL: usize = 16 * 1024;
 
 fn drain_lines(buffer: &mut String) -> Vec<String> {
     let mut lines = Vec::new();
-    while let Some(position) = buffer.find(|character| character == '\r' || character == '\n') {
+    while let Some(position) = buffer.find(['\r', '\n']) {
         let end = if buffer.as_bytes()[position] == b'\n' {
             position
         } else {
@@ -219,10 +219,7 @@ fn drain_lines(buffer: &mut String) -> Vec<String> {
             run_end
         };
         let line: String = buffer.drain(..=end).collect();
-        lines.push(
-            line.trim_end_matches(|character| character == '\r' || character == '\n')
-                .to_string(),
-        );
+        lines.push(line.trim_end_matches(['\r', '\n']).to_string());
     }
     if buffer.len() > MAX_PARTIAL {
         let mut cut = buffer.len() - MAX_PARTIAL;
