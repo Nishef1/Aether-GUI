@@ -40,6 +40,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
       entry.releases.find((release) => !release.prerelease)?.version ?? null,
     [entry.releases]
   )
+  const bundledVersion = entry.status?.bundled_version ?? null
   const fallbackSelection = entry.status?.active_version ?? latestStable ?? ""
   const [selectionOverride, setSelectionOverride] = useState<string | null>(
     null
@@ -82,7 +83,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
           <p className="text-[10px] text-muted-foreground">
             Active:{" "}
             {entry.status?.active_version ??
-              `bundled ${entry.status?.bundled_version ?? "unknown"}`}
+              `bundled ${bundledVersion ?? "unknown"}`}
           </p>
         </div>
         <button
@@ -107,7 +108,13 @@ function CoreCard({ kind }: { kind: CoreKind }) {
           className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           aria-label={`${CORE_LABELS[kind]} version`}
         >
-          {!selected && <option value="">Choose version</option>}
+          {!selected && (
+            <option value="">
+              {bundledVersion
+                ? `Bundled ${bundledVersion} — active fallback`
+                : "Choose version"}
+            </option>
+          )}
           {releases.map((release) => (
             <option key={release.version} value={release.version}>
               {release.version}
