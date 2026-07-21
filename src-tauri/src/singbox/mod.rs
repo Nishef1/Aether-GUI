@@ -80,16 +80,11 @@ fn emit_log(app: &AppHandle, level: &str, message: impl Into<String>) {
 }
 
 pub fn ensure_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
-    core_manager::ensure_active(app, CoreKind::Singbox).map_err(|error| {
-        AetherError::SingboxBinaryMissing(error.to_string())
-    })
+    core_manager::ensure_active(app, CoreKind::Singbox)
+        .map_err(|error| AetherError::SingboxBinaryMissing(error.to_string()))
 }
 
-fn write_config(
-    app: &AppHandle,
-    port: u16,
-    aether_binary: &Path,
-) -> Result<PathBuf, AetherError> {
+fn write_config(app: &AppHandle, port: u16, aether_binary: &Path) -> Result<PathBuf, AetherError> {
     let dir = runtime_dir(app);
     fs::create_dir_all(&dir).map_err(|e| AetherError::SingboxConfigFailed(e.to_string()))?;
     let content = config::generate_config(port, aether_binary)
@@ -143,13 +138,16 @@ pub fn start_tunnel(
     let app_for_logs = app.clone();
     std::thread::spawn(move || {
         for log in log_rx {
-            let level = if log.stream == "stderr" { "warn" } else { "info" };
+            let level = if log.stream == "stderr" {
+                "warn"
+            } else {
+                "info"
+            };
             emit_log(&app_for_logs, level, log.line);
         }
     });
 
     let deadline = Instant::now() + status::TUN_STARTUP_TIMEOUT;
-    let mut last_error = String::from("TUN data plane did not become healthy");
     loop {
         std::thread::sleep(Duration::from_millis(750));
 
@@ -164,21 +162,19 @@ pub fn start_tunnel(
             )));
         }
 
-        match status::verify_tunnel(aether_socks_port) {
+        let health_error = match status::verify_tunnel(aether_socks_port) {
             Ok(()) => {
                 manager.lock().unwrap().active = true;
                 emit_log(&app, "info", "system-wide TUN data plane verified");
                 return Ok(());
             }
-            Err(error) => {
-                last_error = error.to_string();
-                diagnostics::record("tun-health", "warn", &last_error);
-            }
-        }
+            Err(error) => error.to_string(),
+        };
+        diagnostics::record("tun-health", "warn", &health_error);
 
         if Instant::now() >= deadline {
             stop_tunnel(&app, &manager);
-            return Err(AetherError::TunHealthFailed(last_error));
+            return Err(AetherError::TunHealthFailed(health_error));
         }
     }
 }
@@ -254,7 +250,7 @@ fn expected_process_is_alive(pid: u32) -> bool {
         let mut command = Command::new("tasklist");
         command.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
         no_window(&mut command);
-        return command
+        command
             .output()
             .map(|output| {
                 String::from_utf8_lossy(&output.stdout).lines().any(|line| {
@@ -264,7 +260,7 @@ fn expected_process_is_alive(pid: u32) -> bool {
                         .unwrap_or(false)
                 })
             })
-            .unwrap_or(false);
+            .unwrap_or(false)
     }
 
     #[cfg(unix)]
@@ -290,10 +286,10 @@ fn kill_pid(pid: u32) -> bool {
         let mut command = Command::new("taskkill");
         command.args(["/PID", &pid.to_string(), "/F"]);
         no_window(&mut command);
-        return command
+        command
             .output()
             .map(|output| output.status.success())
-            .unwrap_or(false);
+            .unwrap_or(false)
     }
 
     #[cfg(unix)]
@@ -326,7 +322,11 @@ pub fn reap_orphan(app: &AppHandle) {
         return;
     }
 
-    diagnostics::record("sing-box", "warn", format!("reaping owned orphan PID {pid}"));
+    diagnostics::record(
+        "sing-box",
+        "warn",
+        format!("reaping owned orphan PID {pid}"),
+    );
     if kill_pid(pid) {
         clear_pid(app);
         diagnostics::record("sing-box", "info", format!("orphan PID {pid} terminated"));
