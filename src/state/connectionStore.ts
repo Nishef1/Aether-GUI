@@ -31,6 +31,12 @@ function saveDefaultProfile(profile: ConnectionProfile): Promise<void> {
   return request
 }
 
+function syncTrayState(state: ConnectionStatus["state"]): void {
+  void invoke("sync_tray_state", { state }).catch(() => {
+    // Tray visuals are supplementary and must never affect connectivity.
+  })
+}
+
 interface ConnectionState {
   status: ConnectionStatus
   profile: ConnectionProfile
@@ -109,6 +115,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
               phase: "elevation",
             },
           })
+          syncTrayState("Error")
         }
         return
       }
@@ -117,6 +124,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         set({ sidecarError: message })
       } else {
         set({ status: { state: "Error", message, phase: "launching" } })
+        syncTrayState("Error")
       }
     } finally {
       set({ preparingCores: false })
@@ -165,6 +173,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           phase: "saving-profile",
         },
       })
+      syncTrayState("Error")
     }
   },
 
@@ -251,6 +260,7 @@ export async function initConnectionListeners(): Promise<() => void> {
         status: e.payload,
         ...(e.payload.state === "Launching" ? { scanBudgetSecs: null } : {}),
       })
+      syncTrayState(e.payload.state)
     }),
     listen<LogLine>("aether://log", (e) => {
       pendingLogs.push(e.payload)
@@ -269,6 +279,7 @@ export async function initConnectionListeners(): Promise<() => void> {
     ])
     const activeProfile = pendingElevationProfile ?? profile
     useConnectionStore.setState({ status, profile: activeProfile })
+    syncTrayState(status.state)
 
     // A pending profile is a one-shot handoff created immediately before UAC.
     // Only the elevated process can consume it, so resuming here cannot turn a
