@@ -231,9 +231,10 @@ if (import.meta.env.DEV) {
 }
 
 const BUDGET_RE = /budget=(\d+)s/
+let connectionRuntimeInit: Promise<void> | null = null
+let disposeConnectionRuntime: (() => void) | null = null
 
-/** Call once from App's top-level effect; returns a cleanup function. */
-export async function initConnectionListeners(): Promise<() => void> {
+async function initializeConnectionRuntime(): Promise<void> {
   let pendingLogs: LogLine[] = []
   let flushTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -244,26 +245,26 @@ export async function initConnectionListeners(): Promise<() => void> {
     const batch = pendingLogs.slice(-MAX_PENDING_LOG_LINES)
     pendingLogs = []
     let budget: number | null = null
-    for (const l of batch) {
-      const m = BUDGET_RE.exec(l.line)
-      if (m) budget = Number(m[1])
+    for (const log of batch) {
+      const match = BUDGET_RE.exec(log.line)
+      if (match) budget = Number(match[1])
     }
-    useConnectionStore.setState((s) => ({
-      logs: [...s.logs, ...batch].slice(-MAX_LOG_LINES),
+    useConnectionStore.setState((state) => ({
+      logs: [...state.logs, ...batch].slice(-MAX_LOG_LINES),
       ...(budget !== null ? { scanBudgetSecs: budget } : {}),
     }))
   }
 
   const [unlistenStatus, unlistenLog] = await Promise.all([
-    listen<ConnectionStatus>("aether://status", (e) => {
+    listen<ConnectionStatus>("aether://status", (event) => {
       useConnectionStore.setState({
-        status: e.payload,
-        ...(e.payload.state === "Launching" ? { scanBudgetSecs: null } : {}),
+        status: event.payload,
+        ...(event.payload.state === "Launching" ? { scanBudgetSecs: null } : {}),
       })
-      syncTrayState(e.payload.state)
+      syncTrayState(event.payload.state)
     }),
-    listen<LogLine>("aether://log", (e) => {
-      pendingLogs.push(e.payload)
+    listen<LogLine>("aether://log", (event) => {
+      pendingLogs.push(event.payload)
       if (pendingLogs.length > MAX_PENDING_LOG_LINES * 2) {
         pendingLogs = pendingLogs.slice(-MAX_PENDING_LOG_LINES)
       }
@@ -271,30 +272,49 @@ export async function initConnectionListeners(): Promise<() => void> {
     }),
   ])
 
-  try {
-    const [status, profile, pendingElevationProfile] = await Promise.all([
-      invoke<ConnectionStatus>("get_status"),
-      invoke<ConnectionProfile>("get_default_profile"),
-      invoke<ConnectionProfile | null>("take_pending_elevation_profile"),
-    ])
-    const activeProfile = pendingElevationProfile ?? profile
-    useConnectionStore.setState({ status, profile: activeProfile })
-    syncTrayState(status.state)
-
-    // A pending profile is a one-shot handoff created immediately before UAC.
-    // Only the elevated process can consume it, so resuming here cannot turn a
-    // normal app launch into an unexpected auto-connect.
-    if (pendingElevationProfile && status.state === "Idle") {
-      queueMicrotask(() => void useConnectionStore.getState().connect())
-    }
-  } catch (e) {
-    console.error("Failed to load initial connection state:", e)
-  }
-
-  return () => {
+  disposeConnectionRuntime = () => {
     unlistenStatus()
     unlistenLog()
     if (flushTimer !== null) clearTimeout(flushTimer)
     pendingLogs = []
   }
+
+  const [status, profile, pendingElevationProfile] = await Promise.all([
+    invoke<ConnectionStatus>("get_status"),
+    invoke<ConnectionProfile>("get_default_profile"),
+    invoke<ConnectionProfile | null>("take_pending_elevation_profile"),
+  ])
+  const activeProfile = pendingElevationProfile ?? profile
+  useConnectionStore.setState({ status, profile: activeProfile })
+  syncTrayState(status.state)
+
+  // A pending profile is a one-shot handoff created immediately before UAC.
+  // Only the elevated process can consume it, so resuming here cannot turn a
+  // normal app launch into an unexpected auto-connect.
+  if (pendingElevationProfile && status.state === "Idle") {
+    queueMicrotask(() => void useConnectionStore.getState().connect())
+  }
+}
+
+/**
+ * Initializes the app-lifetime Tauri subscriptions exactly once. React
+ * StrictMode intentionally remounts effects in development; tying native event
+ * listeners to that component lifecycle can briefly duplicate subscriptions and
+ * duplicate log/status events. The WebView owns this runtime until it exits.
+ */
+export async function initConnectionListeners(): Promise<() => void> {
+  connectionRuntimeInit ??= initializeConnectionRuntime().catch((error) => {
+    connectionRuntimeInit = null
+    console.error("Failed to initialize connection runtime:", error)
+  })
+  await connectionRuntimeInit
+  return () => {}
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    disposeConnectionRuntime?.()
+    disposeConnectionRuntime = null
+    connectionRuntimeInit = null
+  })
 }
