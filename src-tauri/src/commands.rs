@@ -45,12 +45,10 @@ fn no_window(command: &mut Command) {
 }
 
 fn parse_version(value: &str) -> Option<Vec<u64>> {
-    let core = value
+    let trimmed = value
         .trim()
-        .trim_start_matches(['v', 'V'])
-        .split_once('-')
-        .map(|(version, _)| version)
-        .unwrap_or_else(|| value.trim().trim_start_matches(['v', 'V']));
+        .trim_start_matches(|character| character == 'v' || character == 'V');
+    let core = trimmed.split('-').next().unwrap_or(trimmed);
     let parts = core
         .split('.')
         .map(str::parse::<u64>)
@@ -116,7 +114,9 @@ fn fetch_app_update(app: &AppHandle) -> Result<Option<AppUpdateInfo>, AetherErro
 
 fn open_external_url(url: &str) -> Result<(), AetherError> {
     if !url.starts_with(APP_RELEASE_PREFIX) {
-        return Err(AetherError::Internal("refusing to open an untrusted update URL".into()));
+        return Err(AetherError::Internal(
+            "refusing to open an untrusted update URL".into(),
+        ));
     }
 
     #[cfg(windows)]
