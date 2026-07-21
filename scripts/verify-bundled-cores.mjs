@@ -11,16 +11,27 @@ const required = [
   ["sing-box.exe", null],
   ["sing-box-version.txt", "v1.13.14"],
   ["wintun.dll", null],
+  ["fetch-aether.ps1", null],
+  ["fetch-singbox.ps1", null],
 ]
 
-const missing = required.filter(([name]) => !existsSync(resolve(binaries, name))).map(([name]) => name)
+const missing = required
+  .filter(([name]) => !existsSync(resolve(binaries, name)))
+  .map(([name]) => name)
 const incorrect = required
   .filter(([, expected]) => expected)
-  .filter(([name, expected]) => readFileSync(resolve(binaries, name), "utf8").trim() !== expected)
+  .filter(
+    ([name, expected]) =>
+      readFileSync(resolve(binaries, name), "utf8").trim() !== expected
+  )
   .map(([name, expected]) => `${name} must contain ${expected}`)
 
 if (missing.length || incorrect.length) {
-  throw new Error(`Bundled core verification failed: ${[...missing, ...incorrect].join(", ")}`)
+  throw new Error(
+    `Bundled core verification failed: ${[...missing, ...incorrect].join(", ")}`
+  )
 }
 
-console.log("Bundled Windows core runtime resources are present and match the pinned baselines.")
+console.log(
+  "Bundled Windows core runtime resources and installer helpers are present and match the pinned baselines."
+)
