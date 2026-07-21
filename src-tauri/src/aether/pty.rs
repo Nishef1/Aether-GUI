@@ -3,12 +3,12 @@ use super::prompts::{looks_like_choice_prompt, PROMPT_TABLE};
 use crate::error::AetherError;
 use crate::events::{now_millis, LogEvent};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct PtySession {
     child: Box<dyn Child + Send + Sync>,
@@ -46,7 +46,9 @@ impl PtySession {
     }
 }
 
-fn read_cli_help(binary: &Path) -> Option<String> {
+static CLI_HELP_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<String>>>> = OnceLock::new();
+
+fn query_cli_help(binary: &Path) -> Option<String> {
     let mut command = std::process::Command::new(binary);
     command.arg("--help");
     #[cfg(windows)]
@@ -65,6 +67,25 @@ fn read_cli_help(binary: &Path) -> Option<String> {
         help.push_str(&String::from_utf8_lossy(&output.stderr));
     }
     (!help.trim().is_empty()).then_some(help)
+}
+
+fn read_cli_help(binary: &Path) -> Option<String> {
+    let cache = CLI_HELP_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = cache.lock() {
+        if let Some(cached) = cache.get(binary) {
+            return cached.clone();
+        }
+    }
+
+    // Managed core binaries are immutable and versioned by path, so capability
+    // output cannot change for a given path during this GUI process. Cache both
+    // successful help text and failures; selecting a new core version naturally
+    // uses a different path and therefore a fresh cache entry.
+    let help = query_cli_help(binary);
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(binary.to_path_buf(), help.clone());
+    }
+    help
 }
 
 pub fn spawn(
