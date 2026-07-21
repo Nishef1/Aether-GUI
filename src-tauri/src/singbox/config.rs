@@ -9,7 +9,11 @@ pub fn generate_config(
     aether_socks_port: u16,
     aether_binary: &Path,
 ) -> Result<String, serde_json::Error> {
-    let singbox_process = if cfg!(windows) { "sing-box.exe" } else { "sing-box" };
+    let singbox_process = if cfg!(windows) {
+        "sing-box.exe"
+    } else {
+        "sing-box"
+    };
 
     let config = Config {
         log: LogConfig {
@@ -167,7 +171,10 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&generate_config(1819, &core).unwrap()).unwrap();
 
-        assert_eq!(value["route"]["rules"][0]["process_path"][0], core.to_string_lossy().as_ref());
+        assert_eq!(
+            value["route"]["rules"][0]["process_path"][0],
+            core.to_string_lossy().as_ref()
+        );
         assert!(value["route"]["rules"][0].get("process_name").is_none());
         assert!(value["route"]["rules"][1].get("process_path").is_none());
         assert_eq!(value["route"]["rules"][0]["outbound"], "direct");
