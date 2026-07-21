@@ -21,7 +21,7 @@ The GUI and the Aether core have **independent release lifecycles**. A GUI relea
 - **Real TUN health supervision** — the GUI does not consider an alive `sing-box` process proof of a working tunnel. Startup and periodic checks verify the full data path; repeated failures tear down the broken chain and enter recovery instead of leaving the UI falsely connected.
 - **Independent Aether core updates** — the app checks the latest stable Aether release separately from GUI updates. Downloads are verified against Aether's official `SHA256SUMS.txt`, installed into the app-data managed-core directory, and the bundled core remains a fallback.
 - **Core capability detection** — before launching an independently updated core, the GUI reads `aether --help` and avoids blindly forwarding CLI flags that the active core no longer advertises.
-- **Verified TUN dependencies** — sing-box release assets require a SHA-256 digest. On Windows, Wintun is accepted from the verified sing-box archive or from the official Wintun distribution after a valid Authenticode signature check.
+- **Verified TUN dependencies** — sing-box release assets require a SHA-256 digest. On Windows, Wintun is accepted from the verified sing-box archive or from the official Wintun distribution after SHA-256 and Authenticode verification.
 - **Persistent diagnostics** — Aether output, sing-box output, state changes, updater events, TUN health failures, and Rust panics are written to a rotating JSONL diagnostics file. Obvious credential-bearing lines are redacted before persistent storage.
 - **Automatic recovery** — unexpected Aether or TUN failures are supervised as one connection lifecycle with bounded retries.
 - **Crash-safe process cleanup** — orphan cleanup validates both the saved PID and expected process identity before force-killing anything. It never kills every `sing-box.exe` process on the machine.
@@ -56,11 +56,12 @@ At startup, Aether-GUI performs a best-effort background check for the latest **
 
 Safety rules:
 
-1. The GUI never replaces a working core with an unverified download.
+1. The GUI never activates an unverified core download.
 2. Aether release archives are checked against the release's official `SHA256SUMS.txt`.
-3. Replacement uses a `.new`/`.old` rollback path so a failed install does not destroy the previous binary.
-4. If the update service is unreachable, the currently managed or bundled core continues to work.
-5. On a true first run with no usable core, pressing Connect performs the verified fetch synchronously instead of racing the background updater.
+3. Verified cores are installed side-by-side under immutable versioned filenames such as `aether-vX.Y.Z.exe`; a small version pointer is switched atomically for future connections, so a background update never modifies the binary used by an already-running tunnel.
+4. Older versioned cores are left intact, and a tested core bundled with the GUI remains available as a recovery fallback.
+5. If the update service is unreachable, the currently managed or bundled core continues to work.
+6. On a true first run with no usable core, pressing Connect performs the verified fetch synchronously instead of racing the background updater.
 
 Because the core can advance independently, launch arguments are filtered using the active core's own `--help` output. The existing pseudo-terminal prompt handler remains as a compatibility fallback.
 
