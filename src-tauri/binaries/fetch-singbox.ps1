@@ -105,6 +105,13 @@ try {
         if (-not $DownloadedWintun) {
             throw "amd64 wintun.dll was not found in the official Wintun archive"
         }
+        # PSModulePath can contain the PowerShell 7 module directory even when
+        # this script is launched by Windows PowerShell (and vice versa). Let
+        # the current host load its matching security module explicitly instead
+        # of relying on module auto-loading, which can fail with
+        # CouldNotAutoloadMatchingModule.
+        $SecurityModuleManifest = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+        Import-Module -Name $SecurityModuleManifest -ErrorAction Stop
         $Signature = Get-AuthenticodeSignature -FilePath $DownloadedWintun.FullName
         if ($Signature.Status -ne "Valid") {
             throw "wintun.dll Authenticode signature is not valid: $($Signature.Status)"
