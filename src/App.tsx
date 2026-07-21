@@ -1,11 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { ConnectButton } from "@/components/ConnectButton";
 import { ConnectionStatusLine } from "@/components/ConnectionStatusLine";
+import { ConnectionModeToggle } from "@/components/ConnectionModeToggle";
 import { AdvancedPanel } from "@/components/AdvancedPanel";
 import { CloseToTrayToggle } from "@/components/CloseToTrayToggle";
 import { AmbientBackground } from "@/components/AmbientBackground";
 import { SidecarErrorScreen } from "@/components/SidecarErrorScreen";
+import { SettingsPanel } from "@/components/SettingsPanel";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TitleBar } from "@/components/TitleBar";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
@@ -20,7 +22,8 @@ const SCREEN_TRANSITION = {
 function MainScreen() {
   return (
     <div className="relative z-10 flex h-full flex-col items-center overflow-y-auto p-6">
-      <div className="flex flex-1 flex-col items-center justify-center gap-6">
+      <ConnectionModeToggle />
+      <div className="flex min-h-52 flex-1 flex-col items-center justify-center gap-6 py-5">
         <ConnectButton />
         <ConnectionStatusLine />
       </div>
@@ -31,6 +34,7 @@ function MainScreen() {
 }
 
 export function App() {
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const sidecarError = useConnectionStore((s) => s.sidecarError);
   const retryAfterSidecarError = useConnectionStore((s) => s.retryAfterSidecarError);
   const connect = useConnectionStore((s) => s.connect);
@@ -47,7 +51,7 @@ export function App() {
       <MotionConfig reducedMotion="user">
         <div className="relative flex h-svh w-full flex-col overflow-hidden bg-background">
           <AmbientBackground />
-          <TitleBar />
+          <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
           <div className="relative min-h-0 flex-1">
             <AnimatePresence mode="sync">
               {sidecarError ? (
@@ -66,6 +70,8 @@ export function App() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
           </div>
         </div>
       </MotionConfig>
