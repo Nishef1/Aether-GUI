@@ -41,13 +41,15 @@ function CoreCard({ kind }: { kind: CoreKind }) {
     [entry.releases]
   )
   const bundledVersion = entry.status?.bundled_version ?? null
-  const fallbackSelection = entry.status?.active_version ?? latestStable ?? ""
+  const fallbackSelection =
+    entry.status?.active_version ?? bundledVersion ?? latestStable ?? ""
   const [selectionOverride, setSelectionOverride] = useState<string | null>(
     null
   )
   const selected =
     selectionOverride &&
-    releases.some((release) => release.version === selectionOverride)
+    (selectionOverride === bundledVersion ||
+      releases.some((release) => release.version === selectionOverride))
       ? selectionOverride
       : fallbackSelection
 
@@ -58,9 +60,13 @@ function CoreCard({ kind }: { kind: CoreKind }) {
     selectedRelease?.installed ??
     entry.status?.installed_versions.includes(selected) ??
     false
+  const bundledSelected = Boolean(
+    bundledVersion && selected === bundledVersion && !installed
+  )
   const active = entry.status?.active_version === selected
 
   const useSelectedVersion = () => {
+    if (bundledSelected) return
     const action = installed ? selectVersion : installAndUse
     void action(kind, selected).catch(() => {
       // The store preserves the message in entry.error for inline display.
@@ -81,9 +87,11 @@ function CoreCard({ kind }: { kind: CoreKind }) {
             {CORE_LABELS[kind]}
           </p>
           <p className="text-[10px] text-muted-foreground">
-            Active:{" "}
-            {entry.status?.active_version ??
-              `bundled ${bundledVersion ?? "unknown"}`}
+            {entry.status?.active_version
+              ? `Active managed: ${entry.status.active_version}`
+              : bundledVersion
+                ? `Bundled baseline: ${bundledVersion}`
+                : "No bundled or managed core detected"}
           </p>
         </div>
         <button
@@ -108,40 +116,48 @@ function CoreCard({ kind }: { kind: CoreKind }) {
           className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           aria-label={`${CORE_LABELS[kind]} version`}
         >
-          {!selected && (
-            <option value="">
-              {bundledVersion
-                ? `Bundled ${bundledVersion} — active fallback`
-                : "Choose version"}
+          {!selected && <option value="">Choose version</option>}
+          {bundledVersion && (
+            <option value={bundledVersion}>
+              {bundledVersion} — bundled baseline
             </option>
           )}
-          {releases.map((release) => (
-            <option key={release.version} value={release.version}>
-              {release.version}
-              {release.prerelease ? " (pre-release)" : ""}
-              {release.active
-                ? " — active"
-                : release.installed
-                  ? " — installed"
-                  : ""}
-            </option>
-          ))}
+          {releases
+            .filter((release) => release.version !== bundledVersion)
+            .map((release) => (
+              <option key={release.version} value={release.version}>
+                {release.version}
+                {release.prerelease ? " (pre-release)" : ""}
+                {release.active
+                  ? " — active"
+                  : release.installed
+                    ? " — installed"
+                    : ""}
+              </option>
+            ))}
         </select>
 
         <button
           type="button"
-          disabled={!selected || active || entry.loading || locked}
+          disabled={
+            !selected || bundledSelected || active || entry.loading || locked
+          }
           onClick={useSelectedVersion}
           className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
         >
           <Download size={13} />
-          {installed ? "Use" : "Install"}
+          {bundledSelected ? "Bundled" : installed ? "Use" : "Install"}
         </button>
 
         <button
           type="button"
           disabled={
-            !selected || !installed || active || entry.loading || locked
+            !selected ||
+            bundledSelected ||
+            !installed ||
+            active ||
+            entry.loading ||
+            locked
           }
           onClick={removeSelectedVersion}
           className="rounded-md p-1.5 text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-30"
@@ -180,10 +196,9 @@ export function CoreManagerPanel() {
       <div>
         <p className="text-xs font-medium text-foreground">Core management</p>
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          Install versions side-by-side and switch without replacing the GUI. A
-          new core becomes active only after you select it; TUN versions are
-          configuration-checked before routing is changed. Use refresh on a
-          core to check recent online releases.
+          Bundled baseline cores are available without a separate install. Managed
+          versions can be installed side-by-side and selected while disconnected.
+          Use refresh to check recent online releases.
         </p>
       </div>
       <CoreCard kind="aether" />
