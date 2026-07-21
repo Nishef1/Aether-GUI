@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Info, Settings2 } from "lucide-react";
 import {
   Collapsible,
@@ -54,21 +54,48 @@ function SectionDivider({ label }: { label: string }) {
   );
 }
 
+function LiveLogViewer() {
+  const logs = useConnectionStore((state) => state.logs);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const output = useMemo(() => logs.map((log) => log.line).join("\n"), [logs]);
+
+  useEffect(() => {
+    if (!autoScroll || !viewportRef.current) return;
+
+    const viewport = viewportRef.current;
+    const frame = requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [output, autoScroll]);
+
+  return (
+    <div
+      ref={viewportRef}
+      onScroll={(event) => {
+        const viewport = event.currentTarget;
+        const nextAutoScroll =
+          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
+        setAutoScroll((current) => (current === nextAutoScroll ? current : nextAutoScroll));
+      }}
+      className="max-h-64 overflow-y-auto rounded-md bg-black/20 p-2 font-mono text-xs text-muted-foreground ring-1 ring-white/10"
+    >
+      {output ? (
+        <pre className="m-0 whitespace-pre-wrap break-words font-inherit text-inherit">{output}</pre>
+      ) : (
+        <p className="text-status-idle">No output yet.</p>
+      )}
+    </div>
+  );
+}
+
 export function AdvancedPanel() {
-  const logs = useConnectionStore((s) => s.logs);
   const status = useConnectionStore((s) => s.status);
   const quickReconnect = useConnectionStore((s) => s.profile.quick_reconnect);
   const setQuickReconnect = useConnectionStore((s) => s.setQuickReconnect);
   const [open, setOpen] = useState(false);
   const locked = status.state !== "Idle" && status.state !== "Error";
-  const [autoScroll, setAutoScroll] = useState(true);
-  const viewportRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (autoScroll && viewportRef.current) {
-      viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
-    }
-  }, [logs, autoScroll]);
 
   return (
     <div className="w-full max-w-sm">
@@ -146,22 +173,10 @@ export function AdvancedPanel() {
             <CoreManagerPanel />
 
             <SectionDivider label="Live logs" />
-            <div
-              ref={viewportRef}
-              onScroll={(e) => {
-                const el = e.currentTarget;
-                setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
-              }}
-              className="max-h-64 overflow-y-auto rounded-md bg-black/20 p-2 font-mono text-xs text-muted-foreground ring-1 ring-white/10"
-            >
-              {logs.length === 0 ? (
-                <p className="text-status-idle">No output yet.</p>
-              ) : (
-                logs.map((l, i) => <p key={i}>{l.line}</p>)
-              )}
-            </div>
+            <LiveLogViewer />
             <p className="text-[10px] leading-relaxed text-muted-foreground">
-              Full structured diagnostics are also written to disk for post-crash debugging.
+              Full structured diagnostics are session-scoped and capped on disk for post-crash
+              debugging.
             </p>
           </div>
         </CollapsibleContent>
