@@ -20,7 +20,10 @@ pub fn init(app_data_dir: &Path) -> std::io::Result<PathBuf> {
     fs::create_dir_all(&log_dir)?;
     let path = log_dir.join(LOG_FILE);
 
-    if fs::metadata(&path).map(|m| m.len() >= MAX_LOG_BYTES).unwrap_or(false) {
+    if fs::metadata(&path)
+        .map(|metadata| metadata.len() >= MAX_LOG_BYTES)
+        .unwrap_or(false)
+    {
         let old = log_dir.join(OLD_LOG_FILE);
         let _ = fs::remove_file(&old);
         let _ = fs::rename(&path, &old);
@@ -36,22 +39,45 @@ pub fn init(app_data_dir: &Path) -> std::io::Result<PathBuf> {
 }
 
 pub fn path() -> Option<PathBuf> {
-    DIAGNOSTICS.get().map(|d| d.path.clone())
+    DIAGNOSTICS.get().map(|diagnostics| diagnostics.path.clone())
+}
+
+fn redact_home_path(message: &str) -> String {
+    let home = std::env::var("USERPROFILE")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| std::env::var("HOME").ok().filter(|value| !value.is_empty()));
+
+    let Some(home) = home else {
+        return message.to_string();
+    };
+    let mut redacted = message.replace(&home, "~");
+    let alternate = if home.contains('\\') {
+        home.replace('\\', "/")
+    } else {
+        home.replace('/', "\\")
+    };
+    if alternate != home {
+        redacted = redacted.replace(&alternate, "~");
+    }
+    redacted
 }
 
 fn redact_sensitive(message: &str) -> String {
     let lower = message.to_ascii_lowercase();
-    // Aether should not normally print secrets, but diagnostics survive app
-    // restarts and may be shared in bug reports. Fail closed if an upstream
-    // release ever logs obvious credential-bearing fields.
     const SENSITIVE_MARKERS: &[&str] = &[
         "private_key",
         "private key",
+        "privatekey",
         "access_token",
         "access token",
+        "accesstoken",
         "authorization:",
         "authorization=",
         "bearer ",
+        "api_key",
+        "api key",
+        "apikey",
         "token=",
         "token:",
         "secret=",
@@ -62,12 +88,12 @@ fn redact_sensitive(message: &str) -> String {
     if SENSITIVE_MARKERS.iter().any(|marker| lower.contains(marker)) {
         "[redacted sensitive log line]".into()
     } else {
-        message.to_string()
+        redact_home_path(message)
     }
 }
 
 pub fn record(component: &str, level: &str, message: impl AsRef<str>) {
-    let Some(diag) = DIAGNOSTICS.get() else {
+    let Some(diagnostics) = DIAGNOSTICS.get() else {
         return;
     };
     let message = redact_sensitive(message.as_ref());
@@ -77,11 +103,9 @@ pub fn record(component: &str, level: &str, message: impl AsRef<str>) {
         "level": level,
         "message": message,
     });
-    if let Ok(mut file) = diag.file.lock() {
+    if let Ok(mut file) = diagnostics.file.lock() {
         let _ = writeln!(file, "{entry}");
-        // Flush each entry deliberately: these logs are primarily for crashes
-        // and tunnel failures, where losing the final buffered lines is worse
-        // than the tiny write overhead of a desktop control-plane process.
+        // Crash diagnostics favor durability over buffering a few final lines.
         let _ = file.flush();
     }
 }
@@ -89,7 +113,11 @@ pub fn record(component: &str, level: &str, message: impl AsRef<str>) {
 pub fn record_status(status: &crate::state::ConnectionState) {
     match serde_json::to_string(status) {
         Ok(value) => record("state", "info", value),
-        Err(e) => record("state", "warn", format!("failed to serialize state: {e}")),
+        Err(error) => record(
+            "state",
+            "warn",
+            format!("failed to serialize state: {error}"),
+        ),
     }
 }
 
@@ -103,7 +131,14 @@ mod tests {
             redact_sensitive("Authorization: Bearer abc123"),
             "[redacted sensitive log line]"
         );
-        assert_eq!(redact_sensitive("private_key = xyz"), "[redacted sensitive log line]");
+        assert_eq!(
+            redact_sensitive("private_key = xyz"),
+            "[redacted sensitive log line]"
+        );
+        assert_eq!(
+            redact_sensitive("apiKey=xyz"),
+            "[redacted sensitive log line]"
+        );
         assert_eq!(redact_sensitive("connected to gateway"), "connected to gateway");
     }
 }
