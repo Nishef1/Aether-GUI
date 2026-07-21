@@ -145,7 +145,11 @@ fn fetch_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
     let dest = managed_dir(app);
     fs::create_dir_all(&dest).map_err(|e| AetherError::Internal(e.to_string()))?;
 
-    emit_log(app, "info", "TUN dependency is missing; fetching a verified stable sing-box release");
+    emit_log(
+        app,
+        "info",
+        "TUN dependency is missing; fetching a verified stable sing-box release",
+    );
     let mut command = if cfg!(windows) {
         let mut cmd = Command::new("powershell.exe");
         cmd.arg("-NoProfile")
@@ -245,13 +249,18 @@ pub fn start_tunnel(
         }
     });
 
-    // Do not declare success merely because the process survived a few seconds.
-    // Wait until an explicit SOCKS request and a normal system request prove the
-    // same tunneled path is carrying real traffic.
     let deadline = Instant::now() + status::TUN_STARTUP_TIMEOUT;
     let mut last_error = String::from("TUN data plane did not become healthy");
     loop {
         std::thread::sleep(Duration::from_millis(750));
+
+        // request_disconnect() removes our owned process. Treat that as an
+        // immediate cancellation instead of continuing health probes and later
+        // overwriting Idle/Disconnecting with a stale Error state.
+        if manager.lock().unwrap().process.is_none() {
+            return Err(AetherError::TunHealthFailed("TUN startup cancelled".into()));
+        }
+
         if let Some(exit) = process_exit_status(&manager)? {
             stop_tunnel(&app, &manager);
             return Err(AetherError::TunHealthFailed(format!(
@@ -310,11 +319,14 @@ pub fn stop_tunnel(app: &AppHandle, manager: &Arc<Mutex<SingboxManager>>) {
         mgr.config_path = None;
         mgr.process.take()
     };
+    let had_process = process.is_some();
     if let Some(process) = process.as_mut() {
         process.kill();
     }
     clear_pid(&managed_dir(app));
-    emit_log(app, "info", "TUN stopped");
+    if had_process {
+        emit_log(app, "info", "TUN stopped");
+    }
 }
 
 pub fn shutdown_blocking(manager: &Arc<Mutex<SingboxManager>>, data_dir: &Path) {
@@ -357,9 +369,12 @@ fn expected_process_is_alive(pid: u32) -> bool {
             .args(["-p", &pid.to_string(), "-o", "comm="])
             .output()
             .map(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .any(|line| Path::new(line.trim()).file_name().is_some_and(|n| n == "sing-box"))
+                String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                    Path::new(line.trim())
+                        .file_name()
+                        .map(|name| name.to_string_lossy() == "sing-box")
+                        .unwrap_or(false)
+                })
             })
             .unwrap_or(false)
     }
