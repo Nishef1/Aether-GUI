@@ -11,6 +11,25 @@ $Headers = @{ "User-Agent" = "Aether-GUI-Core-Manager" }
 $WintunVersion = "0.14.1"
 $WintunSha256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = $sha256.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($hash)).Replace("-", "").ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -58,7 +77,7 @@ New-Item -ItemType Directory -Force -Path $TempDir, $ExtractDir | Out-Null
 
 try {
     Invoke-WebRequest -Uri $Asset.browser_download_url -Headers $Headers -OutFile $ArchivePath
-    $Actual = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $Actual = Get-Sha256Hex -Path $ArchivePath
     if ($Actual -ne $Expected) {
         throw "Checksum mismatch for $AssetName"
     }
@@ -75,7 +94,7 @@ try {
         $WintunArchive = Join-Path $TempDir "wintun-$WintunVersion.zip"
         $WintunExtract = Join-Path $TempDir "wintun"
         Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$WintunVersion.zip" -OutFile $WintunArchive
-        $WintunActual = (Get-FileHash -Path $WintunArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+        $WintunActual = Get-Sha256Hex -Path $WintunArchive
         if ($WintunActual -ne $WintunSha256) {
             throw "Checksum mismatch for official Wintun archive"
         }
