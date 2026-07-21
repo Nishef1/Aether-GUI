@@ -122,14 +122,17 @@ fn binaries_dir() -> PathBuf {
 }
 
 fn resource_binaries_dir(app: &AppHandle) -> Option<PathBuf> {
-    app.path().resource_dir().ok().map(|dir| dir.join("binaries"))
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("binaries"))
 }
 
-fn ensure_executable(path: &Path) {
+fn ensure_executable(_path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
+        let _ = fs::set_permissions(_path, fs::Permissions::from_mode(0o755));
     }
 }
 
