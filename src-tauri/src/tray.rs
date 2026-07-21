@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
+    image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager,
@@ -13,6 +14,7 @@ static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
 
 const STORE_FILE: &str = "settings.json";
 const STORE_KEY: &str = "close_to_tray";
+const TRAY_ID: &str = "aether-main";
 
 pub fn get_close_to_tray() -> bool {
     CLOSE_TO_TRAY.load(Ordering::Relaxed)
@@ -40,6 +42,46 @@ fn load_preference(app: &AppHandle) {
     CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
 }
 
+fn visual_for_state(state: &str) -> ([u8; 3], &'static str) {
+    match state {
+        "Connected" | "Tunneling" => ([52, 211, 153], "Connected"),
+        "Launching" | "Connecting" | "StartingTunnel" | "Reconnecting" | "Disconnecting" => {
+            ([249, 115, 22], "Working")
+        }
+        "Error" => ([239, 68, 68], "Connection error"),
+        _ => ([148, 163, 184], "Disconnected"),
+    }
+}
+
+fn tinted_icon(base: &Image<'_>, color: [u8; 3]) -> Image<'static> {
+    let mut rgba = base.rgba().to_vec();
+    for pixel in rgba.chunks_exact_mut(4) {
+        if pixel[3] == 0 {
+            continue;
+        }
+        pixel[0] = color[0];
+        pixel[1] = color[1];
+        pixel[2] = color[2];
+    }
+    Image::new_owned(rgba, base.width(), base.height())
+}
+
+/// Keep the tray as a compact, glanceable representation of the real connection
+/// state. The frontend calls this whenever it receives a backend status event;
+/// hidden-to-tray windows still keep their listeners alive, so the icon remains
+/// current without adding another state store in Rust.
+pub fn set_visual_state(app: &AppHandle, state: &str) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let Some(base) = app.default_window_icon() else {
+        return;
+    };
+    let (color, label) = visual_for_state(state);
+    let _ = tray.set_icon(Some(tinted_icon(base, color)));
+    let _ = tray.set_tooltip(Some(format!("Aether-GUI — {label}")));
+}
+
 /// Create the system-tray icon, menu, and event handlers. Call from `setup`.
 pub fn init(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     load_preference(app.handle());
@@ -48,10 +90,10 @@ pub fn init(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
-    let mut builder = TrayIconBuilder::new()
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("Aether-GUI")
+        .tooltip("Aether-GUI — Disconnected")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_window(app),
             "quit" => app.exit(0),
@@ -69,7 +111,7 @@ pub fn init(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         });
 
     if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
+        builder = builder.icon(tinted_icon(icon, [148, 163, 184]));
     }
 
     builder.build(app)?;
@@ -94,5 +136,13 @@ mod tests {
         assert!(!get_close_to_tray());
         CLOSE_TO_TRAY.store(true, Ordering::Relaxed);
         assert!(get_close_to_tray());
+    }
+
+    #[test]
+    fn tray_visuals_cover_connection_lifecycle() {
+        assert_eq!(visual_for_state("Idle").1, "Disconnected");
+        assert_eq!(visual_for_state("Connecting").1, "Working");
+        assert_eq!(visual_for_state("Tunneling").1, "Connected");
+        assert_eq!(visual_for_state("Error").1, "Connection error");
     }
 }
