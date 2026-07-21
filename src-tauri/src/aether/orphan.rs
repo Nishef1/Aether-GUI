@@ -60,37 +60,57 @@ fn is_expected_process(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn kill_pid(pid: u32) {
+fn kill_pid(pid: u32) -> bool {
     let mut command = Command::new("taskkill");
     command.args(["/PID", &pid.to_string(), "/F"]);
     no_window(&mut command);
-    let _ = command.output();
+    command.output().map(|output| output.status.success()).unwrap_or(false)
 }
 
 #[cfg(unix)]
-fn kill_pid(pid: u32) {
-    let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+fn kill_pid(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Reap a crash orphan only when the persisted PID still belongs to an Aether
-/// executable. A PID alone is not a stable identity: after a reboot/crash the
-/// OS can reuse it for an unrelated application, which older code could kill.
+/// executable. If an unelevated restart cannot kill an elevated orphan, retain
+/// the PID file so a later elevated launch can complete cleanup instead of
+/// permanently losing ownership information.
 pub fn reap_orphan(data_dir: &Path) {
     let path = pid_file(data_dir);
     let Ok(contents) = fs::read_to_string(&path) else {
         return;
     };
-    if let Ok(pid) = contents.trim().parse::<u32>() {
-        if is_expected_process(pid) {
-            diagnostics::record("aether", "warn", format!("reaping owned orphan PID {pid}"));
-            kill_pid(pid);
-        } else {
-            diagnostics::record(
-                "aether",
-                "info",
-                format!("stale PID file ignored because PID {pid} is not Aether"),
-            );
-        }
+    let Ok(pid) = contents.trim().parse::<u32>() else {
+        let _ = fs::remove_file(&path);
+        return;
+    };
+
+    if !is_expected_process(pid) {
+        diagnostics::record(
+            "aether",
+            "info",
+            format!("stale PID file ignored because PID {pid} is not Aether"),
+        );
+        let _ = fs::remove_file(&path);
+        return;
     }
-    let _ = fs::remove_file(&path);
+
+    diagnostics::record("aether", "warn", format!("reaping owned orphan PID {pid}"));
+    if kill_pid(pid) {
+        let _ = fs::remove_file(&path);
+        diagnostics::record("aether", "info", format!("orphan PID {pid} terminated"));
+    } else {
+        diagnostics::record(
+            "aether",
+            "warn",
+            format!(
+                "could not terminate owned orphan PID {pid}; retaining PID file for a privileged cleanup attempt"
+            ),
+        );
+    }
 }
