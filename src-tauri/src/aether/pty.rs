@@ -14,8 +14,6 @@ pub struct PtySession {
     child: Box<dyn Child + Send + Sync>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     prompts_done: Arc<AtomicBool>,
-    // Keeps the pty master (and thus the slave/child's controlling tty) alive
-    // for the life of the session; never read from directly after spawn.
     _master: Box<dyn MasterPty + Send>,
 }
 
@@ -32,9 +30,6 @@ impl PtySession {
         self.child.try_wait().ok().flatten()
     }
 
-    /// Ctrl-C (ETX) — the same byte a real terminal sends for SIGINT. See
-    /// aether/status.rs::GRACEFUL_SHUTDOWN_GRACE for why callers should
-    /// follow this with only a short wait before `kill()`, not a long one.
     pub fn send_ctrl_c(&self) {
         if let Ok(mut w) = self.writer.lock() {
             let _ = w.write_all(&[0x03]);
@@ -47,16 +42,31 @@ impl PtySession {
     }
 }
 
-/// Spawns Aether in a real PTY (not a plain piped subprocess) and answers its
-/// known interactive prompts as they appear. A PTY is required because
-/// interactive-prompt libraries typically check `isatty()` and behave
-/// differently — or refuse to prompt at all — over a plain pipe.
-///
-/// `cwd` should be a stable, dedicated directory (the app's data dir): Aether
-/// writes its provisioned identity (`aether-masque.toml` / `aether.toml`)
-/// into its working directory, so this must stay consistent across launches
-/// for that identity to persist rather than being silently re-provisioned
-/// every run.
+fn read_cli_help(binary: &Path) -> Option<String> {
+    let mut command = std::process::Command::new(binary);
+    command.arg("--help");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let mut help = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.stderr.is_empty() {
+        help.push('\n');
+        help.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    (!help.trim().is_empty()).then_some(help)
+}
+
+/// Spawns Aether in a real PTY and answers known interactive prompts as a
+/// compatibility fallback. Before launch, `--help` is queried from the active
+/// independently-updated core so the GUI does not blindly send options that a
+/// future release no longer advertises.
 pub fn spawn(
     binary: &Path,
     cwd: &Path,
@@ -65,28 +75,32 @@ pub fn spawn(
 ) -> Result<PtySession, AetherError> {
     let pty_system = native_pty_system();
     let pair = pty_system
-        .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
 
     let mut cmd = CommandBuilder::new(binary);
     cmd.cwd(cwd);
-    // Aether ≥1.1.1 takes the whole profile as flags, so the interactive
-    // prompts below normally never appear — read_loop's prompt answering is
-    // kept as a fallback for output-format drift.
-    for arg in profile.as_args() {
+    let help = read_cli_help(binary);
+    for arg in profile.as_args_for_help(help.as_deref()) {
         cmd.arg(arg);
     }
-    // Env var, not a flag (see ConnectionProfile::masque_http2's doc-comment):
-    // any value suppresses Aether 1.2.0's interactive "MASQUE transport"
-    // prompt, and only a truthy one selects HTTP/2.
-    cmd.env("AETHER_MASQUE_HTTP2", if profile.masque_http2 { "1" } else { "0" });
+    // Environment variables are ignored by cores that do not recognize them,
+    // making this safer across independently-updated releases than an unknown
+    // command-line flag would be.
+    cmd.env(
+        "AETHER_MASQUE_HTTP2",
+        if profile.masque_http2 { "1" } else { "0" },
+    );
 
     let child = pair
         .slave
         .spawn_command(cmd)
         .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
-    // Drop our end of the slave once the child has it; on Unix this matters
-    // so that the child (not us) is the last holder of that side of the pty.
     drop(pair.slave);
 
     let mut reader = pair
@@ -94,9 +108,6 @@ pub fn spawn(
         .try_clone_reader()
         .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
 
-    // portable-pty's take_writer() may only be called once per master, so we
-    // grab it a single time here and share it (reader thread answers prompts;
-    // PtySession::send_ctrl_c is called from other threads on disconnect).
     let raw_writer = pair
         .master
         .take_writer()
@@ -108,10 +119,21 @@ pub fn spawn(
     let prompts_done_for_thread = Arc::clone(&prompts_done);
 
     std::thread::spawn(move || {
-        read_loop(reader.as_mut(), writer_for_thread, profile, log_tx, prompts_done_for_thread);
+        read_loop(
+            reader.as_mut(),
+            writer_for_thread,
+            profile,
+            log_tx,
+            prompts_done_for_thread,
+        );
     });
 
-    Ok(PtySession { child, writer, prompts_done, _master: pair.master })
+    Ok(PtySession {
+        child,
+        writer,
+        prompts_done,
+        _master: pair.master,
+    })
 }
 
 fn read_loop(
@@ -128,15 +150,12 @@ fn read_loop(
 
     loop {
         let n = match reader.read(&mut byte_buf) {
-            Ok(0) => break, // EOF: process exited or pty closed
+            Ok(0) => break,
             Ok(n) => n,
             Err(_) => break,
         };
         line_buf.push_str(&String::from_utf8_lossy(&byte_buf[..n]));
 
-        // Emit every complete line, tracking which known prompt "section"
-        // we're currently in (the last recognized header line wins — plain
-        // log lines in between don't reset it).
         for raw_line in drain_lines(&mut line_buf) {
             let line = strip_ansi(&raw_line);
             if line.is_empty() {
@@ -145,28 +164,24 @@ fn read_loop(
             for rule in PROMPT_TABLE {
                 if (rule.header_matches)(&line) {
                     current_section = Some(rule.id);
-                    // Seeing a header again means Aether restarted its prompt
-                    // sequence (its own stdin read timed out — see
-                    // prompts.rs) — allow re-answering, or it blocks forever.
                     answered.remove(rule.id);
                 }
             }
-            let _ = log_tx.send(LogEvent { line, timestamp: now_millis() });
+            let _ = log_tx.send(LogEvent {
+                line,
+                timestamp: now_millis(),
+            });
         }
 
-        // Whatever remains (no newline yet) is either more output still
-        // arriving, or Aether blocking on stdin for the current section's
-        // answer. A bare header as the partial ("Scan mode:") is output still
-        // in flight — Aether always prints the menu + "Choose…: " before
-        // blocking — so answering there would double-feed the next menu once
-        // the header completes as a line and gets un-answered above.
         let partial = strip_ansi(&line_buf);
         if looks_like_choice_prompt(&partial)
-            && !PROMPT_TABLE.iter().any(|r| (r.header_matches)(&partial))
+            && !PROMPT_TABLE
+                .iter()
+                .any(|rule| (rule.header_matches)(&partial))
         {
             if let Some(section) = current_section {
                 if !answered.contains(section) {
-                    if let Some(rule) = PROMPT_TABLE.iter().find(|r| r.id == section) {
+                    if let Some(rule) = PROMPT_TABLE.iter().find(|rule| rule.id == section) {
                         let answer = (rule.answer)(&profile);
                         if let Ok(mut w) = writer.lock() {
                             let _ = w.write_all(answer.as_bytes());
@@ -174,7 +189,7 @@ fn read_loop(
                             let _ = w.flush();
                         }
                         let _ = log_tx.send(LogEvent {
-                            line: format!("[gui] answered {section} \u{2192} {answer}"),
+                            line: format!("[gui] answered {section} → {answer}"),
                             timestamp: now_millis(),
                         });
                         answered.insert(section);
@@ -188,19 +203,8 @@ fn read_loop(
     }
 }
 
-/// Longest the unterminated tail may grow before the front is discarded.
-/// `strip_ansi` rescans the whole tail on every read, so an unbounded tail
-/// (e.g. output that never emits a terminator) would be O(n²) CPU.
 const MAX_PARTIAL: usize = 16 * 1024;
 
-/// Drains and returns every terminated line in `buf`, leaving the
-/// unterminated tail in place. Terminal semantics, not plain `\n`-splitting:
-/// a `\r` (or ONLCR-style `\r\r`) run followed by `\n` ends a line, while a
-/// `\r` run followed by anything else is a carriage-return overwrite — a
-/// spinner/progress frame a terminal would repaint in place — so the
-/// overwritten prefix is dead output and is dropped without being emitted.
-/// A `\r` run touching the end of the buffer is kept: the `\n` half of a
-/// `\r\n` may still be in flight.
 fn drain_lines(buf: &mut String) -> Vec<String> {
     let mut lines = Vec::new();
     while let Some(pos) = buf.find(['\r', '\n']) {
@@ -212,10 +216,10 @@ fn drain_lines(buf: &mut String) -> Vec<String> {
                 run_end += 1;
             }
             if run_end == buf.len() {
-                break; // "\r" at buffer end: might be a split "\r\n"
+                break;
             }
             if buf.as_bytes()[run_end] != b'\n' {
-                buf.drain(..run_end); // overwritten frame: discard silently
+                buf.drain(..run_end);
                 continue;
             }
             run_end
@@ -233,10 +237,6 @@ fn drain_lines(buf: &mut String) -> Vec<String> {
     lines
 }
 
-/// Aether's output includes ANSI color codes (e.g. `\x1b[32m`) around log
-/// level names — stripped so header-line matching and the log panel both see
-/// plain text. Minimal hand-rolled CSI-sequence stripper: no regex needed for
-/// a single well-known pattern (`ESC [ ... letter`).
 fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -281,8 +281,11 @@ mod tests {
     #[test]
     fn cr_overwrite_drops_spinner_frames() {
         let mut buf = String::new();
-        assert_eq!(feed(&mut buf, "scan 1%\rscan 2%\rscan 3%"), Vec::<String>::new());
-        assert_eq!(buf, "scan 3%"); // only the live frame survives
+        assert_eq!(
+            feed(&mut buf, "scan 1%\rscan 2%\rscan 3%"),
+            Vec::<String>::new()
+        );
+        assert_eq!(buf, "scan 3%");
         assert_eq!(feed(&mut buf, "\rscan done\n"), ["scan done"]);
         assert_eq!(buf, "");
     }
@@ -292,15 +295,13 @@ mod tests {
         let mut buf = String::new();
         assert_eq!(feed(&mut buf, "abc\r"), Vec::<String>::new());
         assert_eq!(buf, "abc\r");
-        assert_eq!(feed(&mut buf, "\n"), ["abc"]); // the \r\n was split across reads
-        assert_eq!(buf, "");
+        assert_eq!(feed(&mut buf, "\n"), ["abc"]);
     }
 
     #[test]
     fn unterminated_tail_is_capped() {
         let mut buf = String::new();
-        // Multibyte chars so the cap must respect char boundaries.
-        let big = "é".repeat(MAX_PARTIAL); // 2 bytes each → 32 KiB, no terminators
+        let big = "é".repeat(MAX_PARTIAL);
         assert_eq!(feed(&mut buf, &big), Vec::<String>::new());
         assert!(buf.len() <= MAX_PARTIAL + 1);
         assert!(buf.chars().all(|c| c == 'é'));
