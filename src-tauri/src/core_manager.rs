@@ -167,7 +167,10 @@ fn managed_binary(app: &AppHandle, kind: CoreKind) -> Option<PathBuf> {
 }
 
 pub fn bundled_recovery_binary(app: &AppHandle, kind: CoreKind) -> Option<PathBuf> {
-    for dir in [resource_binaries_dir(app), Some(binaries_dir())].into_iter().flatten() {
+    for dir in [resource_binaries_dir(app), Some(binaries_dir())]
+        .into_iter()
+        .flatten()
+    {
         let path = dir.join(conventional_binary_name(kind));
         if path.exists() {
             ensure_executable(&path);
@@ -181,9 +184,8 @@ pub fn resolve_binary(app: &AppHandle, kind: CoreKind) -> Result<PathBuf, Aether
     if let Some(path) = managed_binary(app, kind) {
         return Ok(path);
     }
-    bundled_recovery_binary(app, kind).ok_or_else(|| {
-        AetherError::CoreManager(format!("{} core is not installed", kind.id()))
-    })
+    bundled_recovery_binary(app, kind)
+        .ok_or_else(|| AetherError::CoreManager(format!("{} core is not installed", kind.id())))
 }
 
 pub fn is_managed_binary(app: &AppHandle, kind: CoreKind, path: &Path) -> bool {
@@ -213,7 +215,11 @@ pub fn reject_active_version(app: &AppHandle, kind: CoreKind, path: &Path, reaso
     }
 }
 
-pub fn select_version(app: &AppHandle, kind: CoreKind, version: &str) -> Result<CoreStatus, AetherError> {
+pub fn select_version(
+    app: &AppHandle,
+    kind: CoreKind,
+    version: &str,
+) -> Result<CoreStatus, AetherError> {
     let dir = managed_dir(app, kind);
     let binary = dir.join(executable_name(kind, version));
     if !binary.exists() {
@@ -223,11 +229,14 @@ pub fn select_version(app: &AppHandle, kind: CoreKind, version: &str) -> Result<
         )));
     }
     fs::create_dir_all(&dir).map_err(|e| AetherError::CoreManager(e.to_string()))?;
-    let pointer = dir.join(ACTIVE_VERSION_FILE);
-    let temporary = dir.join(format!("{ACTIVE_VERSION_FILE}.new"));
-    fs::write(&temporary, version).map_err(|e| AetherError::CoreManager(e.to_string()))?;
-    fs::rename(&temporary, &pointer).map_err(|e| AetherError::CoreManager(e.to_string()))?;
+
+    // The binaries themselves are immutable/versioned. The pointer is tiny and
+    // user-triggered while disconnected, so direct replacement is both simpler
+    // and cross-platform (notably Windows, where rename-over-existing differs).
+    fs::write(dir.join(ACTIVE_VERSION_FILE), version)
+        .map_err(|e| AetherError::CoreManager(e.to_string()))?;
     let _ = fs::remove_file(dir.join(REJECTED_VERSION_FILE));
+
     diagnostics::record(
         "core-manager",
         "info",
@@ -335,16 +344,17 @@ fn fetch_release_json(kind: CoreKind) -> Result<Vec<GithubRelease>, AetherError>
         kind.repository()
     );
     let mut command = Command::new(curl);
-    command.args([
-        "-fsSL",
-        "--max-time",
-        "15",
-        "-H",
-        "Accept: application/vnd.github+json",
-        "-H",
-        "User-Agent: Aether-GUI-Core-Manager",
-        &url,
-    ]);
+    command
+        .args([
+            "-fsSL",
+            "--max-time",
+            "15",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            "User-Agent: Aether-GUI-Core-Manager",
+        ])
+        .arg(url);
     let output = command_output(command)?;
     if !output.status.success() {
         return Err(AetherError::CoreManager(format!(
@@ -359,7 +369,7 @@ fn fetch_release_json(kind: CoreKind) -> Result<Vec<GithubRelease>, AetherError>
 pub fn list_releases(app: &AppHandle, kind: CoreKind) -> Result<Vec<CoreRelease>, AetherError> {
     let installed = installed_versions(app, kind);
     let active = active_version(app, kind);
-    Ok(fetch_release_json(kind)?
+    let mut releases = fetch_release_json(kind)?
         .into_iter()
         .filter(|release| !release.draft)
         .map(|release| CoreRelease {
@@ -368,7 +378,21 @@ pub fn list_releases(app: &AppHandle, kind: CoreKind) -> Result<Vec<CoreRelease>
             version: release.tag_name,
             prerelease: release.prerelease,
         })
-        .collect())
+        .collect::<Vec<_>>();
+
+    // Keep locally installed old releases selectable even when they have aged
+    // out of the first GitHub release page.
+    for version in installed {
+        if releases.iter().all(|release| release.version != version) {
+            releases.push(CoreRelease {
+                active: active.as_deref() == Some(version.as_str()),
+                version,
+                prerelease: false,
+                installed: true,
+            });
+        }
+    }
+    Ok(releases)
 }
 
 pub fn latest_stable(app: &AppHandle, kind: CoreKind) -> Result<String, AetherError> {
@@ -416,29 +440,40 @@ pub fn installed_versions(app: &AppHandle, kind: CoreKind) -> Vec<String> {
     let dir = managed_dir(app, kind);
     let prefix = format!("{}-", kind.binary_stem());
     let suffix = if cfg!(windows) { ".exe" } else { "" };
-    let mut versions = fs::read_dir(dir)
-        .ok()
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter_map(|name| {
-            let value = name.strip_prefix(&prefix)?;
+    let mut versions = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            let Some(value) = name.strip_prefix(&prefix) else {
+                continue;
+            };
             let value = if suffix.is_empty() {
                 value
             } else {
-                value.strip_suffix(suffix)?
+                let Some(value) = value.strip_suffix(suffix) else {
+                    continue;
+                };
+                value
             };
-            (!value.is_empty()).then(|| value.to_string())
-        })
-        .collect::<Vec<_>>();
+            if !value.is_empty() {
+                versions.push(value.to_string());
+            }
+        }
+    }
+
     versions.sort();
     versions.dedup();
     versions
 }
 
 fn bundled_version(app: &AppHandle, kind: CoreKind) -> Option<String> {
-    for dir in [resource_binaries_dir(app), Some(binaries_dir())].into_iter().flatten() {
+    for dir in [resource_binaries_dir(app), Some(binaries_dir())]
+        .into_iter()
+        .flatten()
+    {
         if let Ok(value) = fs::read_to_string(dir.join(kind.bundled_version_file())) {
             let value = value.trim().to_string();
             if !value.is_empty() {
