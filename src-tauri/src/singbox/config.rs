@@ -45,18 +45,18 @@ pub fn generate_config(
         outbounds: vec![Outbound::socks(aether_socks_port), Outbound::direct()],
         route: RouteConfig {
             rules: vec![
-                RouteRule {
-                    process_path: Some(vec![aether_binary.to_string_lossy().into_owned()]),
-                    process_name: None,
-                    action: "route".into(),
-                    outbound: "direct".into(),
-                },
-                RouteRule {
-                    process_path: None,
-                    process_name: Some(vec![singbox_process.into()]),
-                    action: "route".into(),
-                    outbound: "direct".into(),
-                },
+                // The core's outer transport must never be captured by the TUN,
+                // otherwise it can recursively route its own Cloudflare session
+                // back through the SOCKS listener it provides.
+                RouteRule::route_process_path(aether_binary.to_string_lossy().into_owned()),
+                RouteRule::route_process_name(singbox_process.into()),
+                // Windows may point interface DNS at the synthetic TUN peer
+                // (172.19.0.2 / fdfe:...::2). Treating that as ordinary traffic
+                // sends an unreachable private destination through SOCKS and makes
+                // the whole system appear offline. Explicit DNS hijacking keeps the
+                // query inside sing-box's DNS module, whose upstream is detoured
+                // through Aether's SOCKS path.
+                RouteRule::hijack_dns(),
             ],
             final_: "proxy".into(),
             auto_detect_interface: true,
@@ -152,11 +152,46 @@ struct RouteConfig {
 #[derive(Serialize)]
 struct RouteRule {
     #[serde(skip_serializing_if = "Option::is_none")]
+    protocol: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     process_path: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     process_name: Option<Vec<String>>,
     action: String,
-    outbound: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outbound: Option<String>,
+}
+
+impl RouteRule {
+    fn route_process_path(path: String) -> Self {
+        Self {
+            protocol: None,
+            process_path: Some(vec![path]),
+            process_name: None,
+            action: "route".into(),
+            outbound: Some("direct".into()),
+        }
+    }
+
+    fn route_process_name(name: String) -> Self {
+        Self {
+            protocol: None,
+            process_path: None,
+            process_name: Some(vec![name]),
+            action: "route".into(),
+            outbound: Some("direct".into()),
+        }
+    }
+
+    fn hijack_dns() -> Self {
+        Self {
+            protocol: Some(vec!["dns".into()]),
+            process_path: None,
+            process_name: None,
+            action: "hijack-dns".into(),
+            outbound: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -182,6 +217,9 @@ mod tests {
         assert!(value["route"]["rules"][1].get("process_path").is_none());
         assert_eq!(value["route"]["rules"][0]["outbound"], "direct");
         assert_eq!(value["route"]["rules"][1]["outbound"], "direct");
+        assert_eq!(value["route"]["rules"][2]["protocol"][0], "dns");
+        assert_eq!(value["route"]["rules"][2]["action"], "hijack-dns");
+        assert!(value["route"]["rules"][2].get("outbound").is_none());
         assert_eq!(value["route"]["auto_detect_interface"], true);
         assert_eq!(value["inbounds"][0]["strict_route"], true);
         assert_eq!(value["inbounds"][0]["address"][0], TUN_ADDRESS);
@@ -219,5 +257,6 @@ mod tests {
         assert_eq!(value["route"]["final"], "proxy");
         assert_eq!(value["dns"]["final"], "dns-proxy");
         assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
+        assert_eq!(value["route"]["rules"][2]["action"], "hijack-dns");
     }
 }
