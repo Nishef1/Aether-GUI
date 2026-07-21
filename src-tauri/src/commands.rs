@@ -103,10 +103,7 @@ pub fn get_tun_status(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
-pub fn list_core_versions(
-    app: AppHandle,
-    kind: CoreKind,
-) -> Result<Vec<CoreRelease>, AetherError> {
+pub fn list_core_versions(app: AppHandle, kind: CoreKind) -> Result<Vec<CoreRelease>, AetherError> {
     core_manager::list_releases(&app, kind)
 }
 
