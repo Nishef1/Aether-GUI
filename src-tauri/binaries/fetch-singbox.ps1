@@ -7,9 +7,60 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $Repo = "SagerNet/sing-box"
-$Headers = @{ "User-Agent" = "Aether-GUI-Core-Manager" }
+$Headers = @{
+    "User-Agent" = "Aether-GUI-Core-Manager"
+    "Accept" = "application/vnd.github+json"
+}
 $WintunVersion = "0.14.1"
 $WintunSha256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+function Invoke-RestJsonWithRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [int]$Attempts = 3
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            return Invoke-RestMethod -Uri $Uri -Headers $Headers -TimeoutSec 30
+        }
+        catch {
+            if ($attempt -eq $Attempts) {
+                throw
+            }
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
+}
+
+function Invoke-DownloadWithRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$OutFile,
+        [hashtable]$RequestHeaders = $Headers,
+        [int]$Attempts = 3
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+            Invoke-WebRequest -Uri $Uri -Headers $RequestHeaders -OutFile $OutFile -UseBasicParsing -TimeoutSec 90
+            if (-not (Test-Path $OutFile) -or (Get-Item $OutFile).Length -le 0) {
+                throw "Downloaded file is empty: $OutFile"
+            }
+            return
+        }
+        catch {
+            Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+            if ($attempt -eq $Attempts) {
+                throw
+            }
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
+}
 
 function Get-Sha256Hex {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -30,6 +81,20 @@ function Get-Sha256Hex {
     }
 }
 
+function Assert-WintunAuthenticode {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $SecurityModuleManifest = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+    Import-Module -Name $SecurityModuleManifest -ErrorAction Stop
+    $Signature = Get-AuthenticodeSignature -FilePath $Path
+    if ($Signature.Status -ne "Valid") {
+        throw "wintun.dll Authenticode signature is not valid: $($Signature.Status)"
+    }
+    if (-not $Signature.SignerCertificate -or $Signature.SignerCertificate.Subject -notmatch "WireGuard") {
+        throw "wintun.dll signer is not recognized as WireGuard"
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -38,7 +103,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     $ApiUrl = "https://api.github.com/repos/$Repo/releases/tags/$Version"
 }
 
-$Release = Invoke-RestMethod -Uri $ApiUrl -Headers $Headers
+$Release = Invoke-RestJsonWithRetry -Uri $ApiUrl
 $Tag = [string]$Release.tag_name
 if ([string]::IsNullOrWhiteSpace($Tag)) {
     throw "sing-box release metadata did not contain a tag name"
@@ -53,16 +118,8 @@ $AssetName = "sing-box-$NumericVersion-windows-amd64.zip"
 $VersionedTarget = Join-Path $DestDir "sing-box-$SafeVersion.exe"
 $FallbackTarget = Join-Path $DestDir "sing-box.exe"
 $TargetWintun = Join-Path $DestDir "wintun.dll"
+$TargetCronet = Join-Path $DestDir "libcronet.dll"
 $VersionFile = Join-Path $DestDir "sing-box-version.txt"
-
-if ((Test-Path $VersionedTarget) -and (Test-Path $TargetWintun)) {
-    # Never let a cached executable skip the aliases and metadata bundled by
-    # Tauri. libcronet.dll, when present from the selected build, is retained.
-    Copy-Item $VersionedTarget $FallbackTarget -Force
-    Set-Content -Path $VersionFile -Value $Tag -NoNewline
-    Write-Host "[core-installer] sing-box $Tag is already installed and packaging outputs were refreshed"
-    exit 0
-}
 
 $Asset = $Release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
 if (-not $Asset) {
@@ -80,7 +137,8 @@ $ExtractDir = Join-Path $TempDir "extract"
 New-Item -ItemType Directory -Force -Path $TempDir, $ExtractDir | Out-Null
 
 try {
-    Invoke-WebRequest -Uri $Asset.browser_download_url -Headers $Headers -OutFile $ArchivePath
+    Write-Host "[core-installer] Downloading sing-box $Tag..."
+    Invoke-DownloadWithRetry -Uri $Asset.browser_download_url -OutFile $ArchivePath
     $Actual = Get-Sha256Hex -Path $ArchivePath
     if ($Actual -ne $Expected) {
         throw "Checksum mismatch for $AssetName"
@@ -90,14 +148,17 @@ try {
     $DownloadedExe = Get-ChildItem -Path $ExtractDir -Recurse -Filter "sing-box.exe" | Select-Object -First 1
     $DownloadedWintun = Get-ChildItem -Path $ExtractDir -Recurse -Filter "wintun.dll" | Select-Object -First 1
     $DownloadedCronet = Get-ChildItem -Path $ExtractDir -Recurse -Filter "libcronet.dll" | Select-Object -First 1
-    if (-not $DownloadedExe) {
-        throw "sing-box.exe was not found inside $AssetName"
+    if (-not $DownloadedExe -or $DownloadedExe.Length -le 0) {
+        throw "sing-box.exe was not found or is empty inside $AssetName"
     }
 
-    if (-not $DownloadedWintun -and -not (Test-Path $TargetWintun)) {
+    # Never trust or reuse an old destination Wintun. If the sing-box archive
+    # does not carry one, fetch the pinned official WireGuard build, verify the
+    # archive checksum, and then validate the DLL's Authenticode signature.
+    if (-not $DownloadedWintun) {
         $WintunArchive = Join-Path $TempDir "wintun-$WintunVersion.zip"
         $WintunExtract = Join-Path $TempDir "wintun"
-        Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$WintunVersion.zip" -OutFile $WintunArchive
+        Invoke-DownloadWithRetry -Uri "https://www.wintun.net/builds/wintun-$WintunVersion.zip" -OutFile $WintunArchive -RequestHeaders @{}
         $WintunActual = Get-Sha256Hex -Path $WintunArchive
         if ($WintunActual -ne $WintunSha256) {
             throw "Checksum mismatch for official Wintun archive"
@@ -106,40 +167,43 @@ try {
         $DownloadedWintun = Get-ChildItem -Path $WintunExtract -Recurse -Filter "wintun.dll" |
             Where-Object { $_.FullName -match "amd64" } |
             Select-Object -First 1
-        if (-not $DownloadedWintun) {
-            throw "amd64 wintun.dll was not found in the official Wintun archive"
-        }
-        # PSModulePath can contain the PowerShell 7 module directory even when
-        # this script is launched by Windows PowerShell (and vice versa). Let
-        # the current host load its matching security module explicitly instead
-        # of relying on module auto-loading, which can fail with
-        # CouldNotAutoloadMatchingModule.
-        $SecurityModuleManifest = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
-        Import-Module -Name $SecurityModuleManifest -ErrorAction Stop
-        $Signature = Get-AuthenticodeSignature -FilePath $DownloadedWintun.FullName
-        if ($Signature.Status -ne "Valid") {
-            throw "wintun.dll Authenticode signature is not valid: $($Signature.Status)"
-        }
-        if (-not $Signature.SignerCertificate -or $Signature.SignerCertificate.Subject -notmatch "WireGuard") {
-            throw "wintun.dll signer is not recognized as WireGuard"
-        }
     }
+
+    if (-not $DownloadedWintun -or $DownloadedWintun.Length -le 0) {
+        throw "amd64 wintun.dll was not found or is empty"
+    }
+    Assert-WintunAuthenticode -Path $DownloadedWintun.FullName
 
     $TemporaryTarget = "$VersionedTarget.new"
     Remove-Item $TemporaryTarget -Force -ErrorAction SilentlyContinue
     Copy-Item $DownloadedExe.FullName $TemporaryTarget -Force
+    if ((Get-Item $TemporaryTarget).Length -le 0) {
+        throw "Prepared sing-box binary is empty"
+    }
+    Remove-Item $VersionedTarget -Force -ErrorAction SilentlyContinue
     Move-Item $TemporaryTarget $VersionedTarget -Force
 
-    if ($DownloadedWintun) {
-        Copy-Item $DownloadedWintun.FullName $TargetWintun -Force
-    }
+    Copy-Item $DownloadedWintun.FullName $TargetWintun -Force
     Copy-Item $VersionedTarget $FallbackTarget -Force
     if ($DownloadedCronet) {
-        Copy-Item $DownloadedCronet.FullName (Join-Path $DestDir "libcronet.dll") -Force
+        Copy-Item $DownloadedCronet.FullName $TargetCronet -Force
     }
     Set-Content -Path $VersionFile -Value $Tag -NoNewline
 
-    Write-Host "[core-installer] sing-box $Tag installed and SHA-256 verified"
+    if (-not (Test-Path $VersionedTarget) -or (Get-Item $VersionedTarget).Length -le 0) {
+        throw "sing-box versioned binary was not installed correctly"
+    }
+    if (-not (Test-Path $FallbackTarget) -or (Get-Item $FallbackTarget).Length -le 0) {
+        throw "sing-box fallback binary was not installed correctly"
+    }
+    if (-not (Test-Path $TargetWintun) -or (Get-Item $TargetWintun).Length -le 0) {
+        throw "wintun.dll was not installed correctly"
+    }
+    if ((Get-Content $VersionFile -Raw).Trim() -ne $Tag) {
+        throw "sing-box version metadata was not written correctly"
+    }
+
+    Write-Host "[core-installer] sing-box $Tag installed, SHA-256 verified, and Wintun signature validated"
 }
 finally {
     Remove-Item $TempDir -Recurse -Force -ErrorAction SilentlyContinue
