@@ -83,7 +83,10 @@ fn probe(port: Option<u16>, family: AddressFamily) -> Result<String, AetherError
     }
     args.push(TRACE_URL.into());
     parse_ip(&run_curl(&args)?).ok_or_else(|| {
-        AetherError::TunHealthFailed(format!("{} probe returned no public egress", family.label()))
+        AetherError::TunHealthFailed(format!(
+            "{} probe returned no public egress",
+            family.label()
+        ))
     })
 }
 
