@@ -42,6 +42,15 @@ pub struct AppState {
     pub singbox: Arc<Mutex<SingboxManager>>,
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            manager: Arc::new(Mutex::new(AetherManager::new())),
+            singbox: Arc::new(Mutex::new(SingboxManager::new())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ConnectionState;
@@ -54,14 +63,5 @@ mod tests {
         let value = serde_json::to_value(state).unwrap();
         assert_eq!(value["state"], "StartingTunnel");
         assert!(value.get("connected_at_ms").is_none());
-    }
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            manager: Arc::new(Mutex::new(AetherManager::new())),
-            singbox: Arc::new(Mutex::new(SingboxManager::new())),
-        }
     }
 }
