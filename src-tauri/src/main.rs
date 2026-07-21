@@ -133,7 +133,6 @@ fn main() {
                 let _ = window.set_focus();
                 let _ = window.set_always_on_top(false);
             }
-            aether::updater::refresh_in_background(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
