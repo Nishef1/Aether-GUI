@@ -16,10 +16,6 @@ interface ConnectionState {
   profile: ConnectionProfile;
   logs: LogLine[];
   sidecarError: string | null;
-  /** Aether's own route-probe budget in seconds, parsed live out of its log
-   * stream (its prober logs e.g. "...budget=120s" once scanning starts) —
-   * lets the UI show real progress instead of an indefinite spinner. Reset
-   * on every fresh attempt since it can differ by protocol/scan mode. */
   scanBudgetSecs: number | null;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
@@ -31,6 +27,7 @@ interface ConnectionState {
   setMasqueNoize: (masque_noize: MasqueNoize) => void;
   setWgNoize: (wg_noize: WgNoize) => void;
   setBindAddress: (bind_address: string) => void;
+  setTunEnabled: (tun_enabled: boolean) => void;
   retryAfterSidecarError: () => void;
 }
 
@@ -45,6 +42,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     masque_noize: "firewall",
     wg_noize: "balanced",
     bind_address: "127.0.0.1:1819",
+    tun_enabled: false,
   },
   logs: [],
   sidecarError: null,
@@ -55,11 +53,26 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       await invoke("connect", { profileOverride: get().profile });
     } catch (e) {
       const message = String(e);
-      // "Binary not found" (src-tauri/src/aether/mod.rs::resolve_binary) means
-      // the tunnel engine itself can't run at all — structurally different
-      // from a normal connection failure, so it routes to the full-screen
-      // SidecarErrorScreen instead of the button's own error state.
-      if (message.toLowerCase().includes("binary not found")) {
+      const lower = message.toLowerCase();
+
+      if (lower.includes("administrator privileges are required")) {
+        // Backend saved the requested profile as a one-shot pending profile.
+        // Relaunch only on demand; normal proxy mode never runs elevated.
+        try {
+          await invoke("elevate");
+        } catch (elevationError) {
+          set({
+            status: {
+              state: "Error",
+              message: String(elevationError),
+              phase: "elevation",
+            },
+          });
+        }
+        return;
+      }
+
+      if (lower.includes("binary not found")) {
         set({ sidecarError: message });
       } else {
         set({ status: { state: "Error", message, phase: "launching" } });
@@ -71,45 +84,26 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     try {
       await invoke("disconnect");
     } catch {
-      // Backend rejects disconnect() when there's nothing to stop (already
-      // Idle) — nothing for the UI to do since status already reflects that.
+      // Nothing to do if the backend is already idle.
     }
   },
 
-  setProtocol: (protocol) =>
-    set((s) => ({ profile: { ...s.profile, protocol } })),
-
-  setScanMode: (scan_mode) =>
-    set((s) => ({ profile: { ...s.profile, scan_mode } })),
-
-  setIpVersion: (ip_version) =>
-    set((s) => ({ profile: { ...s.profile, ip_version } })),
-
+  setProtocol: (protocol) => set((s) => ({ profile: { ...s.profile, protocol } })),
+  setScanMode: (scan_mode) => set((s) => ({ profile: { ...s.profile, scan_mode } })),
+  setIpVersion: (ip_version) => set((s) => ({ profile: { ...s.profile, ip_version } })),
   setQuickReconnect: (quick_reconnect) =>
     set((s) => ({ profile: { ...s.profile, quick_reconnect } })),
-
   setMasqueHttp2: (masque_http2) =>
     set((s) => ({ profile: { ...s.profile, masque_http2 } })),
-
   setMasqueNoize: (masque_noize) =>
     set((s) => ({ profile: { ...s.profile, masque_noize } })),
-
-  setWgNoize: (wg_noize) =>
-    set((s) => ({ profile: { ...s.profile, wg_noize } })),
-
+  setWgNoize: (wg_noize) => set((s) => ({ profile: { ...s.profile, wg_noize } })),
   setBindAddress: (bind_address) =>
     set((s) => ({ profile: { ...s.profile, bind_address } })),
-
-  // Clears the fallback screen so the user can attempt Connect again (e.g.
-  // after fixing a broken install) — the next connect() call will re-set
-  // sidecarError if the binary is still missing.
+  setTunEnabled: (tun_enabled) => set((s) => ({ profile: { ...s.profile, tun_enabled } })),
   retryAfterSidecarError: () => set({ sidecarError: null }),
 }));
 
-// Dev-only: lets the 3D backdrop's per-state moods be driven from the WebView2
-// devtools console without a live tunnel, e.g.
-//   __conn.setState({ status: { state: "Connecting" } })
-// Tree-shaken out of production builds by the import.meta.env.DEV guard.
 if (import.meta.env.DEV) {
   (window as unknown as { __conn?: typeof useConnectionStore }).__conn = useConnectionStore;
 }
@@ -118,9 +112,6 @@ const BUDGET_RE = /budget=(\d+)s/;
 
 /** Call once from App's top-level effect; returns a cleanup function. */
 export async function initConnectionListeners(): Promise<() => void> {
-  // Log lines arrive fast during route scanning; flushing to the store per
-  // line would mean an O(logs) array copy + a re-render each. Coalesce into
-  // one store write per ~100ms instead.
   let pendingLogs: LogLine[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   const flushLogs = () => {
@@ -142,7 +133,6 @@ export async function initConnectionListeners(): Promise<() => void> {
     listen<ConnectionStatus>("aether://status", (e) => {
       useConnectionStore.setState({
         status: e.payload,
-        // Fresh attempt — last attempt's budget no longer applies.
         ...(e.payload.state === "Launching" ? { scanBudgetSecs: null } : {}),
       });
     }),
@@ -152,10 +142,6 @@ export async function initConnectionListeners(): Promise<() => void> {
     }),
   ]);
 
-  // Reconcile state in case the window reopened mid-session, and load the
-  // last-successful profile so the protocol selector reflects it. Neither
-  // command touches the Aether binary, so a failure here is an IPC-layer
-  // bug, not a sidecar problem — logged rather than shown as sidecarError.
   try {
     const [status, profile] = await Promise.all([
       invoke<ConnectionStatus>("get_status"),
