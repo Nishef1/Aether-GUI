@@ -127,8 +127,6 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
       if (canUpdateCores) {
         for (const update of coreUpdates) {
           await installAndUse(update.kind, update.version)
-          const error = useCoreStore.getState().cores[update.kind].error
-          if (error) throw new Error(error)
         }
       }
 
