@@ -12,5 +12,8 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-show",
     "core:window:allow-hide"
+    ,"updater:allow-check"
+    ,"updater:allow-download-and-install"
+    ,"process:allow-restart"
   ]
 }

@@ -56,7 +56,11 @@ $TargetWintun = Join-Path $DestDir "wintun.dll"
 $VersionFile = Join-Path $DestDir "sing-box-version.txt"
 
 if ((Test-Path $VersionedTarget) -and (Test-Path $TargetWintun)) {
-    Write-Host "[core-installer] sing-box $Tag is already installed"
+    # Never let a cached executable skip the aliases and metadata bundled by
+    # Tauri. libcronet.dll, when present from the selected build, is retained.
+    Copy-Item $VersionedTarget $FallbackTarget -Force
+    Set-Content -Path $VersionFile -Value $Tag -NoNewline
+    Write-Host "[core-installer] sing-box $Tag is already installed and packaging outputs were refreshed"
     exit 0
 }
 

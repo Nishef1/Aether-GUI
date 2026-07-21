@@ -59,7 +59,10 @@ VERSIONED_TARGET="$DEST_DIR/aether-$SAFE_VERSION"
 FALLBACK_TARGET="$DEST_DIR/aether"
 VERSION_FILE="$DEST_DIR/aether-version.txt"
 if [[ -x "$VERSIONED_TARGET" ]]; then
-  echo "[core-installer] Aether $RESOLVED_VERSION is already installed"
+  cp "$VERSIONED_TARGET" "$FALLBACK_TARGET"
+  chmod +x "$FALLBACK_TARGET"
+  printf '%s' "$RESOLVED_VERSION" > "$VERSION_FILE"
+  echo "[core-installer] Aether $RESOLVED_VERSION is already installed and packaging outputs were refreshed"
   exit 0
 fi
 

@@ -74,7 +74,10 @@ VERSIONED_TARGET="$DEST_DIR/sing-box-$SAFE_VERSION"
 FALLBACK_TARGET="$DEST_DIR/sing-box"
 VERSION_FILE="$DEST_DIR/sing-box-version.txt"
 if [[ -x "$VERSIONED_TARGET" ]]; then
-  echo "[core-installer] sing-box $TAG is already installed"
+  cp "$VERSIONED_TARGET" "$FALLBACK_TARGET"
+  chmod +x "$FALLBACK_TARGET"
+  printf '%s' "$TAG" > "$VERSION_FILE"
+  echo "[core-installer] sing-box $TAG is already installed and packaging outputs were refreshed"
   exit 0
 fi
 

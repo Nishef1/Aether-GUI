@@ -101,6 +101,8 @@ fn install_panic_hook() {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .setup(|app| {
             let data_dir = app.handle().path().app_data_dir()?;
@@ -146,8 +148,6 @@ fn main() {
             commands::set_close_to_tray,
             commands::sync_tray_state,
             commands::get_is_elevated,
-            commands::check_app_update,
-            commands::open_app_update,
             commands::elevate,
             commands::get_tun_status,
             commands::get_traffic,

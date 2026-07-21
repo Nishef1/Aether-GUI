@@ -113,7 +113,7 @@ The title bar checks for:
 - stable sing-box core updates;
 - newer stable Aether-GUI GitHub Releases.
 
-Core updates can be installed and activated in place while disconnected. A desktop-app update currently opens the exact official GitHub Release page. Seamless in-app installation is intentionally reserved for Tauri's signed updater flow rather than an unsigned custom executable download.
+Core updates can be installed and activated in place while disconnected. Desktop-app updates use Tauri's signed updater from the official GitHub Release `latest.json`; app updates are prioritized before core updates and are disabled while connected or elevated. See the release guide for the one-time public-key configuration and signing secrets.
 
 See [`docs/RELEASING.md`](docs/RELEASING.md) for the release model, signing guidance, and reproducible bundled-core baseline.
 

@@ -52,7 +52,11 @@ $FallbackTarget = Join-Path $DestDir "aether.exe"
 $VersionFile = Join-Path $DestDir "aether-version.txt"
 
 if (Test-Path $VersionedTarget) {
-    Write-Host "[core-installer] Aether $ResolvedVersion is already installed"
+    # A cached versioned core is only reusable when every packaged runtime
+    # contract is restored. Builds consume the conventional alias and metadata.
+    Copy-Item $VersionedTarget $FallbackTarget -Force
+    Set-Content -Path $VersionFile -Value $ResolvedVersion -NoNewline
+    Write-Host "[core-installer] Aether $ResolvedVersion is already installed and packaging outputs were refreshed"
     exit 0
 }
 
