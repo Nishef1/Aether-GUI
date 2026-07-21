@@ -24,6 +24,15 @@ fn no_window(command: &mut Command) {
     }
 }
 
+fn expected_aether_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if cfg!(windows) {
+        name == "aether.exe" || (name.starts_with("aether-v") && name.ends_with(".exe"))
+    } else {
+        name == "aether" || name.starts_with("aether-v")
+    }
+}
+
 #[cfg(windows)]
 fn is_expected_process(pid: u32) -> bool {
     let mut command = Command::new("tasklist");
@@ -32,11 +41,10 @@ fn is_expected_process(pid: u32) -> bool {
     command
         .output()
         .map(|output| {
-            let text = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-            text.lines().any(|line| {
+            String::from_utf8_lossy(&output.stdout).lines().any(|line| {
                 line.split(',')
                     .next()
-                    .map(|name| name.trim_matches('"') == "aether.exe")
+                    .map(|name| expected_aether_name(name.trim_matches('"')))
                     .unwrap_or(false)
             })
         })
@@ -52,7 +60,7 @@ fn is_expected_process(pid: u32) -> bool {
             String::from_utf8_lossy(&output.stdout).lines().any(|line| {
                 Path::new(line.trim())
                     .file_name()
-                    .map(|name| name.to_string_lossy() == "aether")
+                    .map(|name| expected_aether_name(&name.to_string_lossy()))
                     .unwrap_or(false)
             })
         })
@@ -76,10 +84,6 @@ fn kill_pid(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// Reap a crash orphan only when the persisted PID still belongs to an Aether
-/// executable. If an unelevated restart cannot kill an elevated orphan, retain
-/// the PID file so a later elevated launch can complete cleanup instead of
-/// permanently losing ownership information.
 pub fn reap_orphan(data_dir: &Path) {
     let path = pid_file(data_dir);
     let Ok(contents) = fs::read_to_string(&path) else {
@@ -94,7 +98,7 @@ pub fn reap_orphan(data_dir: &Path) {
         diagnostics::record(
             "aether",
             "info",
-            format!("stale PID file ignored because PID {pid} is not Aether"),
+            format!("stale PID file ignored because PID {pid} is not an owned Aether core"),
         );
         let _ = fs::remove_file(&path);
         return;
@@ -112,5 +116,22 @@ pub fn reap_orphan(data_dir: &Path) {
                 "could not terminate owned orphan PID {pid}; retaining PID file for a privileged cleanup attempt"
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_aether_core_names() {
+        assert!(expected_aether_name(if cfg!(windows) { "aether.exe" } else { "aether" }));
+        assert!(expected_aether_name(if cfg!(windows) {
+            "aether-v1.3.0.exe"
+        } else {
+            "aether-v1.3.0"
+        }));
+        assert!(!expected_aether_name("not-aether.exe"));
+        assert!(!expected_aether_name("aether-malware.txt"));
     }
 }
