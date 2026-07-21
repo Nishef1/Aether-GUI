@@ -8,6 +8,7 @@ $ProgressPreference = "SilentlyContinue"
 $Repo = "SagerNet/sing-box"
 $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
 $Headers = @{ "User-Agent" = "Aether-GUI-TUN-Fetcher" }
+$WintunVersion = "0.14.1"
 
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 
@@ -55,7 +56,7 @@ try {
     if ($Actual -ne $Expected) {
         throw "Checksum mismatch for $AssetName (expected $Expected, got $Actual)"
     }
-    Write-Host "[tun-fetcher] SHA-256 verified"
+    Write-Host "[tun-fetcher] sing-box SHA-256 verified"
 
     Expand-Archive -Path $ArchivePath -DestinationPath $ExtractDir -Force
     $DownloadedExe = Get-ChildItem -Path $ExtractDir -Recurse -Filter "sing-box.exe" | Select-Object -First 1
@@ -65,8 +66,31 @@ try {
     if (-not $DownloadedExe) {
         throw "sing-box.exe was not found inside $AssetName"
     }
+
+    # Some official sing-box packages ship Wintun side-by-side; if the selected
+    # package does not, fetch it only from WireGuard's official distribution and
+    # require a valid Authenticode signature before accepting the DLL.
     if (-not $DownloadedWintun) {
-        throw "wintun.dll was not found inside the verified sing-box archive"
+        Write-Host "[tun-fetcher] Wintun not bundled; downloading official signed Wintun $WintunVersion..."
+        $WintunArchive = Join-Path $TempDir "wintun-$WintunVersion.zip"
+        $WintunExtract = Join-Path $TempDir "wintun"
+        Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$WintunVersion.zip" -OutFile $WintunArchive
+        Expand-Archive -Path $WintunArchive -DestinationPath $WintunExtract -Force
+        $DownloadedWintun = Get-ChildItem -Path $WintunExtract -Recurse -Filter "wintun.dll" |
+            Where-Object { $_.FullName -match "amd64" } |
+            Select-Object -First 1
+        if (-not $DownloadedWintun) {
+            throw "amd64 wintun.dll was not found in the official Wintun archive"
+        }
+
+        $Signature = Get-AuthenticodeSignature -FilePath $DownloadedWintun.FullName
+        if ($Signature.Status -ne "Valid") {
+            throw "wintun.dll Authenticode signature is not valid: $($Signature.Status)"
+        }
+        if (-not $Signature.SignerCertificate -or $Signature.SignerCertificate.Subject -notmatch "WireGuard") {
+            throw "wintun.dll signer is not recognized as WireGuard"
+        }
+        Write-Host "[tun-fetcher] Wintun Authenticode signature verified"
     }
 
     Copy-Item $DownloadedExe.FullName $TargetExe -Force
@@ -76,7 +100,7 @@ try {
     }
     Set-Content -Path $VersionFile -Value $Tag -NoNewline
 
-    Write-Host "[tun-fetcher] sing-box $Tag and Wintun are ready"
+    Write-Host "[tun-fetcher] sing-box $Tag and verified Wintun are ready"
 }
 finally {
     Remove-Item $TempDir -Recurse -Force -ErrorAction SilentlyContinue
