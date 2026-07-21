@@ -10,6 +10,25 @@ $Repo = "CluvexStudio/Aether"
 $Headers = @{ "User-Agent" = "Aether-GUI-Core-Manager" }
 $AssetName = "aether-windows-x86_64.zip"
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = $sha256.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($hash)).Replace("-", "").ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -63,7 +82,7 @@ try {
     }
 
     $Expected = ($ChecksumLine -split "\s+")[0].ToLowerInvariant()
-    $Actual = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $Actual = Get-Sha256Hex -Path $ArchivePath
     if ($Actual -ne $Expected) {
         throw "Checksum mismatch for $AssetName"
     }
