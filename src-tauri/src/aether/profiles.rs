@@ -168,10 +168,6 @@ impl ConnectionProfile {
         self
     }
 
-    pub fn as_args(&self) -> Vec<String> {
-        self.as_args_for_help(None)
-    }
-
     /// Build arguments against the *active* independently-updated Aether core.
     /// When `--help` is available we only pass flags advertised by that binary;
     /// unsupported settings fall back to Aether's interactive prompts/defaults
@@ -312,10 +308,15 @@ mod tests {
 
     #[test]
     fn custom_loopback_port_is_forwarded() {
-        let mut p = ConnectionProfile::default();
-        p.bind_address = "127.0.0.1:1919".into();
-        let args = p.as_args();
-        let i = args.iter().position(|a| a == "--bind").expect("missing --bind");
+        let p = ConnectionProfile {
+            bind_address: "127.0.0.1:1919".into(),
+            ..ConnectionProfile::default()
+        };
+        let args = p.as_args_for_help(None);
+        let i = args
+            .iter()
+            .position(|a| a == "--bind")
+            .expect("missing --bind");
         assert_eq!(args.get(i + 1).map(String::as_str), Some("127.0.0.1:1919"));
     }
 
@@ -337,16 +338,21 @@ mod tests {
     #[test]
     fn default_emits_noize() {
         let p = ConnectionProfile::default();
-        let args = p.as_args();
-        let i = args.iter().position(|a| a == "--noize").expect("missing --noize");
+        let args = p.as_args_for_help(None);
+        let i = args
+            .iter()
+            .position(|a| a == "--noize")
+            .expect("missing --noize");
         assert_eq!(args.get(i + 1).map(String::as_str), Some("firewall"));
     }
 
     #[test]
     fn unsupported_future_flags_are_not_forwarded() {
-        let mut p = ConnectionProfile::default();
-        p.protocol = Protocol::Gool;
-        p.scan_mode = ScanMode::Ironclad;
+        let p = ConnectionProfile {
+            protocol: Protocol::Gool,
+            scan_mode: ScanMode::Ironclad,
+            ..ConnectionProfile::default()
+        };
         let help = "Usage: aether [OPTIONS]\n  --masque\n  --balanced\n  -4\n  --bind <addr>";
         let args = p.as_args_for_help(Some(help));
         assert!(!args.iter().any(|arg| arg == "--gool"));
