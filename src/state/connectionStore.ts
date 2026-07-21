@@ -124,13 +124,15 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
           try {
             await invoke("elevate")
           } catch (elevationError) {
+            const elevationMessage = String(elevationError)
             set({
               status: {
                 state: "Error",
-                message: String(elevationError),
+                message: elevationMessage,
                 phase: "elevation",
               },
             })
+            appendRuntimeLog(`[error:elevation] ${elevationMessage}`)
             syncTrayState("Error")
           }
           return
@@ -138,8 +140,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
 
         if (lower.includes("binary not found")) {
           set({ sidecarError: message })
+          appendRuntimeLog(`[error:core] ${message}`)
         } else {
           set({ status: { state: "Error", message, phase: "launching" } })
+          appendRuntimeLog(`[error:launching] ${message}`)
           syncTrayState("Error")
         }
       } finally {
@@ -167,13 +171,15 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         // same and guarantees that UAC always has an exact pending connect profile.
         await updateProfile({ connection_mode })
       } catch (e) {
+        const message = String(e)
         set({
           status: {
             state: "Error",
-            message: String(e),
+            message,
             phase: "saving-profile",
           },
         })
+        appendRuntimeLog(`[error:saving-profile] ${message}`)
         syncTrayState("Error")
       }
     },
@@ -207,6 +213,17 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     retryAfterSidecarError: () => set({ sidecarError: null }),
   }
 })
+
+function appendRuntimeLog(line: string): void {
+  useConnectionStore.setState((state) => {
+    if (state.logs.at(-1)?.line === line) return state
+    return {
+      logs: [...state.logs, { line, timestamp: Date.now() }].slice(
+        -MAX_LOG_LINES
+      ),
+    }
+  })
+}
 
 if (import.meta.env.DEV) {
   ;(window as unknown as { __conn?: typeof useConnectionStore }).__conn =
@@ -244,6 +261,11 @@ async function initializeConnectionRuntime(): Promise<void> {
         status: event.payload,
         ...(event.payload.state === "Launching" ? { scanBudgetSecs: null } : {}),
       })
+      if (event.payload.state === "Error") {
+        appendRuntimeLog(
+          `[error:${event.payload.phase}] ${event.payload.message}`
+        )
+      }
       syncTrayState(event.payload.state)
     }),
     listen<LogLine>("aether://log", (event) => {
@@ -269,6 +291,9 @@ async function initializeConnectionRuntime(): Promise<void> {
   ])
   const activeProfile = pendingElevationProfile ?? profile
   useConnectionStore.setState({ status, profile: activeProfile })
+  if (status.state === "Error") {
+    appendRuntimeLog(`[error:${status.phase}] ${status.message}`)
+  }
   syncTrayState(status.state)
 
   // A pending profile is a one-shot handoff created immediately before UAC.
