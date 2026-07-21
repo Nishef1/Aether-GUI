@@ -37,10 +37,18 @@ pub fn refresh_now(app: &AppHandle) -> Result<CoreInfo, AetherError> {
     current_info(app)
 }
 
-/// Background startup work checks metadata only. It deliberately does not
-/// change the active version: manual upgrade/downgrade choices must remain
-/// stable until the user selects another version from Core Management.
+/// Background startup work checks metadata only. It never changes the active
+/// version, and it is skipped entirely in the elevated TUN process.
 pub fn refresh_in_background(app: AppHandle) {
+    if crate::is_admin() {
+        diagnostics::record(
+            "core-manager",
+            "info",
+            "skipping background release check in elevated process",
+        );
+        return;
+    }
+
     std::thread::spawn(move || match core_manager::latest_stable(&app, CoreKind::Aether) {
         Ok(latest) => {
             let active = core_manager::status(&app, CoreKind::Aether)
