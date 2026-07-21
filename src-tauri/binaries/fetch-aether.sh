@@ -43,11 +43,17 @@ if [[ -z "$AETHER_VERSION" ]]; then
   echo "Could not determine latest Aether release tag" >&2
   exit 1
 fi
+SAFE_VERSION="$(printf '%s' "$AETHER_VERSION" | tr -c 'A-Za-z0-9._-' '_')"
 
-TARGET="$DEST_DIR/aether"
+FALLBACK_TARGET="$DEST_DIR/aether"
+VERSIONED_TARGET="$DEST_DIR/aether-$SAFE_VERSION"
 VERSION_FILE="$DEST_DIR/aether-version.txt"
-if [[ -x "$TARGET" && -f "$VERSION_FILE" && "$(tr -d '\r\n' < "$VERSION_FILE")" == "$AETHER_VERSION" ]]; then
+if [[ -x "$VERSIONED_TARGET" && -f "$VERSION_FILE" && "$(tr -d '\r\n' < "$VERSION_FILE")" == "$AETHER_VERSION" ]]; then
   echo "[core-updater] Aether $AETHER_VERSION is already installed"
+  if [[ ! -e "$FALLBACK_TARGET" ]]; then
+    cp "$VERSIONED_TARGET" "$FALLBACK_TARGET"
+    chmod +x "$FALLBACK_TARGET"
+  fi
   exit 0
 fi
 
@@ -94,22 +100,24 @@ if [[ -z "$DOWNLOADED" ]]; then
 fi
 chmod +x "$DOWNLOADED"
 
-NEW_TARGET="$TARGET.new"
-BACKUP_TARGET="$TARGET.old"
-rm -f "$NEW_TARGET" "$BACKUP_TARGET"
-cp "$DOWNLOADED" "$NEW_TARGET"
-chmod +x "$NEW_TARGET"
+# Immutable versioned installation: an existing process may continue executing
+# its old file while the version pointer switches future connections to this one.
+VERSIONED_NEW="$VERSIONED_TARGET.new"
+rm -f "$VERSIONED_NEW"
+cp "$DOWNLOADED" "$VERSIONED_NEW"
+chmod +x "$VERSIONED_NEW"
+mv "$VERSIONED_NEW" "$VERSIONED_TARGET"
 
-if [[ -e "$TARGET" ]]; then
-  mv "$TARGET" "$BACKUP_TARGET"
-fi
-if mv "$NEW_TARGET" "$TARGET"; then
-  printf '%s' "$AETHER_VERSION" > "$VERSION_FILE"
-  rm -f "$BACKUP_TARGET"
+VERSION_FILE_NEW="$VERSION_FILE.new"
+printf '%s' "$AETHER_VERSION" > "$VERSION_FILE_NEW"
+mv "$VERSION_FILE_NEW" "$VERSION_FILE"
+
+# Conventional fallback alias for build/manual use. It is not the runtime
+# pointer once a valid versioned managed core exists.
+if ! cp "$VERSIONED_TARGET" "$FALLBACK_TARGET" 2>/dev/null; then
+  echo "[core-updater] warning: could not refresh fallback alias $FALLBACK_TARGET" >&2
 else
-  rm -f "$TARGET"
-  [[ -e "$BACKUP_TARGET" ]] && mv "$BACKUP_TARGET" "$TARGET"
-  exit 1
+  chmod +x "$FALLBACK_TARGET"
 fi
 
 echo "[core-updater] Aether core updated to $AETHER_VERSION"
