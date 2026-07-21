@@ -37,7 +37,11 @@ impl SingboxManager {
 }
 
 fn binary_name() -> &'static str {
-    if cfg!(windows) { "sing-box.exe" } else { "sing-box" }
+    if cfg!(windows) {
+        "sing-box.exe"
+    } else {
+        "sing-box"
+    }
 }
 
 fn app_data_dir(app: &AppHandle) -> PathBuf {
@@ -244,7 +248,11 @@ pub fn start_tunnel(
     let app_for_logs = app.clone();
     std::thread::spawn(move || {
         for log in log_rx {
-            let level = if log.stream == "stderr" { "warn" } else { "info" };
+            let level = if log.stream == "stderr" {
+                "warn"
+            } else {
+                "info"
+            };
             emit_log(&app_for_logs, level, log.line);
         }
     });
@@ -254,9 +262,6 @@ pub fn start_tunnel(
     loop {
         std::thread::sleep(Duration::from_millis(750));
 
-        // request_disconnect() removes our owned process. Treat that as an
-        // immediate cancellation instead of continuing health probes and later
-        // overwriting Idle/Disconnecting with a stale Error state.
         if manager.lock().unwrap().process.is_none() {
             return Err(AetherError::TunHealthFailed("TUN startup cancelled".into()));
         }
@@ -380,40 +385,64 @@ fn expected_process_is_alive(pid: u32) -> bool {
     }
 }
 
-fn kill_pid(pid: u32) {
+fn kill_pid(pid: u32) -> bool {
     #[cfg(windows)]
     {
         let mut command = Command::new("taskkill");
         command.args(["/PID", &pid.to_string(), "/F"]);
         no_window(&mut command);
-        let _ = command.output();
+        return command
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
     }
+
     #[cfg(unix)]
     {
-        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+        Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
     }
 }
 
 /// Reap only a process that both matches our persisted PID and has the expected
-/// executable name. This avoids PID-reuse accidents and never kills arbitrary
-/// system-wide sing-box instances by image name.
+/// executable name. If an unelevated restart cannot terminate an elevated
+/// orphan, retain the PID file so the next privileged TUN launch can finish the
+/// cleanup instead of losing ownership information.
 pub fn reap_orphan(app: &AppHandle) {
     let dir = managed_dir(app);
     let path = pid_file(&dir);
     let Ok(contents) = fs::read_to_string(&path) else {
         return;
     };
-    if let Ok(pid) = contents.trim().parse::<u32>() {
-        if expected_process_is_alive(pid) {
-            diagnostics::record("sing-box", "warn", format!("reaping owned orphan PID {pid}"));
-            kill_pid(pid);
-        } else {
-            diagnostics::record(
-                "sing-box",
-                "info",
-                format!("stale PID file ignored because PID {pid} is not sing-box"),
-            );
-        }
+    let Ok(pid) = contents.trim().parse::<u32>() else {
+        clear_pid(&dir);
+        return;
+    };
+
+    if !expected_process_is_alive(pid) {
+        diagnostics::record(
+            "sing-box",
+            "info",
+            format!("stale PID file ignored because PID {pid} is not sing-box"),
+        );
+        clear_pid(&dir);
+        return;
     }
-    clear_pid(&dir);
+
+    diagnostics::record("sing-box", "warn", format!("reaping owned orphan PID {pid}"));
+    if kill_pid(pid) {
+        clear_pid(&dir);
+        diagnostics::record("sing-box", "info", format!("orphan PID {pid} terminated"));
+    } else {
+        diagnostics::record(
+            "sing-box",
+            "warn",
+            format!(
+                "could not terminate owned orphan PID {pid}; retaining PID file for a privileged cleanup attempt"
+            ),
+        );
+    }
 }
