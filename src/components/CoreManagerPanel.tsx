@@ -38,12 +38,12 @@ function CoreCard({ kind }: { kind: CoreKind }) {
     () => entry.releases.find((release) => !release.prerelease)?.version ?? null,
     [entry.releases],
   );
-  const initial = entry.status?.active_version ?? latestStable ?? "";
-  const [selected, setSelected] = useState(initial);
-
-  useEffect(() => {
-    if (!selected && initial) setSelected(initial);
-  }, [initial, selected]);
+  const fallbackSelection = entry.status?.active_version ?? latestStable ?? "";
+  const [selectionOverride, setSelectionOverride] = useState<string | null>(null);
+  const selected =
+    selectionOverride && releases.some((release) => release.version === selectionOverride)
+      ? selectionOverride
+      : fallbackSelection;
 
   const selectedRelease = releases.find((release) => release.version === selected);
   const installed =
@@ -56,7 +56,8 @@ function CoreCard({ kind }: { kind: CoreKind }) {
         <div>
           <p className="text-xs font-medium text-foreground">{CORE_LABELS[kind]}</p>
           <p className="text-[10px] text-muted-foreground">
-            Active: {entry.status?.active_version ?? `bundled ${entry.status?.bundled_version ?? "unknown"}`}
+            Active:{" "}
+            {entry.status?.active_version ?? `bundled ${entry.status?.bundled_version ?? "unknown"}`}
           </p>
         </div>
         <button
@@ -73,7 +74,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
       <div className="flex gap-2">
         <select
           value={selected}
-          onChange={(event) => setSelected(event.target.value)}
+          onChange={(event) => setSelectionOverride(event.target.value)}
           disabled={entry.loading || locked}
           className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           aria-label={`${CORE_LABELS[kind]} version`}
