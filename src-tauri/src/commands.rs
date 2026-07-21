@@ -41,6 +41,15 @@ pub fn get_default_profile(app: AppHandle) -> ConnectionProfile {
 }
 
 #[tauri::command]
+pub fn take_pending_elevation_profile(app: AppHandle) -> Option<ConnectionProfile> {
+    if crate::is_admin() {
+        aether::profiles::take_pending_elevation(&app)
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
 pub fn set_default_profile(app: AppHandle, profile: ConnectionProfile) -> Result<(), AetherError> {
     aether::profiles::save(&app, &profile.sanitized());
     Ok(())
