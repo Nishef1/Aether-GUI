@@ -13,8 +13,33 @@ pub struct CoreInfo {
     pub source: String,
 }
 
-fn binary_name() -> &'static str {
-    if cfg!(windows) { "aether.exe" } else { "aether" }
+fn fallback_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "aether.exe"
+    } else {
+        "aether"
+    }
+}
+
+fn sanitize_version_tag(tag: &str) -> String {
+    tag.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn versioned_binary_name(tag: &str) -> String {
+    let tag = sanitize_version_tag(tag);
+    if cfg!(windows) {
+        format!("aether-{tag}.exe")
+    } else {
+        format!("aether-{tag}")
+    }
 }
 
 fn managed_dir(app: &AppHandle) -> PathBuf {
@@ -24,23 +49,28 @@ fn managed_dir(app: &AppHandle) -> PathBuf {
         .join("core")
 }
 
-fn managed_binary(app: &AppHandle) -> PathBuf {
-    managed_dir(app).join(binary_name())
+fn preferred_binary_in(dir: &Path) -> Option<PathBuf> {
+    let version_file = dir.join("aether-version.txt");
+    if let Ok(tag) = std::fs::read_to_string(version_file) {
+        let versioned = dir.join(versioned_binary_name(tag.trim()));
+        if versioned.exists() {
+            return Some(versioned);
+        }
+    }
+
+    let fallback = dir.join(fallback_binary_name());
+    fallback.exists().then_some(fallback)
 }
 
 fn resource_binary(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .resource_dir()
         .ok()
-        .map(|dir| dir.join("binaries").join(binary_name()))
-        .filter(|path| path.exists())
+        .and_then(|dir| preferred_binary_in(&dir.join("binaries")))
 }
 
 fn development_binary() -> Option<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(binary_name());
-    path.exists().then_some(path)
+    preferred_binary_in(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"))
 }
 
 fn ensure_executable(path: &Path) {
@@ -52,8 +82,7 @@ fn ensure_executable(path: &Path) {
 }
 
 pub fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
-    let managed = managed_binary(app);
-    if managed.exists() {
+    if let Some(managed) = preferred_binary_in(&managed_dir(app)) {
         ensure_executable(&managed);
         return Ok(managed);
     }
@@ -63,7 +92,9 @@ pub fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
         return Ok(path);
     }
 
-    Err(AetherError::BinaryMissing(managed.display().to_string()))
+    Err(AetherError::BinaryMissing(
+        managed_dir(app).join(fallback_binary_name()).display().to_string(),
+    ))
 }
 
 fn fetch_script(app: &AppHandle) -> Option<PathBuf> {
@@ -122,17 +153,23 @@ fn emit_log(app: &AppHandle, level: &str, message: impl Into<String>) {
 
 pub fn current_info(app: &AppHandle) -> Result<CoreInfo, AetherError> {
     let path = resolve_binary(app)?;
-    let managed = managed_binary(app);
+    let managed_root = managed_dir(app);
     Ok(CoreInfo {
         version: detect_version(&path),
-        source: if path == managed { "managed" } else { "bundled" }.into(),
+        source: if path.starts_with(&managed_root) {
+            "managed"
+        } else {
+            "bundled"
+        }
+        .into(),
         path: path.display().to_string(),
     })
 }
 
-/// Best-effort update of the independently managed Aether core. A failure never
-/// removes the currently working core; the fetch scripts verify checksums and
-/// replace the binary only after the download is complete.
+/// Best-effort update of the independently managed Aether core. Fetch scripts
+/// install immutable versioned binaries side-by-side and atomically switch only
+/// a small version pointer, so a process already running an older core cannot
+/// race with or be invalidated by a background update.
 pub fn refresh_now(app: &AppHandle) -> Result<CoreInfo, AetherError> {
     let script = fetch_script(app).ok_or_else(|| {
         AetherError::CoreUpdateFailed("Aether update helper script was not bundled".into())
@@ -201,4 +238,15 @@ pub fn refresh_in_background(app: AppHandle) {
             emit_log(&app, "warn", format!("core update skipped: {e}"));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_tag_is_safe_for_filename() {
+        assert_eq!(sanitize_version_tag("v1.3.0"), "v1.3.0");
+        assert_eq!(sanitize_version_tag("v1/../../evil"), "v1_.._.._evil");
+    }
 }
