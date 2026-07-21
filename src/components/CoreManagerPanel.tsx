@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Download, RefreshCw, Trash2 } from "lucide-react";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useCoreStore } from "@/state/coreStore";
-import type { CoreKind } from "@/types/core";
+import type { CoreKind, CoreRelease } from "@/types/core";
 
 const CORE_LABELS: Record<CoreKind, string> = {
   aether: "Aether core",
@@ -18,19 +18,36 @@ function CoreCard({ kind }: { kind: CoreKind }) {
   const connectionStatus = useConnectionStore((state) => state.status.state);
   const locked = connectionStatus !== "Idle" && connectionStatus !== "Error";
 
+  const releases = useMemo(() => {
+    const byVersion = new Map<string, CoreRelease>();
+    for (const release of entry.releases) byVersion.set(release.version, release);
+    for (const version of entry.status?.installed_versions ?? []) {
+      if (!byVersion.has(version)) {
+        byVersion.set(version, {
+          version,
+          prerelease: false,
+          installed: true,
+          active: entry.status?.active_version === version,
+        });
+      }
+    }
+    return [...byVersion.values()];
+  }, [entry.releases, entry.status]);
+
   const latestStable = useMemo(
     () => entry.releases.find((release) => !release.prerelease)?.version ?? null,
     [entry.releases],
   );
-  const initial = entry.status?.active_version ?? latestStable ?? entry.status?.bundled_version ?? "";
+  const initial = entry.status?.active_version ?? latestStable ?? "";
   const [selected, setSelected] = useState(initial);
 
   useEffect(() => {
     if (!selected && initial) setSelected(initial);
   }, [initial, selected]);
 
-  const selectedRelease = entry.releases.find((release) => release.version === selected);
-  const installed = selectedRelease?.installed ?? entry.status?.installed_versions.includes(selected) ?? false;
+  const selectedRelease = releases.find((release) => release.version === selected);
+  const installed =
+    selectedRelease?.installed ?? entry.status?.installed_versions.includes(selected) ?? false;
   const active = entry.status?.active_version === selected;
 
   return (
@@ -62,7 +79,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
           aria-label={`${CORE_LABELS[kind]} version`}
         >
           {!selected && <option value="">Choose version</option>}
-          {entry.releases.map((release) => (
+          {releases.map((release) => (
             <option key={release.version} value={release.version}>
               {release.version}
               {release.prerelease ? " (pre-release)" : ""}
