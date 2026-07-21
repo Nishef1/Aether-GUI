@@ -18,9 +18,11 @@ export function TunToggle() {
           <TooltipTrigger aria-label="About System-wide TUN">
             <Info size={12} />
           </TooltipTrigger>
-          <TooltipContent>
-            Routes system traffic through Aether using a supervised sing-box TUN. The app requests
-            administrator privileges only when this mode is enabled.
+          <TooltipContent className="max-w-xs">
+            Routes system traffic through a supervised sing-box TUN and verifies the active data
+            path before reporting system-wide protection. Administrator access is requested only
+            for TUN mode. This is not a persistent firewall kill switch: after disconnect or TUN
+            teardown, normal direct system networking resumes.
           </TooltipContent>
         </Tooltip>
       </div>
