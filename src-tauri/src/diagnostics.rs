@@ -106,11 +106,30 @@ fn redact_sensitive(message: &str) -> String {
     }
 }
 
+fn effective_level<'a>(component: &str, level: &'a str, message: &str) -> &'a str {
+    if component != "aether" || level != "info" {
+        return level;
+    }
+
+    // PTY output reaches this writer through one shared channel, so callers used
+    // to label every Aether line as `info`. Preserve the core's own severity in
+    // structured diagnostics without changing the user-visible log format.
+    if message.contains(" ERROR ") || message.contains("] ERROR") {
+        "error"
+    } else if message.contains(" WARN ") || message.contains("] WARN") {
+        "warn"
+    } else {
+        level
+    }
+}
+
 pub fn record(component: &str, level: &str, message: impl AsRef<str>) {
     let Some(diagnostics) = DIAGNOSTICS.get() else {
         return;
     };
-    let message = redact_sensitive(message.as_ref());
+    let raw_message = message.as_ref();
+    let level = effective_level(component, level, raw_message);
+    let message = redact_sensitive(raw_message);
     let entry = serde_json::json!({
         "timestamp_ms": now_millis(),
         "component": component,
@@ -152,8 +171,8 @@ pub fn record(component: &str, level: &str, message: impl AsRef<str>) {
         diagnostics_file.written += required;
         diagnostics_file.unflushed += required;
 
-        let should_flush =
-            diagnostics_file.unflushed >= FLUSH_INTERVAL_BYTES || matches!(level, "warn" | "error");
+        let should_flush = diagnostics_file.unflushed >= FLUSH_INTERVAL_BYTES
+            || matches!(level, "warn" | "error");
         if should_flush {
             let _ = diagnostics_file.file.flush();
             diagnostics_file.unflushed = 0;
@@ -194,5 +213,27 @@ mod tests {
             redact_sensitive("connected to gateway"),
             "connected to gateway"
         );
+    }
+
+    #[test]
+    fn preserves_aether_warn_and_error_severity() {
+        assert_eq!(
+            effective_level(
+                "aether",
+                "info",
+                "[2026-07-21T14:00:00Z WARN  aether] reconnecting"
+            ),
+            "warn"
+        );
+        assert_eq!(
+            effective_level(
+                "aether",
+                "info",
+                "[2026-07-21T14:00:00Z ERROR aether] failed"
+            ),
+            "error"
+        );
+        assert_eq!(effective_level("aether", "info", "connected"), "info");
+        assert_eq!(effective_level("sing-box", "info", " WARN "), "info");
     }
 }
