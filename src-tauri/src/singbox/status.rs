@@ -160,10 +160,10 @@ pub fn verify_tunnel(aether_socks_port: u16) -> Result<(), AetherError> {
     let ipv4 = verify_family(aether_socks_port, AddressFamily::V4);
     let ipv6 = verify_family(aether_socks_port, AddressFamily::V6);
 
-    let has_verified = matches!(ipv4, FamilyVerification::Verified)
-        || matches!(ipv6, FamilyVerification::Verified);
-    let has_failed = matches!(ipv4, FamilyVerification::Failed(_))
-        || matches!(ipv6, FamilyVerification::Failed(_));
+    let has_verified = matches!(&ipv4, FamilyVerification::Verified)
+        || matches!(&ipv6, FamilyVerification::Verified);
+    let has_failed = matches!(&ipv4, FamilyVerification::Failed(_))
+        || matches!(&ipv6, FamilyVerification::Failed(_));
 
     if has_verified && !has_failed {
         return Ok(());
