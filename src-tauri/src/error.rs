@@ -14,8 +14,6 @@ pub enum AetherError {
     NotConnected,
     #[error("core manager error: {0}")]
     CoreManager(String),
-    #[error("core update failed: {0}")]
-    CoreUpdateFailed(String),
     #[error("administrator privileges are required for system-wide TUN mode")]
     ElevationRequired,
     #[error("sing-box binary not found at {0}")]
