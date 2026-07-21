@@ -9,6 +9,7 @@ $Repo = "SagerNet/sing-box"
 $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
 $Headers = @{ "User-Agent" = "Aether-GUI-TUN-Fetcher" }
 $WintunVersion = "0.14.1"
+$WintunSha256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
 
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 
@@ -68,13 +69,21 @@ try {
     }
 
     # Some official sing-box packages ship Wintun side-by-side; if the selected
-    # package does not, fetch it only from WireGuard's official distribution and
-    # require a valid Authenticode signature before accepting the DLL.
+    # package does not, fetch it only from WireGuard's official distribution.
+    # Verify both the archive's published SHA-256 and the extracted DLL's
+    # Authenticode signer before accepting it.
     if (-not $DownloadedWintun) {
         Write-Host "[tun-fetcher] Wintun not bundled; downloading official signed Wintun $WintunVersion..."
         $WintunArchive = Join-Path $TempDir "wintun-$WintunVersion.zip"
         $WintunExtract = Join-Path $TempDir "wintun"
         Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$WintunVersion.zip" -OutFile $WintunArchive
+
+        $WintunActual = (Get-FileHash -Path $WintunArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($WintunActual -ne $WintunSha256) {
+            throw "Checksum mismatch for official Wintun archive (expected $WintunSha256, got $WintunActual)"
+        }
+        Write-Host "[tun-fetcher] Wintun archive SHA-256 verified"
+
         Expand-Archive -Path $WintunArchive -DestinationPath $WintunExtract -Force
         $DownloadedWintun = Get-ChildItem -Path $WintunExtract -Recurse -Filter "wintun.dll" |
             Where-Object { $_.FullName -match "amd64" } |
