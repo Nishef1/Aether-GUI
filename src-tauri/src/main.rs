@@ -87,16 +87,11 @@ fn main() {
             std::fs::create_dir_all(&data_dir)?;
             let _ = diagnostics::init(&data_dir)?;
 
-            // Only reap processes whose persisted PID still belongs to the
-            // expected executable. PID reuse must never kill unrelated apps.
             aether::orphan::reap_orphan(&data_dir);
             singbox::reap_orphan(app.handle());
 
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
-
-            // Aether core releases are independent from GUI releases. Updating
-            // is best-effort and never removes the last working/bundled core.
             aether::updater::refresh_in_background(app.handle().clone());
             Ok(())
         })
@@ -105,6 +100,7 @@ fn main() {
             commands::disconnect,
             commands::get_status,
             commands::get_default_profile,
+            commands::take_pending_elevation_profile,
             commands::set_default_profile,
             commands::get_close_to_tray,
             commands::set_close_to_tray,
