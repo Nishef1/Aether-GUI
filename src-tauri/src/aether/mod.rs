@@ -142,6 +142,30 @@ fn spawn_and_monitor(
     let session = match pty::spawn(&binary, &data_dir, profile.clone(), log_tx) {
         Ok(session) => session,
         Err(e) => {
+            // Integrity verification proves the download is authentic, not that
+            // a newly released core remains compatible with this GUI/runtime.
+            // If the independently managed core cannot even launch, retry once
+            // with the tested core shipped with this GUI before surfacing Error.
+            if updater::is_managed_binary(&app, &binary) {
+                if let Some(fallback) = updater::bundled_recovery_binary(&app) {
+                    diagnostics::record(
+                        "core-updater",
+                        "warn",
+                        format!(
+                            "managed core failed to launch ({e}); retrying with bundled fallback {}",
+                            fallback.display()
+                        ),
+                    );
+                    return spawn_and_monitor(
+                        app,
+                        manager,
+                        fallback,
+                        data_dir,
+                        profile,
+                        singbox_manager,
+                    );
+                }
+            }
             set_state_and_emit(
                 &app,
                 &manager,
@@ -287,6 +311,35 @@ fn monitor_connect(
         if let Some(exit) = mgr.session.as_mut().and_then(|s| s.try_wait()) {
             mgr.session = None;
             drop(mgr);
+            orphan::clear_pid(&data_dir);
+
+            // A managed core that starts as a process but exits before it ever
+            // exposes SOCKS is treated as a possible compatibility regression.
+            // Fall back once to the core bundled with this GUI. Once on the
+            // bundled core, ordinary bounded reconnect logic applies normally.
+            if updater::is_managed_binary(&app, &binary) {
+                if let Some(fallback) = updater::bundled_recovery_binary(&app) {
+                    diagnostics::record(
+                        "core-updater",
+                        "warn",
+                        format!(
+                            "managed core exited before connecting ({exit}); retrying with bundled fallback {}",
+                            fallback.display()
+                        ),
+                    );
+                    set_state_and_emit(&app, &manager, ConnectionState::Launching);
+                    let _ = spawn_and_monitor(
+                        app,
+                        manager,
+                        fallback,
+                        data_dir,
+                        profile,
+                        singbox_manager,
+                    );
+                    return;
+                }
+            }
+
             handle_unexpected_failure(
                 app,
                 manager,
