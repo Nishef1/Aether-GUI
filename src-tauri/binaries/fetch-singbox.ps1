@@ -6,21 +6,25 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $Repo = "SagerNet/sing-box"
-$ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
+# TUN is an implementation dependency of this GUI, not the independently
+# updateable Aether core. Pin the version whose config schema and routing
+# behavior are validated here; upgrade deliberately after testing migrations.
+$SingboxVersion = "1.13.12"
+$Tag = "v$SingboxVersion"
+$ApiUrl = "https://api.github.com/repos/$Repo/releases/tags/$Tag"
 $Headers = @{ "User-Agent" = "Aether-GUI-TUN-Fetcher" }
 $WintunVersion = "0.14.1"
 $WintunSha256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
 
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 
-Write-Host "[tun-fetcher] Checking latest stable sing-box release..."
+Write-Host "[tun-fetcher] Resolving validated sing-box $Tag..."
 $Release = Invoke-RestMethod -Uri $ApiUrl -Headers $Headers
-$Tag = [string]$Release.tag_name
-if ([string]::IsNullOrWhiteSpace($Tag)) {
-    throw "Latest sing-box release did not contain a tag name"
+$ReleaseTag = [string]$Release.tag_name
+if ($ReleaseTag -ne $Tag) {
+    throw "Expected sing-box release $Tag but GitHub returned '$ReleaseTag'"
 }
-$Version = $Tag.TrimStart("v")
-$AssetName = "sing-box-$Version-windows-amd64.zip"
+$AssetName = "sing-box-$SingboxVersion-windows-amd64.zip"
 $VersionFile = Join-Path $DestDir "sing-box-version.txt"
 $TargetExe = Join-Path $DestDir "sing-box.exe"
 $TargetWintun = Join-Path $DestDir "wintun.dll"
