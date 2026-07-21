@@ -11,8 +11,10 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
-    "prepare:cores:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri/binaries/fetch-aether.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri/binaries/fetch-singbox.ps1",
-    "prepare:cores:unix": "bash src-tauri/binaries/fetch-aether.sh && bash src-tauri/binaries/fetch-singbox.sh",
+    "prepare:cores:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri/binaries/fetch-aether.ps1 -Version v1.3.0 && powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri/binaries/fetch-singbox.ps1 -Version v1.13.14",
+    "prepare:cores:unix": "bash src-tauri/binaries/fetch-aether.sh --version v1.3.0 && bash src-tauri/binaries/fetch-singbox.sh --version v1.13.14",
+    "build:windows:exe": "pnpm prepare:cores:windows && tauri build --no-bundle",
+    "build:windows:setup": "pnpm prepare:cores:windows && tauri build --bundles nsis",
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "clippy:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings"
