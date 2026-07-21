@@ -49,22 +49,24 @@ pub fn refresh_in_background(app: AppHandle) {
         return;
     }
 
-    std::thread::spawn(move || match core_manager::latest_stable(&app, CoreKind::Aether) {
-        Ok(latest) => {
-            let active = core_manager::status(&app, CoreKind::Aether)
-                .ok()
-                .and_then(|status| status.active_version)
-                .unwrap_or_else(|| "bundled".into());
-            diagnostics::record(
+    std::thread::spawn(
+        move || match core_manager::latest_stable(&app, CoreKind::Aether) {
+            Ok(latest) => {
+                let active = core_manager::status(&app, CoreKind::Aether)
+                    .ok()
+                    .and_then(|status| status.active_version)
+                    .unwrap_or_else(|| "bundled".into());
+                diagnostics::record(
+                    "core-manager",
+                    "info",
+                    format!("Aether release check: active={active}, latest-stable={latest}"),
+                );
+            }
+            Err(error) => diagnostics::record(
                 "core-manager",
-                "info",
-                format!("Aether release check: active={active}, latest-stable={latest}"),
-            );
-        }
-        Err(error) => diagnostics::record(
-            "core-manager",
-            "warn",
-            format!("Aether release check skipped: {error}"),
-        ),
-    });
+                "warn",
+                format!("Aether release check skipped: {error}"),
+            ),
+        },
+    );
 }
