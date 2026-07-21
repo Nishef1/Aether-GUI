@@ -60,18 +60,13 @@ impl IpVersion {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ConnectionMode {
+    #[default]
     Proxy,
     Tunnel,
     Both,
-}
-
-impl Default for ConnectionMode {
-    fn default() -> Self {
-        Self::Proxy
-    }
 }
 
 impl ConnectionMode {

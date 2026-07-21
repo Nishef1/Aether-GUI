@@ -136,10 +136,7 @@ pub fn record(component: &str, level: &str, message: impl AsRef<str>) {
         })
         .to_string();
         let marker_required = marker.len() + 1;
-        if diagnostics_file
-            .written
-            .saturating_add(marker_required)
-            <= MAX_LOG_BYTES
+        if diagnostics_file.written.saturating_add(marker_required) <= MAX_LOG_BYTES
             && writeln!(diagnostics_file.file, "{marker}").is_ok()
         {
             diagnostics_file.written += marker_required;
@@ -155,8 +152,8 @@ pub fn record(component: &str, level: &str, message: impl AsRef<str>) {
         diagnostics_file.written += required;
         diagnostics_file.unflushed += required;
 
-        let should_flush = diagnostics_file.unflushed >= FLUSH_INTERVAL_BYTES
-            || matches!(level, "warn" | "error");
+        let should_flush =
+            diagnostics_file.unflushed >= FLUSH_INTERVAL_BYTES || matches!(level, "warn" | "error");
         if should_flush {
             let _ = diagnostics_file.file.flush();
             diagnostics_file.unflushed = 0;
