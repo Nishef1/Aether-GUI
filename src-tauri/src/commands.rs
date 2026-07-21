@@ -45,9 +45,7 @@ fn no_window(command: &mut Command) {
 }
 
 fn parse_version(value: &str) -> Option<Vec<u64>> {
-    let trimmed = value
-        .trim()
-        .trim_start_matches(|character| character == 'v' || character == 'V');
+    let trimmed = value.trim().trim_start_matches(['v', 'V']);
     let core = trimmed.split('-').next().unwrap_or(trimmed);
     let parts = core
         .split('.')
