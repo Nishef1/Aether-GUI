@@ -150,51 +150,87 @@ pub fn sanitize_bind_address(value: &str) -> String {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port()).to_string()
 }
 
+fn help_supports(help: Option<&str>, flag: &str) -> bool {
+    let Some(help) = help else {
+        // If capability discovery itself fails, preserve current behavior.
+        return true;
+    };
+    help.lines().any(|line| {
+        line.split_whitespace()
+            .map(|token| token.trim_matches([',', ';']))
+            .any(|token| token == flag)
+    })
+}
+
 impl ConnectionProfile {
     pub fn sanitized(mut self) -> Self {
         self.bind_address = sanitize_bind_address(&self.bind_address);
         self
     }
 
-    /// Build only CLI options documented by the Aether core. The core remains
-    /// independently updateable; interactive prompt handling is retained as a
-    /// compatibility fallback if a future core changes optional behavior.
     pub fn as_args(&self) -> Vec<String> {
+        self.as_args_for_help(None)
+    }
+
+    /// Build arguments against the *active* independently-updated Aether core.
+    /// When `--help` is available we only pass flags advertised by that binary;
+    /// unsupported settings fall back to Aether's interactive prompts/defaults
+    /// instead of making a future core fail immediately on an unknown option.
+    pub fn as_args_for_help(&self, help: Option<&str>) -> Vec<String> {
         let mut args = Vec::with_capacity(12);
-        match self.protocol {
-            Protocol::Auto => {}
-            Protocol::Masque => args.push("--masque".into()),
-            Protocol::Wireguard => args.push("--wg".into()),
-            Protocol::Gool => args.push("--gool".into()),
+
+        let protocol_flag = match self.protocol {
+            Protocol::Auto => None,
+            Protocol::Masque => Some("--masque"),
+            Protocol::Wireguard => Some("--wg"),
+            Protocol::Gool => Some("--gool"),
+        };
+        if let Some(flag) = protocol_flag.filter(|flag| help_supports(help, flag)) {
+            args.push(flag.into());
         }
-        args.push(match self.scan_mode {
-            ScanMode::Turbo => "--turbo".into(),
-            ScanMode::Balanced => "--balanced".into(),
-            ScanMode::Thorough => "--thorough".into(),
-            ScanMode::Stealth => "--stealth".into(),
-            ScanMode::Ironclad => "--ironclad".into(),
-        });
-        args.push(match self.ip_version {
-            IpVersion::V4 => "-4".into(),
-            IpVersion::V6 => "-6".into(),
-            IpVersion::Both => "--dual".into(),
-        });
-        args.push(if self.quick_reconnect {
-            "--quick-reconnect".into()
+
+        let scan_flag = match self.scan_mode {
+            ScanMode::Turbo => "--turbo",
+            ScanMode::Balanced => "--balanced",
+            ScanMode::Thorough => "--thorough",
+            ScanMode::Stealth => "--stealth",
+            ScanMode::Ironclad => "--ironclad",
+        };
+        if help_supports(help, scan_flag) {
+            args.push(scan_flag.into());
+        }
+
+        let ip_flag = match self.ip_version {
+            IpVersion::V4 => "-4",
+            IpVersion::V6 => "-6",
+            IpVersion::Both => "--dual",
+        };
+        if help_supports(help, ip_flag) {
+            args.push(ip_flag.into());
+        }
+
+        let reconnect_flag = if self.quick_reconnect {
+            "--quick-reconnect"
         } else {
-            "--no-quick-reconnect".into()
-        });
-        args.push("--noize".into());
-        args.push(
-            match self.protocol {
-                Protocol::Auto | Protocol::Masque => self.masque_noize.as_flag(),
-                Protocol::Wireguard | Protocol::Gool => self.wg_noize.as_flag(),
-            }
-            .into(),
-        );
+            "--no-quick-reconnect"
+        };
+        if help_supports(help, reconnect_flag) {
+            args.push(reconnect_flag.into());
+        }
+
+        if help_supports(help, "--noize") {
+            args.push("--noize".into());
+            args.push(
+                match self.protocol {
+                    Protocol::Auto | Protocol::Masque => self.masque_noize.as_flag(),
+                    Protocol::Wireguard | Protocol::Gool => self.wg_noize.as_flag(),
+                }
+                .into(),
+            );
+        }
 
         let safe_bind = sanitize_bind_address(&self.bind_address);
-        if safe_bind != default_bind_address() {
+        if safe_bind != default_bind_address() && help_supports(help, "--bind") {
             args.push("--bind".into());
             args.push(safe_bind);
         }
@@ -304,5 +340,17 @@ mod tests {
         let args = p.as_args();
         let i = args.iter().position(|a| a == "--noize").expect("missing --noize");
         assert_eq!(args.get(i + 1).map(String::as_str), Some("firewall"));
+    }
+
+    #[test]
+    fn unsupported_future_flags_are_not_forwarded() {
+        let mut p = ConnectionProfile::default();
+        p.protocol = Protocol::Gool;
+        p.scan_mode = ScanMode::Ironclad;
+        let help = "Usage: aether [OPTIONS]\n  --masque\n  --balanced\n  -4\n  --bind <addr>";
+        let args = p.as_args_for_help(Some(help));
+        assert!(!args.iter().any(|arg| arg == "--gool"));
+        assert!(!args.iter().any(|arg| arg == "--ironclad"));
+        assert!(args.iter().any(|arg| arg == "-4"));
     }
 }
