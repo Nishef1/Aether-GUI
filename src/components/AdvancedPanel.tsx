@@ -13,6 +13,7 @@ import { IpVersionToggle } from "@/components/IpVersionToggle";
 import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
 import { NoizeProfileToggle } from "@/components/NoizeProfileToggle";
 import { BindAddressField } from "@/components/BindAddressField";
+import { TunToggle } from "@/components/TunToggle";
 import { useConnectionStore } from "@/state/connectionStore";
 
 function FieldRow({
@@ -42,24 +43,12 @@ function FieldRow({
   );
 }
 
-/**
- * Collapsed by default — this *is* the auto-mode default: press Connect,
- * done. Everything configurable (the options Aether's own interactive setup
- * exposes — see aether/prompts.rs and profiles.rs, nothing else) plus the
- * raw log stream live behind this one disclosure.
- *
- * Deliberately animation-light: opening used to stack a Motion layout
- * spring, a 300ms tw-animate slide, an instant column reflow, and three
- * Glass filter mounts — four systems fighting read as jank. Now it's one
- * fast CSS fade/slide and nothing else.
- */
 export function AdvancedPanel() {
   const logs = useConnectionStore((s) => s.logs);
   const status = useConnectionStore((s) => s.status);
   const quickReconnect = useConnectionStore((s) => s.profile.quick_reconnect);
   const setQuickReconnect = useConnectionStore((s) => s.setQuickReconnect);
   const [open, setOpen] = useState(false);
-  // Launch flag — locked mid-session like the other profile controls.
   const locked = status.state !== "Idle" && status.state !== "Error";
   const [autoScroll, setAutoScroll] = useState(true);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -73,7 +62,7 @@ export function AdvancedPanel() {
   return (
     <div className="w-full max-w-sm">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="flex w-full items-center justify-center gap-1.5 py-2 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary rounded-md">
+        <CollapsibleTrigger className="flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary">
           <Settings2 size={14} />
           Advanced
           <ChevronDown
@@ -113,10 +102,12 @@ export function AdvancedPanel() {
             </FieldRow>
             <FieldRow
               label="SOCKS5 Proxy"
-              tooltip="The local address Aether's SOCKS5 proxy listens on. Change the port to avoid conflicts, or enable LAN to share the tunnel with other devices on your network."
+              tooltip="Aether's local SOCKS5 listener. Only the port is configurable; the GUI deliberately keeps it on loopback because the core proxy has no authentication. Use System-wide TUN instead of exposing it to the LAN."
             >
               <BindAddressField />
             </FieldRow>
+
+            <TunToggle />
 
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -143,7 +134,7 @@ export function AdvancedPanel() {
             <div className="flex items-center gap-2">
               <div className="h-px flex-1 bg-border" />
               <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
-                Logs
+                Live logs
               </span>
               <div className="h-px flex-1 bg-border" />
             </div>
@@ -162,6 +153,9 @@ export function AdvancedPanel() {
                 logs.map((l, i) => <p key={i}>{l.line}</p>)
               )}
             </div>
+            <p className="text-[10px] leading-relaxed text-muted-foreground">
+              Full structured diagnostics are also written to disk for post-crash debugging.
+            </p>
           </div>
         </CollapsibleContent>
       </Collapsible>
