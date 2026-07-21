@@ -25,9 +25,7 @@ pub fn connect(
         .unwrap_or_else(|| aether::profiles::load(&app))
         .sanitized();
 
-    if profile.tun_enabled && !crate::is_admin() {
-        // Prepare verified binaries before UAC. The elevated process only runs
-        // already-installed binaries and never executes downloader helpers.
+    if profile.uses_tun() && !crate::is_admin() {
         let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
         let _ = core_manager::ensure_active(&app, CoreKind::Singbox)?;
         aether::profiles::save_pending_elevation(&app, &profile);
