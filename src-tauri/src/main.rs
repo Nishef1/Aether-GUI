@@ -59,7 +59,10 @@ pub(crate) fn relaunch_as_admin() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
     };
-    std::process::Command::new("pkexec").arg(exe).spawn().is_ok()
+    std::process::Command::new("pkexec")
+        .arg(exe)
+        .spawn()
+        .is_ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -67,7 +70,11 @@ pub(crate) fn relaunch_as_admin() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
     };
-    let path = exe.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
+    let path = exe
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
     let script = format!(
         "do shell script \"\\\"{}\\\" >/dev/null 2>&1 &\" with administrator privileges",
         path
