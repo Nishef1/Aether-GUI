@@ -49,8 +49,14 @@ mod tests {
 
     #[test]
     fn unsafe_bind_is_sanitized() {
-        assert_eq!(parse_bind_address("0.0.0.0:1919"), "127.0.0.1:1919".parse().unwrap());
-        assert_eq!(parse_bind_address("not-an-addr"), DEFAULT_SOCKS_ADDR.parse().unwrap());
+        assert_eq!(
+            parse_bind_address("0.0.0.0:1919"),
+            "127.0.0.1:1919".parse().unwrap()
+        );
+        assert_eq!(
+            parse_bind_address("not-an-addr"),
+            DEFAULT_SOCKS_ADDR.parse().unwrap()
+        );
     }
 
     #[test]
@@ -72,6 +78,9 @@ mod tests {
     #[test]
     fn watchdog_is_version_agnostic_and_generous() {
         assert_eq!(connect_timeout(&ScanMode::Turbo), Duration::from_secs(900));
-        assert_eq!(connect_timeout(&ScanMode::Ironclad), Duration::from_secs(900));
+        assert_eq!(
+            connect_timeout(&ScanMode::Ironclad),
+            Duration::from_secs(900)
+        );
     }
 }
