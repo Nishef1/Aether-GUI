@@ -72,7 +72,10 @@ fn kill_pid(pid: u32) -> bool {
     let mut command = Command::new("taskkill");
     command.args(["/PID", &pid.to_string(), "/F"]);
     no_window(&mut command);
-    command.output().map(|output| output.status.success()).unwrap_or(false)
+    command
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(unix)]
@@ -125,7 +128,11 @@ mod tests {
 
     #[test]
     fn accepts_only_aether_core_names() {
-        assert!(expected_aether_name(if cfg!(windows) { "aether.exe" } else { "aether" }));
+        assert!(expected_aether_name(if cfg!(windows) {
+            "aether.exe"
+        } else {
+            "aether"
+        }));
         assert!(expected_aether_name(if cfg!(windows) {
             "aether-v1.3.0.exe"
         } else {
