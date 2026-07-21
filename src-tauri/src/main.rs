@@ -78,6 +78,14 @@ pub(crate) fn relaunch_as_admin() -> bool {
         .unwrap_or(false)
 }
 
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        diagnostics::record("panic", "error", info.to_string());
+        default_hook(info);
+    }));
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -85,7 +93,19 @@ fn main() {
         .setup(|app| {
             let data_dir = app.handle().path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let _ = diagnostics::init(&data_dir)?;
+            let log_path = diagnostics::init(&data_dir)?;
+            install_panic_hook();
+            diagnostics::record(
+                "app",
+                "info",
+                format!(
+                    "Aether-GUI {} starting on {}-{}; diagnostics={}",
+                    env!("CARGO_PKG_VERSION"),
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                    log_path.display()
+                ),
+            );
 
             aether::orphan::reap_orphan(&data_dir);
             singbox::reap_orphan(app.handle());
@@ -127,6 +147,7 @@ fn main() {
                     .path()
                     .app_data_dir()
                     .unwrap_or_else(|_| std::env::temp_dir());
+                diagnostics::record("app", "info", "application exit requested");
                 aether::shutdown_blocking(&state.manager, &state.singbox, &data_dir);
             }
         });
