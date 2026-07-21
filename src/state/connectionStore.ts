@@ -9,7 +9,9 @@ import type {
   WgNoize,
 } from "@/types/connection";
 
-const MAX_LOG_LINES = 500;
+const MAX_LOG_LINES = 200;
+const MAX_PENDING_LOG_LINES = 400;
+const LOG_FLUSH_INTERVAL_MS = 250;
 
 interface ConnectionState {
   status: ConnectionStatus;
@@ -112,9 +114,12 @@ const BUDGET_RE = /budget=(\d+)s/;
 export async function initConnectionListeners(): Promise<() => void> {
   let pendingLogs: LogLine[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
   const flushLogs = () => {
     flushTimer = null;
-    const batch = pendingLogs;
+    if (pendingLogs.length === 0) return;
+
+    const batch = pendingLogs.slice(-MAX_PENDING_LOG_LINES);
     pendingLogs = [];
     let budget: number | null = null;
     for (const l of batch) {
@@ -136,7 +141,10 @@ export async function initConnectionListeners(): Promise<() => void> {
     }),
     listen<LogLine>("aether://log", (e) => {
       pendingLogs.push(e.payload);
-      flushTimer ??= setTimeout(flushLogs, 100);
+      if (pendingLogs.length > MAX_PENDING_LOG_LINES * 2) {
+        pendingLogs = pendingLogs.slice(-MAX_PENDING_LOG_LINES);
+      }
+      flushTimer ??= setTimeout(flushLogs, LOG_FLUSH_INTERVAL_MS);
     }),
   ]);
 
@@ -163,5 +171,6 @@ export async function initConnectionListeners(): Promise<() => void> {
     unlistenStatus();
     unlistenLog();
     if (flushTimer !== null) clearTimeout(flushTimer);
+    pendingLogs = [];
   };
 }
