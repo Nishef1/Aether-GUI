@@ -1,0 +1,3 @@
+# Connection supervision passes the complete runtime context plus failure metadata.
+# Eight arguments is intentional here; higher-arity functions should still be flagged.
+too-many-arguments-threshold = 8
