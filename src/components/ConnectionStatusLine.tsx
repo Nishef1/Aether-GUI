@@ -10,6 +10,9 @@ const TEXT_TRANSITION = {
   transition: { duration: 0.1, ease: [0.4, 0, 0.2, 1] as const },
 }
 
+const TRAFFIC_POLL_INTERVAL_MS = 2000
+const BYTE_UNITS = ["KiB", "MiB", "GiB", "TiB"]
+
 function useElapsed(sinceMs: number | null): {
   formatted: string
   totalSeconds: number
@@ -28,8 +31,24 @@ function useElapsed(sinceMs: number | null): {
   return { formatted: `${h}:${m}:${s}`, totalSeconds: total }
 }
 
-function ScanProgressBar({ percent }: { percent: number | null }) {
-  const focused = useWindowFocused()
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  let value = bytes
+  let unit = -1
+  do {
+    value /= 1024
+    unit += 1
+  } while (value >= 1024 && unit < BYTE_UNITS.length - 1)
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${BYTE_UNITS[unit]}`
+}
+
+function ScanProgressBar({
+  percent,
+  focused,
+}: {
+  percent: number | null
+  focused: boolean
+}) {
   return (
     <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
       {percent == null ? (
@@ -64,9 +83,7 @@ export function ConnectionStatusLine() {
   )
   const refreshTraffic = useConnectionStore((s) => s.refreshTraffic)
   const preparingCores = useConnectionStore((s) => s.preparingCores)
-  // `tun_enabled` is an internal Rust cache and is deliberately omitted from
-  // the serialized profile. The persisted connection mode is the UI source of
-  // truth, so use it for both the tunnel status copy and traffic visibility.
+  const focused = useWindowFocused()
   const tunEnabled = useConnectionStore(
     (s) => s.profile.connection_mode !== "proxy"
   )
@@ -75,15 +92,18 @@ export function ConnectionStatusLine() {
       ? status.connected_at_ms
       : null
   const elapsed = useElapsed(connectedAt).formatted
-  const trafficActive =
-    status.state === "Connected" || status.state === "Tunneling"
+  const trafficVisible = status.state === "Tunneling" || trafficSessionStarted
+  const shouldPollTraffic = status.state === "Tunneling" && focused
 
   useEffect(() => {
-    if (!trafficActive) return
+    if (!shouldPollTraffic) return
     void refreshTraffic()
-    const id = setInterval(() => void refreshTraffic(), 1000)
+    const id = setInterval(
+      () => void refreshTraffic(),
+      TRAFFIC_POLL_INTERVAL_MS
+    )
     return () => clearInterval(id)
-  }, [refreshTraffic, trafficActive])
+  }, [refreshTraffic, shouldPollTraffic])
 
   const [attemptStartedAt, setAttemptStartedAt] = useState<number | null>(null)
   /* eslint-disable react-hooks/set-state-in-effect -- capture transition time */
@@ -101,18 +121,6 @@ export function ConnectionStatusLine() {
     scanBudgetSecs != null
       ? Math.min(99, Math.round((attemptSeconds / scanBudgetSecs) * 100))
       : null
-
-  const formatBytes = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    const units = ["KiB", "MiB", "GiB", "TiB"]
-    let value = bytes
-    let unit = -1
-    do {
-      value /= 1024
-      unit += 1
-    } while (value >= 1024 && unit < units.length - 1)
-    return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`
-  }
 
   let primary: string
   let secondary: string
@@ -190,9 +198,9 @@ export function ConnectionStatusLine() {
         </motion.span>
       </AnimatePresence>
       {status.state === "Connecting" && (
-        <ScanProgressBar percent={scanPercent} />
+        <ScanProgressBar percent={scanPercent} focused={focused} />
       )}
-      {tunEnabled && (trafficActive || trafficSessionStarted) && (
+      {tunEnabled && trafficVisible && (
         <span
           className="font-mono text-[10px] text-muted-foreground"
           aria-label="Traffic"
