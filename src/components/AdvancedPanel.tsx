@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronDown, Info, Settings2 } from "lucide-react";
 import {
   Collapsible,
@@ -13,8 +13,6 @@ import { IpVersionToggle } from "@/components/IpVersionToggle";
 import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
 import { NoizeProfileToggle } from "@/components/NoizeProfileToggle";
 import { BindAddressField } from "@/components/BindAddressField";
-import { TunToggle } from "@/components/TunToggle";
-import { CoreManagerPanel } from "@/components/CoreManagerPanel";
 import { useConnectionStore } from "@/state/connectionStore";
 
 function FieldRow({
@@ -44,54 +42,9 @@ function FieldRow({
   );
 }
 
-function SectionDivider({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <div className="h-px flex-1 bg-border" />
-      <span className="text-[10px] tracking-wide text-muted-foreground uppercase">{label}</span>
-      <div className="h-px flex-1 bg-border" />
-    </div>
-  );
-}
-
-function LiveLogViewer() {
-  const logs = useConnectionStore((state) => state.logs);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const output = useMemo(() => logs.map((log) => log.line).join("\n"), [logs]);
-
-  useEffect(() => {
-    if (!autoScroll || !viewportRef.current) return;
-
-    const viewport = viewportRef.current;
-    const frame = requestAnimationFrame(() => {
-      viewport.scrollTop = viewport.scrollHeight;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [output, autoScroll]);
-
-  return (
-    <div
-      ref={viewportRef}
-      onScroll={(event) => {
-        const viewport = event.currentTarget;
-        const nextAutoScroll =
-          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
-        setAutoScroll((current) => (current === nextAutoScroll ? current : nextAutoScroll));
-      }}
-      className="max-h-64 overflow-y-auto rounded-md bg-black/20 p-2 font-mono text-xs text-muted-foreground ring-1 ring-white/10"
-    >
-      {output ? (
-        <pre className="m-0 whitespace-pre-wrap break-words font-inherit text-inherit">{output}</pre>
-      ) : (
-        <p className="text-status-idle">No output yet.</p>
-      )}
-    </div>
-  );
-}
-
 export function AdvancedPanel() {
   const status = useConnectionStore((s) => s.status);
+  const mode = useConnectionStore((s) => s.profile.connection_mode);
   const quickReconnect = useConnectionStore((s) => s.profile.quick_reconnect);
   const setQuickReconnect = useConnectionStore((s) => s.setQuickReconnect);
   const [open, setOpen] = useState(false);
@@ -138,14 +91,15 @@ export function AdvancedPanel() {
             >
               <NoizeProfileToggle />
             </FieldRow>
-            <FieldRow
-              label="SOCKS5 Proxy"
-              tooltip="Aether's local SOCKS5 listener. Only the port is configurable; the GUI deliberately keeps it on loopback because the core proxy has no authentication. Use System-wide TUN instead of exposing it to the LAN."
-            >
-              <BindAddressField />
-            </FieldRow>
 
-            <TunToggle />
+            {mode !== "tunnel" && (
+              <FieldRow
+                label="SOCKS5 Proxy"
+                tooltip="The local SOCKS5 endpoint exposed for apps in Proxy and Both modes. It is always restricted to loopback because the core proxy has no authentication."
+              >
+                <BindAddressField />
+              </FieldRow>
+            )}
 
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -168,16 +122,6 @@ export function AdvancedPanel() {
                 aria-label="Quick reconnect"
               />
             </div>
-
-            <SectionDivider label="Core versions" />
-            <CoreManagerPanel />
-
-            <SectionDivider label="Live logs" />
-            <LiveLogViewer />
-            <p className="text-[10px] leading-relaxed text-muted-foreground">
-              Full structured diagnostics are session-scoped and capped on disk for post-crash
-              debugging.
-            </p>
           </div>
         </CollapsibleContent>
       </Collapsible>
