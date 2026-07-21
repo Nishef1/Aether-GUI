@@ -85,6 +85,11 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       preparingCores: true,
     })
     try {
+      // Never let an older asynchronous settings write land after connect() has
+      // stored its pending elevation profile. Waiting for the ordered save queue
+      // keeps the UAC handoff deterministic even after rapid mode/option changes.
+      await profileSaveQueue
+
       // Startup starts this local readiness check in parallel. If Connect wins
       // the race, share the same promise before launching a core.
       await useCoreStore.getState().loadAll()
@@ -148,19 +153,16 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({ profile })
 
     try {
+      // Selecting a mode is a pure settings operation. Privilege elevation has
+      // exactly one owner: connect(). This keeps dev and production behavior the
+      // same and guarantees that UAC always has an exact pending connect profile.
       await saveDefaultProfile(profile)
-
-      // TUN requires an elevated process. Relaunch as soon as the mode is
-      // selected so Connect starts the already-selected mode after restart.
-      if (connection_mode !== "proxy" && !import.meta.env.DEV) {
-        await invoke("elevate")
-      }
     } catch (e) {
       set({
         status: {
           state: "Error",
           message: String(e),
-          phase: connection_mode === "proxy" ? "saving-profile" : "elevation",
+          phase: "saving-profile",
         },
       })
     }
@@ -267,6 +269,13 @@ export async function initConnectionListeners(): Promise<() => void> {
     ])
     const activeProfile = pendingElevationProfile ?? profile
     useConnectionStore.setState({ status, profile: activeProfile })
+
+    // A pending profile is a one-shot handoff created immediately before UAC.
+    // Only the elevated process can consume it, so resuming here cannot turn a
+    // normal app launch into an unexpected auto-connect.
+    if (pendingElevationProfile && status.state === "Idle") {
+      queueMicrotask(() => void useConnectionStore.getState().connect())
+    }
   } catch (e) {
     console.error("Failed to load initial connection state:", e)
   }
