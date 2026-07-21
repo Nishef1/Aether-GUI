@@ -58,6 +58,7 @@ if [[ "$DIGEST" == "$EXPECTED" || -z "$EXPECTED" ]]; then
   echo "GitHub did not provide a SHA-256 digest for $ASSET; refusing an unverified download" >&2
   exit 1
 fi
+EXPECTED="$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')"
 
 TARGET="$DEST_DIR/sing-box"
 VERSION_FILE="$DEST_DIR/sing-box-version.txt"
@@ -84,7 +85,7 @@ else
   exit 1
 fi
 
-if [[ "${ACTUAL,,}" != "${EXPECTED,,}" ]]; then
+if [[ "$ACTUAL" != "$EXPECTED" ]]; then
   echo "Checksum mismatch for $ASSET (expected $EXPECTED, got $ACTUAL)" >&2
   exit 1
 fi
