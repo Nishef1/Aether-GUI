@@ -81,14 +81,27 @@ fn ensure_executable(path: &Path) {
     }
 }
 
+pub fn is_managed_binary(app: &AppHandle, path: &Path) -> bool {
+    path.starts_with(managed_dir(app))
+}
+
+/// Returns the core shipped with the GUI (or the developer fallback when
+/// running from source), deliberately bypassing the app-data managed-core
+/// pointer. This is used only as a compatibility recovery path when a newly
+/// updated managed core cannot launch or exits before exposing SOCKS.
+pub fn bundled_recovery_binary(app: &AppHandle) -> Option<PathBuf> {
+    let path = resource_binary(app).or_else(development_binary)?;
+    ensure_executable(&path);
+    Some(path)
+}
+
 pub fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
     if let Some(managed) = preferred_binary_in(&managed_dir(app)) {
         ensure_executable(&managed);
         return Ok(managed);
     }
 
-    if let Some(path) = resource_binary(app).or_else(development_binary) {
-        ensure_executable(&path);
+    if let Some(path) = bundled_recovery_binary(app) {
         return Ok(path);
     }
 
