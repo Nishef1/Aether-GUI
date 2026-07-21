@@ -2,6 +2,7 @@ pub mod config;
 pub mod process;
 pub mod status;
 
+use crate::core_manager::{self, CoreKind};
 use crate::diagnostics;
 use crate::error::AetherError;
 use crate::events::{now_millis, LogEvent, LOG_EVENT};
@@ -13,8 +14,6 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
-
-pub const COMPATIBLE_VERSION_TAG: &str = "v1.13.12";
 
 pub struct SingboxManager {
     process: Option<SingboxProcess>,
@@ -38,100 +37,25 @@ impl SingboxManager {
     }
 }
 
-fn binary_name() -> &'static str {
-    if cfg!(windows) {
-        "sing-box.exe"
-    } else {
-        "sing-box"
-    }
-}
-
-fn app_data_dir(app: &AppHandle) -> PathBuf {
+fn runtime_dir(app: &AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir())
+        .join("tun")
 }
 
-fn managed_dir(app: &AppHandle) -> PathBuf {
-    app_data_dir(app).join("tun")
+fn pid_file(app: &AppHandle) -> PathBuf {
+    runtime_dir(app).join("singbox.pid")
 }
 
-fn pid_file(data_dir: &Path) -> PathBuf {
-    data_dir.join("singbox.pid")
+fn write_pid(app: &AppHandle, pid: u32) {
+    let dir = runtime_dir(app);
+    let _ = fs::create_dir_all(&dir);
+    let _ = fs::write(pid_file(app), pid.to_string());
 }
 
-fn write_pid(data_dir: &Path, pid: u32) {
-    let _ = fs::write(pid_file(data_dir), pid.to_string());
-}
-
-fn clear_pid(data_dir: &Path) {
-    let _ = fs::remove_file(pid_file(data_dir));
-}
-
-fn ensure_executable(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
-    }
-}
-
-/// Accept a TUN engine only when it carries the metadata written by our
-/// verified fetcher for the exact config schema tested by this GUI. On Windows,
-/// the Wintun driver must also be present beside the executable.
-fn compatible_binary_in(dir: &Path) -> Option<PathBuf> {
-    let version = fs::read_to_string(dir.join("sing-box-version.txt")).ok()?;
-    if version.trim() != COMPATIBLE_VERSION_TAG {
-        return None;
-    }
-
-    #[cfg(windows)]
-    if !dir.join("wintun.dll").exists() {
-        return None;
-    }
-
-    let binary = dir.join(binary_name());
-    if !binary.exists() {
-        return None;
-    }
-    ensure_executable(&binary);
-    Some(binary)
-}
-
-fn existing_binary(app: &AppHandle) -> Option<PathBuf> {
-    if let Some(path) = compatible_binary_in(&managed_dir(app)) {
-        return Some(path);
-    }
-
-    if let Some(path) = app
-        .path()
-        .resource_dir()
-        .ok()
-        .and_then(|dir| compatible_binary_in(&dir.join("binaries")))
-    {
-        return Some(path);
-    }
-
-    compatible_binary_in(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"))
-}
-
-fn fetch_script(app: &AppHandle) -> Option<PathBuf> {
-    let script = if cfg!(windows) {
-        "fetch-singbox.ps1"
-    } else {
-        "fetch-singbox.sh"
-    };
-    app.path()
-        .resource_dir()
-        .ok()
-        .map(|dir| dir.join("binaries").join(script))
-        .filter(|path| path.exists())
-        .or_else(|| {
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("binaries")
-                .join(script);
-            path.exists().then_some(path)
-        })
+fn clear_pid(app: &AppHandle) {
+    let _ = fs::remove_file(pid_file(app));
 }
 
 fn no_window(command: &mut Command) {
@@ -155,73 +79,20 @@ fn emit_log(app: &AppHandle, level: &str, message: impl Into<String>) {
     );
 }
 
-fn fetch_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
-    let script = fetch_script(app).ok_or_else(|| {
-        AetherError::SingboxBinaryMissing("sing-box fetch helper was not bundled".into())
-    })?;
-    let dest = managed_dir(app);
-    fs::create_dir_all(&dest).map_err(|e| AetherError::Internal(e.to_string()))?;
-
-    emit_log(
-        app,
-        "info",
-        format!(
-            "validated TUN dependency {COMPATIBLE_VERSION_TAG} is missing; fetching a verified release"
-        ),
-    );
-    let mut command = if cfg!(windows) {
-        let mut cmd = Command::new("powershell.exe");
-        cmd.arg("-NoProfile")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-File")
-            .arg(&script)
-            .arg("-DestDir")
-            .arg(&dest);
-        cmd
-    } else {
-        let mut cmd = Command::new("bash");
-        cmd.arg(&script).arg("--dest-dir").arg(&dest);
-        cmd
-    };
-    no_window(&mut command);
-    let output = command
-        .output()
-        .map_err(|e| AetherError::SingboxBinaryMissing(format!("launch fetch helper: {e}")))?;
-
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if !line.trim().is_empty() {
-            emit_log(app, "info", line);
-        }
-    }
-    for line in String::from_utf8_lossy(&output.stderr).lines() {
-        if !line.trim().is_empty() {
-            emit_log(app, "warn", line);
-        }
-    }
-    if !output.status.success() {
-        return Err(AetherError::SingboxBinaryMissing(format!(
-            "verified dependency fetch failed with {}",
-            output.status
-        )));
-    }
-
-    existing_binary(app).ok_or_else(|| {
-        AetherError::SingboxBinaryMissing(format!(
-            "verified sing-box {COMPATIBLE_VERSION_TAG} was not installed correctly in {}",
-            dest.display()
-        ))
+pub fn ensure_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
+    core_manager::ensure_active(app, CoreKind::Singbox).map_err(|error| {
+        AetherError::SingboxBinaryMissing(error.to_string())
     })
 }
 
-pub fn ensure_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
-    existing_binary(app).map(Ok).unwrap_or_else(|| fetch_binary(app))
-}
-
-fn write_config(app: &AppHandle, port: u16) -> Result<PathBuf, AetherError> {
-    let dir = managed_dir(app);
+fn write_config(
+    app: &AppHandle,
+    port: u16,
+    aether_binary: &Path,
+) -> Result<PathBuf, AetherError> {
+    let dir = runtime_dir(app);
     fs::create_dir_all(&dir).map_err(|e| AetherError::SingboxConfigFailed(e.to_string()))?;
-    let content = config::generate_config(port)
+    let content = config::generate_config(port, aether_binary)
         .map_err(|e| AetherError::SingboxConfigFailed(e.to_string()))?;
     let path = dir.join("singbox-config.json");
     fs::write(&path, content).map_err(|e| AetherError::SingboxConfigFailed(e.to_string()))?;
@@ -241,22 +112,25 @@ pub fn start_tunnel(
     }
 
     let binary = ensure_binary(&app)?;
-    let config_path = write_config(&app, aether_socks_port)?;
+    let aether_binary = crate::aether::updater::resolve_binary(&app)?;
+    let config_path = write_config(&app, aether_socks_port, &aether_binary)?;
+
+    // Every selectable sing-box version must prove that it understands the
+    // current generated schema before it is allowed to take over system routes.
     process::check_config(&binary, &config_path)?;
     emit_log(
         &app,
         "info",
         format!(
-            "configuration validated with {COMPATIBLE_VERSION_TAG} ({})",
-            binary.display()
+            "validated TUN config with core={} and aether={}",
+            binary.display(),
+            aether_binary.display()
         ),
     );
 
     let (log_tx, log_rx) = mpsc::channel();
     let process = process::spawn(&binary, &config_path, log_tx)?;
-    let pid = process.pid();
-    let data_dir = managed_dir(&app);
-    write_pid(&data_dir, pid);
+    write_pid(&app, process.pid());
 
     {
         let mut mgr = manager.lock().unwrap();
@@ -269,11 +143,7 @@ pub fn start_tunnel(
     let app_for_logs = app.clone();
     std::thread::spawn(move || {
         for log in log_rx {
-            let level = if log.stream == "stderr" {
-                "warn"
-            } else {
-                "info"
-            };
+            let level = if log.stream == "stderr" { "warn" } else { "info" };
             emit_log(&app_for_logs, level, log.line);
         }
     });
@@ -300,8 +170,8 @@ pub fn start_tunnel(
                 emit_log(&app, "info", "system-wide TUN data plane verified");
                 return Ok(());
             }
-            Err(e) => {
-                last_error = e.to_string();
+            Err(error) => {
+                last_error = error.to_string();
                 diagnostics::record("tun-health", "warn", &last_error);
             }
         }
@@ -349,7 +219,7 @@ pub fn stop_tunnel(app: &AppHandle, manager: &Arc<Mutex<SingboxManager>>) {
     if let Some(process) = process.as_mut() {
         process.kill();
     }
-    clear_pid(&managed_dir(app));
+    clear_pid(app);
     if had_process {
         emit_log(app, "info", "TUN stopped");
     }
@@ -366,7 +236,16 @@ pub fn shutdown_blocking(manager: &Arc<Mutex<SingboxManager>>, data_dir: &Path) 
     if let Some(process) = process.as_mut() {
         process.kill();
     }
-    clear_pid(&data_dir.join("tun"));
+    let _ = fs::remove_file(data_dir.join("tun").join("singbox.pid"));
+}
+
+fn expected_singbox_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if cfg!(windows) {
+        name == "sing-box.exe" || (name.starts_with("sing-box-v") && name.ends_with(".exe"))
+    } else {
+        name == "sing-box" || name.starts_with("sing-box-v")
+    }
 }
 
 fn expected_process_is_alive(pid: u32) -> bool {
@@ -378,11 +257,10 @@ fn expected_process_is_alive(pid: u32) -> bool {
         return command
             .output()
             .map(|output| {
-                let text = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-                text.lines().any(|line| {
+                String::from_utf8_lossy(&output.stdout).lines().any(|line| {
                     line.split(',')
                         .next()
-                        .map(|name| name.trim_matches('"') == "sing-box.exe")
+                        .map(|name| expected_singbox_name(name.trim_matches('"')))
                         .unwrap_or(false)
                 })
             })
@@ -398,7 +276,7 @@ fn expected_process_is_alive(pid: u32) -> bool {
                 String::from_utf8_lossy(&output.stdout).lines().any(|line| {
                     Path::new(line.trim())
                         .file_name()
-                        .map(|name| name.to_string_lossy() == "sing-box")
+                        .map(|name| expected_singbox_name(&name.to_string_lossy()))
                         .unwrap_or(false)
                 })
             })
@@ -428,18 +306,13 @@ fn kill_pid(pid: u32) -> bool {
     }
 }
 
-/// Reap only a process that both matches our persisted PID and has the expected
-/// executable name. If an unelevated restart cannot terminate an elevated
-/// orphan, retain the PID file so the next privileged TUN launch can finish the
-/// cleanup instead of losing ownership information.
 pub fn reap_orphan(app: &AppHandle) {
-    let dir = managed_dir(app);
-    let path = pid_file(&dir);
+    let path = pid_file(app);
     let Ok(contents) = fs::read_to_string(&path) else {
         return;
     };
     let Ok(pid) = contents.trim().parse::<u32>() else {
-        clear_pid(&dir);
+        clear_pid(app);
         return;
     };
 
@@ -447,15 +320,15 @@ pub fn reap_orphan(app: &AppHandle) {
         diagnostics::record(
             "sing-box",
             "info",
-            format!("stale PID file ignored because PID {pid} is not sing-box"),
+            format!("stale PID file ignored because PID {pid} is not an owned sing-box core"),
         );
-        clear_pid(&dir);
+        clear_pid(app);
         return;
     }
 
     diagnostics::record("sing-box", "warn", format!("reaping owned orphan PID {pid}"));
     if kill_pid(pid) {
-        clear_pid(&dir);
+        clear_pid(app);
         diagnostics::record("sing-box", "info", format!("orphan PID {pid} terminated"));
     } else {
         diagnostics::record(
@@ -465,5 +338,25 @@ pub fn reap_orphan(app: &AppHandle) {
                 "could not terminate owned orphan PID {pid}; retaining PID file for a privileged cleanup attempt"
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_only_expected_singbox_names() {
+        assert!(expected_singbox_name(if cfg!(windows) {
+            "sing-box.exe"
+        } else {
+            "sing-box"
+        }));
+        assert!(expected_singbox_name(if cfg!(windows) {
+            "sing-box-v1.13.12.exe"
+        } else {
+            "sing-box-v1.13.12"
+        }));
+        assert!(!expected_singbox_name("not-sing-box.exe"));
     }
 }
