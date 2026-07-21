@@ -2,7 +2,7 @@ use crate::error::AetherError;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 
 #[derive(Debug)]
 pub struct ProcessLog {
@@ -24,8 +24,6 @@ impl SingboxProcess {
     }
 
     pub fn kill(&mut self) {
-        // Use the child handle we own. Never kill by image name: doing so could
-        // terminate an unrelated sing-box instance belonging to another app.
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -64,7 +62,7 @@ pub fn check_config(binary: &Path, config_path: &Path) -> Result<(), AetherError
 pub fn spawn(
     binary: &Path,
     config_path: &Path,
-    log_tx: Sender<ProcessLog>,
+    log_tx: SyncSender<ProcessLog>,
 ) -> Result<SingboxProcess, AetherError> {
     let mut command = Command::new(binary);
     command
@@ -80,15 +78,13 @@ pub fn spawn(
         .spawn()
         .map_err(|e| AetherError::SpawnFailed(format!("failed to launch sing-box: {e}")))?;
 
-    // Drain both pipes for the entire process lifetime. Leaving either pipe
-    // unread can fill the OS pipe buffer and block sing-box while it is still
-    // technically alive, producing the exact "TUN froze but process exists"
-    // failure mode seen in the original PR.
+    // Always drain both pipes. The bounded channel intentionally drops excess
+    // UI log lines instead of allowing memory to grow or blocking the pipe readers.
     if let Some(stdout) = child.stdout.take() {
         let tx = log_tx.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                let _ = tx.send(ProcessLog {
+                let _ = tx.try_send(ProcessLog {
                     stream: "stdout",
                     line,
                 });
@@ -98,7 +94,7 @@ pub fn spawn(
     if let Some(stderr) = child.stderr.take() {
         std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                let _ = log_tx.send(ProcessLog {
+                let _ = log_tx.try_send(ProcessLog {
                     stream: "stderr",
                     line,
                 });
