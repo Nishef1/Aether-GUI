@@ -151,7 +151,7 @@ fn read_loop(
         line_buffer.push_str(&String::from_utf8_lossy(&byte_buffer[..count]));
 
         for raw_line in drain_lines(&mut line_buffer) {
-            let line = strip_ansi(&raw_line);
+            let line = sanitize_terminal_output(&raw_line);
             if line.is_empty() {
                 continue;
             }
@@ -167,7 +167,7 @@ fn read_loop(
             });
         }
 
-        let partial = strip_ansi(&line_buffer);
+        let partial = sanitize_terminal_output(&line_buffer);
         if looks_like_choice_prompt(&partial)
             && !PROMPT_TABLE
                 .iter()
@@ -231,22 +231,79 @@ fn drain_lines(buffer: &mut String) -> Vec<String> {
     lines
 }
 
-fn strip_ansi(value: &str) -> String {
+/// Strip terminal presentation/control sequences before they reach the WebView
+/// or structured diagnostics. Aether runs inside a PTY, so it can emit both CSI
+/// color sequences (`ESC [ ...`) and OSC title sequences (`ESC ] ... BEL/ST`).
+/// Keeping this at the PTY boundary gives prompts, live logs and diagnostics the
+/// same clean source of truth.
+fn strip_terminal_sequences(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     let mut characters = value.chars().peekable();
+
     while let Some(character) = characters.next() {
-        if character == '\u{1b}' && characters.peek() == Some(&'[') {
-            characters.next();
-            for escaped in characters.by_ref() {
-                if escaped.is_ascii_alphabetic() {
-                    break;
+        if character == '\u{1b}' {
+            match characters.peek().copied() {
+                // CSI: ESC [ parameters/intermediates final-byte
+                Some('[') => {
+                    characters.next();
+                    for escaped in characters.by_ref() {
+                        if ('@'..='~').contains(&escaped) {
+                            break;
+                        }
+                    }
                 }
+                // OSC: ESC ] payload BEL  OR  ESC ] payload ESC \
+                Some(']') => {
+                    characters.next();
+                    let mut previous_escape = false;
+                    for escaped in characters.by_ref() {
+                        if escaped == '\u{7}' {
+                            break;
+                        }
+                        if previous_escape && escaped == '\\' {
+                            break;
+                        }
+                        previous_escape = escaped == '\u{1b}';
+                    }
+                }
+                // Other short ESC sequences are presentation controls as well.
+                Some(_) => {
+                    characters.next();
+                }
+                None => {}
             }
+            continue;
+        }
+
+        // Newlines are already consumed by drain_lines. Drop the remaining C0
+        // controls (BEL, NUL, etc.) while preserving tabs and all printable Unicode.
+        if character.is_control() && character != '\t' {
             continue;
         }
         output.push(character);
     }
+
     output
+}
+
+fn normalize_timestamp_level_spacing(mut value: String) -> String {
+    // Some Rust log formatters place ANSI style boundaries between the RFC3339
+    // timestamp and level without a literal space. Once styling is stripped this
+    // becomes `...ZINFO`. Make only that narrow, predictable boundary readable.
+    for level in ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"] {
+        let needle = format!("Z{level}");
+        if let Some(index) = value.find(&needle) {
+            value.insert(index + 1, ' ');
+            break;
+        }
+    }
+    value
+}
+
+fn sanitize_terminal_output(value: &str) -> String {
+    normalize_timestamp_level_spacing(strip_terminal_sequences(value))
+        .trim()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -290,5 +347,33 @@ mod tests {
         assert_eq!(feed(&mut buffer, &large), Vec::<String>::new());
         assert!(buffer.len() <= MAX_PARTIAL + 1);
         assert!(buffer.chars().all(|character| character == 'é'));
+    }
+
+    #[test]
+    fn strips_csi_colors_without_damaging_text() {
+        assert_eq!(
+            sanitize_terminal_output("\u{1b}[31mERROR\u{1b}[0m café"),
+            "ERROR café"
+        );
+    }
+
+    #[test]
+    fn strips_osc_window_title_sequences() {
+        assert_eq!(
+            sanitize_terminal_output("\u{1b}]0;C:\\Users\\PC\\aether.exe\u{7}"),
+            ""
+        );
+        assert_eq!(
+            sanitize_terminal_output("before\u{1b}]0;title\u{1b}\\after"),
+            "beforeafter"
+        );
+    }
+
+    #[test]
+    fn normalizes_level_spacing_after_ansi_removal() {
+        assert_eq!(
+            sanitize_terminal_output("[2026-07-21T14:37:46.285Z\u{1b}[32mINFO\u{1b}[0m  aether]"),
+            "[2026-07-21T14:37:46.285Z INFO  aether]"
+        );
     }
 }
