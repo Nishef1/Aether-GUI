@@ -62,168 +62,151 @@ interface ConnectionState {
   retryAfterSidecarError: () => void
 }
 
-export const useConnectionStore = create<ConnectionState>((set, get) => ({
-  status: { state: "Idle" },
-  profile: {
-    protocol: "auto",
-    scan_mode: "balanced",
-    ip_version: "v4",
-    connection_mode: "proxy",
-    quick_reconnect: true,
-    masque_http2: false,
-    masque_noize: "firewall",
-    wg_noize: "balanced",
-    bind_address: "127.0.0.1:1819",
-  },
-  logs: [],
-  sidecarError: null,
-  scanBudgetSecs: null,
-  traffic: { received_bytes: 0, sent_bytes: 0 },
-  trafficBaseline: null,
-  trafficSessionStarted: false,
-  preparingCores: false,
+export const useConnectionStore = create<ConnectionState>((set, get) => {
+  const updateProfile = (
+    patch: Partial<ConnectionProfile>
+  ): Promise<void> => {
+    const profile = { ...get().profile, ...patch }
+    set({ profile })
+    return saveDefaultProfile(profile)
+  }
 
-  connect: async () => {
-    set({
-      traffic: { received_bytes: 0, sent_bytes: 0 },
-      trafficBaseline: null,
-      trafficSessionStarted: true,
-      preparingCores: true,
+  const updateProfileQuietly = (patch: Partial<ConnectionProfile>): void => {
+    void updateProfile(patch).catch(() => {
+      // saveDefaultProfile already logs the failure on the shared ordered queue.
+      // Fire-and-forget option controls should not create unhandled rejections.
     })
-    try {
-      // Never let an older asynchronous settings write land after connect() has
-      // stored its pending elevation profile. Waiting for the ordered save queue
-      // keeps the UAC handoff deterministic even after rapid mode/option changes.
-      await profileSaveQueue
+  }
 
-      // Startup starts this local readiness check in parallel. If Connect wins
-      // the race, share the same promise before launching a core.
-      await useCoreStore.getState().loadAll()
-      await invoke("connect", { profileOverride: get().profile })
-    } catch (e) {
-      const message = String(e)
-      const lower = message.toLowerCase()
+  return {
+    status: { state: "Idle" },
+    profile: {
+      protocol: "auto",
+      scan_mode: "balanced",
+      ip_version: "v4",
+      connection_mode: "proxy",
+      quick_reconnect: true,
+      masque_http2: false,
+      masque_noize: "firewall",
+      wg_noize: "balanced",
+      bind_address: "127.0.0.1:1819",
+    },
+    logs: [],
+    sidecarError: null,
+    scanBudgetSecs: null,
+    traffic: { received_bytes: 0, sent_bytes: 0 },
+    trafficBaseline: null,
+    trafficSessionStarted: false,
+    preparingCores: false,
 
-      if (lower.includes("administrator privileges are required")) {
-        try {
-          await invoke("elevate")
-        } catch (elevationError) {
-          set({
-            status: {
-              state: "Error",
-              message: String(elevationError),
-              phase: "elevation",
-            },
-          })
+    connect: async () => {
+      set({
+        traffic: { received_bytes: 0, sent_bytes: 0 },
+        trafficBaseline: null,
+        trafficSessionStarted: true,
+        preparingCores: true,
+      })
+      try {
+        // Never let an older asynchronous settings write land after connect() has
+        // stored its pending elevation profile. Waiting for the ordered save queue
+        // keeps the UAC handoff deterministic even after rapid mode/option changes.
+        await profileSaveQueue
+
+        // Startup starts this local readiness check in parallel. If Connect wins
+        // the race, share the same promise before launching a core.
+        await useCoreStore.getState().loadAll()
+        await invoke("connect", { profileOverride: get().profile })
+      } catch (e) {
+        const message = String(e)
+        const lower = message.toLowerCase()
+
+        if (lower.includes("administrator privileges are required")) {
+          try {
+            await invoke("elevate")
+          } catch (elevationError) {
+            set({
+              status: {
+                state: "Error",
+                message: String(elevationError),
+                phase: "elevation",
+              },
+            })
+            syncTrayState("Error")
+          }
+          return
+        }
+
+        if (lower.includes("binary not found")) {
+          set({ sidecarError: message })
+        } else {
+          set({ status: { state: "Error", message, phase: "launching" } })
           syncTrayState("Error")
         }
-        return
+      } finally {
+        set({ preparingCores: false })
       }
+    },
 
-      if (lower.includes("binary not found")) {
-        set({ sidecarError: message })
-      } else {
-        set({ status: { state: "Error", message, phase: "launching" } })
+    disconnect: async () => {
+      try {
+        await invoke("disconnect")
+      } catch {
+        // Nothing to do if the backend is already idle.
+      }
+    },
+
+    setProtocol: (protocol) => updateProfileQuietly({ protocol }),
+    setScanMode: (scan_mode) => updateProfileQuietly({ scan_mode }),
+    setIpVersion: (ip_version) => updateProfileQuietly({ ip_version }),
+    setConnectionMode: async (connection_mode) => {
+      if (get().profile.connection_mode === connection_mode) return
+
+      try {
+        // Selecting a mode is a pure settings operation. Privilege elevation has
+        // exactly one owner: connect(). This keeps dev and production behavior the
+        // same and guarantees that UAC always has an exact pending connect profile.
+        await updateProfile({ connection_mode })
+      } catch (e) {
+        set({
+          status: {
+            state: "Error",
+            message: String(e),
+            phase: "saving-profile",
+          },
+        })
         syncTrayState("Error")
       }
-    } finally {
-      set({ preparingCores: false })
-    }
-  },
+    },
 
-  disconnect: async () => {
-    try {
-      await invoke("disconnect")
-    } catch {
-      // Nothing to do if the backend is already idle.
-    }
-  },
-
-  setProtocol: (protocol) => {
-    const profile = { ...get().profile, protocol }
-    set({ profile })
-    void saveDefaultProfile(profile)
-  },
-  setScanMode: (scan_mode) => {
-    const profile = { ...get().profile, scan_mode }
-    set({ profile })
-    void saveDefaultProfile(profile)
-  },
-  setIpVersion: (ip_version) => {
-    const profile = { ...get().profile, ip_version }
-    set({ profile })
-    void saveDefaultProfile(profile)
-  },
-  setConnectionMode: async (connection_mode) => {
-    if (get().profile.connection_mode === connection_mode) return
-
-    const profile = { ...get().profile, connection_mode }
-    set({ profile })
-
-    try {
-      // Selecting a mode is a pure settings operation. Privilege elevation has
-      // exactly one owner: connect(). This keeps dev and production behavior the
-      // same and guarantees that UAC always has an exact pending connect profile.
-      await saveDefaultProfile(profile)
-    } catch (e) {
-      set({
-        status: {
-          state: "Error",
-          message: String(e),
-          phase: "saving-profile",
-        },
-      })
-      syncTrayState("Error")
-    }
-  },
-
-  refreshTraffic: async () => {
-    try {
-      const current = await invoke<TrafficStats>("get_traffic")
-      useConnectionStore.setState((state) => {
-        const baseline = state.trafficBaseline ?? current
-        return {
-          trafficBaseline: baseline,
-          traffic: {
-            received_bytes: Math.max(
-              0,
-              current.received_bytes - baseline.received_bytes
-            ),
-            sent_bytes: Math.max(0, current.sent_bytes - baseline.sent_bytes),
-          },
-        }
-      })
-    } catch {
-      // Traffic counters are supplementary and must not affect connectivity.
-    }
-  },
-  setQuickReconnect: (quick_reconnect) => {
-    const profile = { ...get().profile, quick_reconnect }
-    set({ profile })
-    void saveDefaultProfile(profile)
-  },
-  setMasqueHttp2: (masque_http2) => {
-    const profile = { ...get().profile, masque_http2 }
-    set({ profile })
-    void saveDefaultProfile(profile)
-  },
-  setMasqueNoize: (masque_noize) => {
-    const profile = { ...get().profile, masque_noize }
-    set({ profile })
-    void saveDefaultProfile(profile)
-  },
-  setWgNoize: (wg_noize) => {
-    const profile = { ...get().profile, wg_noize }
-    set({ profile })
-    void saveDefaultProfile(profile)
-  },
-  setBindAddress: (bind_address) => {
-    const profile = { ...get().profile, bind_address }
-    set({ profile })
-    void saveDefaultProfile(profile)
-  },
-  retryAfterSidecarError: () => set({ sidecarError: null }),
-}))
+    refreshTraffic: async () => {
+      try {
+        const current = await invoke<TrafficStats>("get_traffic")
+        useConnectionStore.setState((state) => {
+          const baseline = state.trafficBaseline ?? current
+          return {
+            trafficBaseline: baseline,
+            traffic: {
+              received_bytes: Math.max(
+                0,
+                current.received_bytes - baseline.received_bytes
+              ),
+              sent_bytes: Math.max(0, current.sent_bytes - baseline.sent_bytes),
+            },
+          }
+        })
+      } catch {
+        // Traffic counters are supplementary and must not affect connectivity.
+      }
+    },
+    setQuickReconnect: (quick_reconnect) =>
+      updateProfileQuietly({ quick_reconnect }),
+    setMasqueHttp2: (masque_http2) => updateProfileQuietly({ masque_http2 }),
+    setMasqueNoize: (masque_noize) => updateProfileQuietly({ masque_noize }),
+    setWgNoize: (wg_noize) => updateProfileQuietly({ wg_noize }),
+    setBindAddress: (bind_address) => updateProfileQuietly({ bind_address }),
+    retryAfterSidecarError: () => set({ sidecarError: null }),
+  }
+})
 
 if (import.meta.env.DEV) {
   ;(window as unknown as { __conn?: typeof useConnectionStore }).__conn =
