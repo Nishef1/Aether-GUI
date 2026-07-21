@@ -56,8 +56,6 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       const lower = message.toLowerCase();
 
       if (lower.includes("administrator privileges are required")) {
-        // Backend saved the requested profile as a one-shot pending profile.
-        // Relaunch only on demand; normal proxy mode never runs elevated.
         try {
           await invoke("elevate");
         } catch (elevationError) {
@@ -143,11 +141,20 @@ export async function initConnectionListeners(): Promise<() => void> {
   ]);
 
   try {
-    const [status, profile] = await Promise.all([
+    const [status, profile, pendingElevationProfile] = await Promise.all([
       invoke<ConnectionStatus>("get_status"),
       invoke<ConnectionProfile>("get_default_profile"),
+      invoke<ConnectionProfile | null>("take_pending_elevation_profile"),
     ]);
-    useConnectionStore.setState({ status, profile });
+    const activeProfile = pendingElevationProfile ?? profile;
+    useConnectionStore.setState({ status, profile: activeProfile });
+
+    // The normal process saved this profile immediately before requesting UAC.
+    // Only an elevated process can consume it, so resuming here cannot turn a
+    // regular app launch into an unexpected auto-connect.
+    if (pendingElevationProfile && status.state === "Idle") {
+      queueMicrotask(() => void useConnectionStore.getState().connect());
+    }
   } catch (e) {
     console.error("Failed to load initial connection state:", e);
   }
