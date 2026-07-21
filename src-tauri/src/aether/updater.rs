@@ -1,321 +1,62 @@
+use crate::core_manager::{self, CoreKind};
 use crate::diagnostics;
 use crate::error::AetherError;
-use crate::events::{now_millis, LogEvent, LOG_EVENT};
-use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
 
-#[derive(Serialize, Clone, Debug)]
-pub struct CoreInfo {
-    pub path: String,
-    pub version: Option<String>,
-    pub source: String,
-}
-
-const VERSION_FILE: &str = "aether-version.txt";
-const REJECTED_VERSION_FILE: &str = "aether-rejected-version.txt";
-
-fn fallback_binary_name() -> &'static str {
-    if cfg!(windows) {
-        "aether.exe"
-    } else {
-        "aether"
-    }
-}
-
-fn sanitize_version_tag(tag: &str) -> String {
-    tag.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn versioned_binary_name(tag: &str) -> String {
-    let tag = sanitize_version_tag(tag);
-    if cfg!(windows) {
-        format!("aether-{tag}.exe")
-    } else {
-        format!("aether-{tag}")
-    }
-}
-
-fn managed_dir(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| std::env::temp_dir())
-        .join("core")
-}
-
-fn preferred_binary_in(dir: &Path) -> Option<PathBuf> {
-    let version_file = dir.join(VERSION_FILE);
-    if let Ok(tag) = std::fs::read_to_string(version_file) {
-        let versioned = dir.join(versioned_binary_name(tag.trim()));
-        if versioned.exists() {
-            return Some(versioned);
-        }
-    }
-
-    let fallback = dir.join(fallback_binary_name());
-    fallback.exists().then_some(fallback)
-}
-
-fn managed_binary(app: &AppHandle) -> Option<PathBuf> {
-    let dir = managed_dir(app);
-    let tag = std::fs::read_to_string(dir.join(VERSION_FILE)).ok()?;
-    let tag = tag.trim();
-    if tag.is_empty() {
-        return None;
-    }
-
-    let rejected = std::fs::read_to_string(dir.join(REJECTED_VERSION_FILE))
-        .ok()
-        .map(|value| value.trim().to_string());
-    if rejected.as_deref() == Some(tag) {
-        diagnostics::record(
-            "core-updater",
-            "warn",
-            format!("managed Aether core {tag} is quarantined; using bundled fallback"),
-        );
-        return None;
-    }
-
-    let versioned = dir.join(versioned_binary_name(tag));
-    versioned.exists().then_some(versioned)
-}
-
-fn resource_binary(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .resource_dir()
-        .ok()
-        .and_then(|dir| preferred_binary_in(&dir.join("binaries")))
-}
-
-fn development_binary() -> Option<PathBuf> {
-    preferred_binary_in(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"))
-}
-
-fn ensure_executable(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
-    }
-}
-
-pub fn is_managed_binary(app: &AppHandle, path: &Path) -> bool {
-    path.starts_with(managed_dir(app))
-}
-
-/// Quarantine the currently selected managed release after a compatibility
-/// failure. The versioned binary remains on disk for diagnostics, but resolver
-/// skips that tag until a different release tag becomes current.
-pub fn reject_managed_binary(app: &AppHandle, path: &Path, reason: &str) {
-    if !is_managed_binary(app, path) {
-        return;
-    }
-    let dir = managed_dir(app);
-    let Ok(tag) = std::fs::read_to_string(dir.join(VERSION_FILE)) else {
-        return;
-    };
-    let tag = tag.trim();
-    if tag.is_empty() {
-        return;
-    }
-    let expected = dir.join(versioned_binary_name(tag));
-    if path != expected {
-        return;
-    }
-    if std::fs::write(dir.join(REJECTED_VERSION_FILE), tag).is_ok() {
-        diagnostics::record(
-            "core-updater",
-            "error",
-            format!("quarantined managed Aether core {tag}: {reason}"),
-        );
-    }
-}
-
-/// Returns the core shipped with the GUI (or the developer fallback when
-/// running from source), deliberately bypassing the app-data managed-core
-/// pointer. This is used only as a compatibility recovery path when a newly
-/// updated managed core cannot launch or exits before exposing SOCKS.
-pub fn bundled_recovery_binary(app: &AppHandle) -> Option<PathBuf> {
-    let path = resource_binary(app).or_else(development_binary)?;
-    ensure_executable(&path);
-    Some(path)
-}
+pub use crate::core_manager::CoreInfo;
 
 pub fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
-    if let Some(managed) = managed_binary(app) {
-        ensure_executable(&managed);
-        return Ok(managed);
-    }
-
-    if let Some(path) = bundled_recovery_binary(app) {
-        return Ok(path);
-    }
-
-    Err(AetherError::BinaryMissing(
-        managed_dir(app).join(fallback_binary_name()).display().to_string(),
-    ))
-}
-
-fn fetch_script(app: &AppHandle) -> Option<PathBuf> {
-    let script_name = if cfg!(windows) {
-        "fetch-aether.ps1"
-    } else {
-        "fetch-aether.sh"
-    };
-
-    app.path()
-        .resource_dir()
-        .ok()
-        .map(|dir| dir.join("binaries").join(script_name))
-        .filter(|path| path.exists())
-        .or_else(|| {
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("binaries")
-                .join(script_name);
-            path.exists().then_some(path)
-        })
-}
-
-fn command_output(mut command: Command) -> std::io::Result<std::process::Output> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    command.output()
-}
-
-pub fn detect_version(binary: &Path) -> Option<String> {
-    let mut command = Command::new(binary);
-    command.arg("--version");
-    let output = command_output(command).ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let value = stdout.trim();
-    (!value.is_empty()).then(|| value.to_string())
-}
-
-fn emit_log(app: &AppHandle, level: &str, message: impl Into<String>) {
-    let message = message.into();
-    diagnostics::record("core-updater", level, &message);
-    let _ = app.emit(
-        LOG_EVENT,
-        LogEvent {
-            line: format!("[core-updater] {message}"),
-            timestamp: now_millis(),
-        },
-    );
-}
-
-pub fn current_info(app: &AppHandle) -> Result<CoreInfo, AetherError> {
-    let path = resolve_binary(app)?;
-    let managed_root = managed_dir(app);
-    Ok(CoreInfo {
-        version: detect_version(&path),
-        source: if path.starts_with(&managed_root) {
-            "managed"
-        } else {
-            "bundled"
-        }
-        .into(),
-        path: path.display().to_string(),
+    core_manager::resolve_binary(app, CoreKind::Aether).map_err(|_| {
+        AetherError::BinaryMissing("no active or bundled Aether core is installed".into())
     })
 }
 
-/// Best-effort update of the independently managed Aether core. Fetch scripts
-/// install immutable versioned binaries side-by-side and atomically switch only
-/// a small version pointer, so a process already running an older core cannot
-/// race with or be invalidated by a background update. A quarantined tag stays
-/// skipped until the release pointer changes to a different tag.
+pub fn bundled_recovery_binary(app: &AppHandle) -> Option<PathBuf> {
+    core_manager::bundled_recovery_binary(app, CoreKind::Aether)
+}
+
+pub fn is_managed_binary(app: &AppHandle, path: &Path) -> bool {
+    core_manager::is_managed_binary(app, CoreKind::Aether, path)
+}
+
+pub fn reject_managed_binary(app: &AppHandle, path: &Path, reason: &str) {
+    core_manager::reject_active_version(app, CoreKind::Aether, path, reason);
+}
+
+pub fn detect_version(binary: &Path) -> Option<String> {
+    core_manager::detect_version(binary)
+}
+
+pub fn current_info(app: &AppHandle) -> Result<CoreInfo, AetherError> {
+    core_manager::current_info(app, CoreKind::Aether)
+}
+
 pub fn refresh_now(app: &AppHandle) -> Result<CoreInfo, AetherError> {
-    let script = fetch_script(app).ok_or_else(|| {
-        AetherError::CoreUpdateFailed("Aether update helper script was not bundled".into())
-    })?;
-    let dest = managed_dir(app);
-    std::fs::create_dir_all(&dest)
-        .map_err(|e| AetherError::CoreUpdateFailed(format!("create core directory: {e}")))?;
-
-    emit_log(app, "info", "checking for a newer stable Aether core");
-
-    let output = if cfg!(windows) {
-        let mut command = Command::new("powershell.exe");
-        command
-            .arg("-NoProfile")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-File")
-            .arg(&script)
-            .arg("-DestDir")
-            .arg(&dest);
-        command_output(command)
-    } else {
-        let mut command = Command::new("bash");
-        command.arg(&script).arg("--dest-dir").arg(&dest);
-        command_output(command)
-    }
-    .map_err(|e| AetherError::CoreUpdateFailed(format!("launch updater: {e}")))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !stdout.is_empty() {
-        for line in stdout.lines() {
-            emit_log(app, "info", line);
-        }
-    }
-    if !stderr.is_empty() {
-        for line in stderr.lines() {
-            emit_log(app, "warn", line);
-        }
-    }
-
-    if !output.status.success() {
-        return Err(AetherError::CoreUpdateFailed(if stderr.is_empty() {
-            format!("updater exited with {}", output.status)
-        } else {
-            stderr
-        }));
-    }
-
-    let info = current_info(app)?;
-    emit_log(
-        app,
-        "info",
-        format!(
-            "active core: {} ({})",
-            info.version.clone().unwrap_or_else(|| "unknown version".into()),
-            info.source
-        ),
-    );
-    Ok(info)
+    core_manager::install_latest_stable(app, CoreKind::Aether)?;
+    current_info(app)
 }
 
+/// Background startup work checks metadata only. It deliberately does not
+/// change the active version: manual upgrade/downgrade choices must remain
+/// stable until the user selects another version from Core Management.
 pub fn refresh_in_background(app: AppHandle) {
-    std::thread::spawn(move || {
-        if let Err(e) = refresh_now(&app) {
-            emit_log(&app, "warn", format!("core update skipped: {e}"));
+    std::thread::spawn(move || match core_manager::latest_stable(&app, CoreKind::Aether) {
+        Ok(latest) => {
+            let active = core_manager::status(&app, CoreKind::Aether)
+                .ok()
+                .and_then(|status| status.active_version)
+                .unwrap_or_else(|| "bundled".into());
+            diagnostics::record(
+                "core-manager",
+                "info",
+                format!("Aether release check: active={active}, latest-stable={latest}"),
+            );
         }
+        Err(error) => diagnostics::record(
+            "core-manager",
+            "warn",
+            format!("Aether release check skipped: {error}"),
+        ),
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_tag_is_safe_for_filename() {
-        assert_eq!(sanitize_version_tag("v1.3.0"), "v1.3.0");
-        assert_eq!(sanitize_version_tag("v1/../../evil"), "v1_.._.._evil");
-    }
 }
