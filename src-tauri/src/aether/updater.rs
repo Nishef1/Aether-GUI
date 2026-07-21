@@ -13,6 +13,9 @@ pub struct CoreInfo {
     pub source: String,
 }
 
+const VERSION_FILE: &str = "aether-version.txt";
+const REJECTED_VERSION_FILE: &str = "aether-rejected-version.txt";
+
 fn fallback_binary_name() -> &'static str {
     if cfg!(windows) {
         "aether.exe"
@@ -50,7 +53,7 @@ fn managed_dir(app: &AppHandle) -> PathBuf {
 }
 
 fn preferred_binary_in(dir: &Path) -> Option<PathBuf> {
-    let version_file = dir.join("aether-version.txt");
+    let version_file = dir.join(VERSION_FILE);
     if let Ok(tag) = std::fs::read_to_string(version_file) {
         let versioned = dir.join(versioned_binary_name(tag.trim()));
         if versioned.exists() {
@@ -60,6 +63,30 @@ fn preferred_binary_in(dir: &Path) -> Option<PathBuf> {
 
     let fallback = dir.join(fallback_binary_name());
     fallback.exists().then_some(fallback)
+}
+
+fn managed_binary(app: &AppHandle) -> Option<PathBuf> {
+    let dir = managed_dir(app);
+    let tag = std::fs::read_to_string(dir.join(VERSION_FILE)).ok()?;
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return None;
+    }
+
+    let rejected = std::fs::read_to_string(dir.join(REJECTED_VERSION_FILE))
+        .ok()
+        .map(|value| value.trim().to_string());
+    if rejected.as_deref() == Some(tag) {
+        diagnostics::record(
+            "core-updater",
+            "warn",
+            format!("managed Aether core {tag} is quarantined; using bundled fallback"),
+        );
+        return None;
+    }
+
+    let versioned = dir.join(versioned_binary_name(tag));
+    versioned.exists().then_some(versioned)
 }
 
 fn resource_binary(app: &AppHandle) -> Option<PathBuf> {
@@ -85,6 +112,34 @@ pub fn is_managed_binary(app: &AppHandle, path: &Path) -> bool {
     path.starts_with(managed_dir(app))
 }
 
+/// Quarantine the currently selected managed release after a compatibility
+/// failure. The versioned binary remains on disk for diagnostics, but resolver
+/// skips that tag until a different release tag becomes current.
+pub fn reject_managed_binary(app: &AppHandle, path: &Path, reason: &str) {
+    if !is_managed_binary(app, path) {
+        return;
+    }
+    let dir = managed_dir(app);
+    let Ok(tag) = std::fs::read_to_string(dir.join(VERSION_FILE)) else {
+        return;
+    };
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return;
+    }
+    let expected = dir.join(versioned_binary_name(tag));
+    if path != expected {
+        return;
+    }
+    if std::fs::write(dir.join(REJECTED_VERSION_FILE), tag).is_ok() {
+        diagnostics::record(
+            "core-updater",
+            "error",
+            format!("quarantined managed Aether core {tag}: {reason}"),
+        );
+    }
+}
+
 /// Returns the core shipped with the GUI (or the developer fallback when
 /// running from source), deliberately bypassing the app-data managed-core
 /// pointer. This is used only as a compatibility recovery path when a newly
@@ -96,7 +151,7 @@ pub fn bundled_recovery_binary(app: &AppHandle) -> Option<PathBuf> {
 }
 
 pub fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
-    if let Some(managed) = preferred_binary_in(&managed_dir(app)) {
+    if let Some(managed) = managed_binary(app) {
         ensure_executable(&managed);
         return Ok(managed);
     }
@@ -182,7 +237,8 @@ pub fn current_info(app: &AppHandle) -> Result<CoreInfo, AetherError> {
 /// Best-effort update of the independently managed Aether core. Fetch scripts
 /// install immutable versioned binaries side-by-side and atomically switch only
 /// a small version pointer, so a process already running an older core cannot
-/// race with or be invalidated by a background update.
+/// race with or be invalidated by a background update. A quarantined tag stays
+/// skipped until the release pointer changes to a different tag.
 pub fn refresh_now(app: &AppHandle) -> Result<CoreInfo, AetherError> {
     let script = fetch_script(app).ok_or_else(|| {
         AetherError::CoreUpdateFailed("Aether update helper script was not bundled".into())
