@@ -14,6 +14,7 @@ import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
 import { NoizeProfileToggle } from "@/components/NoizeProfileToggle";
 import { BindAddressField } from "@/components/BindAddressField";
 import { TunToggle } from "@/components/TunToggle";
+import { CoreManagerPanel } from "@/components/CoreManagerPanel";
 import { useConnectionStore } from "@/state/connectionStore";
 
 function FieldRow({
@@ -39,6 +40,16 @@ function FieldRow({
         )}
       </div>
       {children}
+    </div>
+  );
+}
+
+function SectionDivider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-px flex-1 bg-border" />
+      <span className="text-[10px] tracking-wide text-muted-foreground uppercase">{label}</span>
+      <div className="h-px flex-1 bg-border" />
     </div>
   );
 }
@@ -131,14 +142,10 @@ export function AdvancedPanel() {
               />
             </div>
 
-            <div className="flex items-center gap-2">
-              <div className="h-px flex-1 bg-border" />
-              <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
-                Live logs
-              </span>
-              <div className="h-px flex-1 bg-border" />
-            </div>
+            <SectionDivider label="Core versions" />
+            <CoreManagerPanel />
 
+            <SectionDivider label="Live logs" />
             <div
               ref={viewportRef}
               onScroll={(e) => {
