@@ -47,12 +47,15 @@ export const useCoreStore = create<CoreStore>((set, get) => {
 
   const runMutation = async (
     kind: CoreKind,
-    operation: () => Promise<unknown>
+    operation: () => Promise<CoreStatus>
   ): Promise<void> => {
     patchEntry(kind, { loading: true, error: null })
     try {
-      await operation()
-      await get().loadLocal(kind, true)
+      // Core mutation commands already return the authoritative post-mutation
+      // status. Consume it directly instead of issuing a second get_core_status
+      // IPC, which was both redundant and susceptible to an older in-flight read.
+      const status = await operation()
+      patchEntry(kind, { status, loading: false, loaded: true })
     } catch (error) {
       patchEntry(kind, { loading: false, error: String(error) })
       throw error
