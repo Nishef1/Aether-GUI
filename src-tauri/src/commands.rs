@@ -1,8 +1,19 @@
 use crate::aether::{self, profiles::ConnectionProfile};
+use crate::core_manager::{self, CoreKind, CoreRelease, CoreStatus};
 use crate::error::AetherError;
 use crate::state::{AppState, ConnectionState};
 use crate::tray;
 use tauri::{AppHandle, State};
+
+fn require_disconnected(state: &State<AppState>) -> Result<(), AetherError> {
+    if state.manager.lock().unwrap().is_busy() {
+        Err(AetherError::CoreManager(
+            "disconnect before changing core versions".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
 
 #[tauri::command]
 pub fn connect(
@@ -13,10 +24,16 @@ pub fn connect(
     let profile = profile_override
         .unwrap_or_else(|| aether::profiles::load(&app))
         .sanitized();
+
     if profile.tun_enabled && !crate::is_admin() {
+        // Prepare verified binaries before UAC. The elevated process only runs
+        // already-installed binaries and never executes downloader helpers.
+        let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
+        let _ = core_manager::ensure_active(&app, CoreKind::Singbox)?;
         aether::profiles::save_pending_elevation(&app, &profile);
         return Err(AetherError::ElevationRequired);
     }
+
     aether::start_connect(
         app,
         state.manager.clone(),
@@ -74,9 +91,6 @@ pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
         std::process::exit(0);
     }
 
-    // UAC/pkexec/osascript was cancelled or failed. Consume the one-shot
-    // pending profile now so a later unrelated manual Administrator launch
-    // cannot unexpectedly resume an old connection request.
     let _ = aether::profiles::take_pending_elevation(&app);
     Err(AetherError::Internal(
         "administrator elevation was cancelled or failed".into(),
@@ -89,21 +103,49 @@ pub fn get_tun_status(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
-pub fn get_core_info(app: AppHandle) -> Result<aether::updater::CoreInfo, AetherError> {
-    aether::updater::current_info(&app)
+pub fn list_core_versions(
+    app: AppHandle,
+    kind: CoreKind,
+) -> Result<Vec<CoreRelease>, AetherError> {
+    core_manager::list_releases(&app, kind)
 }
 
 #[tauri::command]
-pub fn refresh_core(
+pub fn get_core_status(app: AppHandle, kind: CoreKind) -> Result<CoreStatus, AetherError> {
+    core_manager::status(&app, kind)
+}
+
+#[tauri::command]
+pub fn install_core_version(
     app: AppHandle,
     state: State<AppState>,
-) -> Result<aether::updater::CoreInfo, AetherError> {
-    if state.manager.lock().unwrap().is_busy() {
-        return Err(AetherError::CoreUpdateFailed(
-            "disconnect before updating the Aether core".into(),
-        ));
-    }
-    aether::updater::refresh_now(&app)
+    kind: CoreKind,
+    version: String,
+) -> Result<CoreStatus, AetherError> {
+    require_disconnected(&state)?;
+    core_manager::install_version(&app, kind, &version)
+}
+
+#[tauri::command]
+pub fn select_core_version(
+    app: AppHandle,
+    state: State<AppState>,
+    kind: CoreKind,
+    version: String,
+) -> Result<CoreStatus, AetherError> {
+    require_disconnected(&state)?;
+    core_manager::select_version(&app, kind, &version)
+}
+
+#[tauri::command]
+pub fn remove_core_version(
+    app: AppHandle,
+    state: State<AppState>,
+    kind: CoreKind,
+    version: String,
+) -> Result<CoreStatus, AetherError> {
+    require_disconnected(&state)?;
+    core_manager::remove_version(&app, kind, &version)
 }
 
 #[tauri::command]
