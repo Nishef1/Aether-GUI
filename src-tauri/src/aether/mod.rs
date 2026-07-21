@@ -83,9 +83,17 @@ pub fn start_connect(
         return Err(AetherError::ElevationRequired);
     }
 
-    // Resolve/fetch prerequisites before changing state, so setup failures do
-    // not leave the state machine stuck in Launching.
-    let binary = updater::resolve_binary(&app)?;
+    // Prefer the independently managed core, then the bundled/dev fallback.
+    // On a true first run where neither exists yet, synchronously fetch a
+    // verified stable core so Connect is not racing the background updater.
+    let binary = match updater::resolve_binary(&app) {
+        Ok(binary) => binary,
+        Err(AetherError::BinaryMissing(_)) => {
+            updater::refresh_now(&app)?;
+            updater::resolve_binary(&app)?
+        }
+        Err(e) => return Err(e),
+    };
     if profile.tun_enabled {
         let _ = singbox::ensure_binary(&app)?;
     }
@@ -325,6 +333,13 @@ fn monitor_connect(
             if tun_enabled {
                 match singbox::start_tunnel(app.clone(), singbox_manager.clone(), socks.port()) {
                     Ok(()) => {
+                        // The user may have clicked Disconnect while the TUN
+                        // startup health probe was running. Never resurrect a
+                        // cancelled connection into Tunneling afterward.
+                        if manager.lock().unwrap().user_requested_stop {
+                            singbox::stop_tunnel(&app, &singbox_manager);
+                            return;
+                        }
                         let tunneling = ConnectionState::Tunneling {
                             tun_addr: singbox::config::TUN_ADDRESS.into(),
                             socks_addr: profile.bind_address.clone(),
@@ -342,6 +357,13 @@ fn monitor_connect(
                         );
                     }
                     Err(e) => {
+                        // start_tunnel returns a cancellation error when
+                        // request_disconnect() removed its owned process. The
+                        // disconnect thread owns the state transition to Idle;
+                        // do not overwrite it with a stale Error.
+                        if manager.lock().unwrap().user_requested_stop {
+                            return;
+                        }
                         diagnostics::record("supervisor", "error", e.to_string());
                         singbox::stop_tunnel(&app, &singbox_manager);
                         terminate_session(&manager);
