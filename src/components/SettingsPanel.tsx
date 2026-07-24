@@ -1,14 +1,32 @@
+import { useEffect } from "react"
 import { X } from "lucide-react"
 import { CoreManagerPanel } from "@/components/CoreManagerPanel"
 import { LiveLogViewer } from "@/components/LiveLogViewer"
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [onClose])
+
   return (
-    <div className="absolute inset-0 z-30 flex flex-col bg-background/98 backdrop-blur-sm">
+    <div
+      className="absolute inset-0 z-30 flex flex-col bg-background/98 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+    >
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Settings</h2>
-          <p className="text-[10px] text-muted-foreground">Cores, diagnostics, and runtime details</p>
+          <h2 id="settings-title" className="text-sm font-semibold text-foreground">
+            Settings
+          </h2>
+          <p className="text-[10px] text-muted-foreground">
+            Cores, diagnostics, and runtime details
+          </p>
         </div>
         <button
           type="button"
