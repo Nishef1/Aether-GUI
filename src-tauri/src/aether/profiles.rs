@@ -1,3 +1,5 @@
+use crate::diagnostics;
+use crate::error::AetherError;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -281,6 +283,10 @@ const STORE_FILE: &str = "profile.json";
 const STORE_KEY: &str = "last_successful_profile";
 const PENDING_ELEVATION_KEY: &str = "pending_elevated_profile";
 
+fn store_error(context: &str, error: impl std::fmt::Display) -> AetherError {
+    AetherError::Internal(format!("{context}: {error}"))
+}
+
 pub fn load(app: &tauri::AppHandle) -> ConnectionProfile {
     use tauri_plugin_store::StoreExt;
     let Ok(store) = app.store(STORE_FILE) else {
@@ -293,37 +299,80 @@ pub fn load(app: &tauri::AppHandle) -> ConnectionProfile {
         .sanitized()
 }
 
-pub fn take_pending_elevation(app: &tauri::AppHandle) -> Option<ConnectionProfile> {
+pub fn take_pending_elevation_checked(
+    app: &tauri::AppHandle,
+) -> Result<Option<ConnectionProfile>, AetherError> {
     use tauri_plugin_store::StoreExt;
-    let store = app.store(STORE_FILE).ok()?;
-    let profile = store
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|error| store_error("failed to open profile store", error))?;
+    let Some(profile) = store
         .get(PENDING_ELEVATION_KEY)
-        .and_then(|v| serde_json::from_value::<ConnectionProfile>(v).ok())?
-        .sanitized();
+        .and_then(|value| serde_json::from_value::<ConnectionProfile>(value).ok())
+    else {
+        return Ok(None);
+    };
+
     store.set(PENDING_ELEVATION_KEY, serde_json::Value::Null);
-    let _ = store.save();
-    Some(profile)
+    store
+        .save()
+        .map_err(|error| store_error("failed to clear pending elevation profile", error))?;
+    Ok(Some(profile.sanitized()))
 }
 
-pub fn save(app: &tauri::AppHandle, profile: &ConnectionProfile) {
-    use tauri_plugin_store::StoreExt;
-    if let Ok(store) = app.store(STORE_FILE) {
-        if let Ok(value) = serde_json::to_value(profile.clone().sanitized()) {
-            store.set(STORE_KEY, value);
-            store.set(PENDING_ELEVATION_KEY, serde_json::Value::Null);
-            let _ = store.save();
+pub fn take_pending_elevation(app: &tauri::AppHandle) -> Option<ConnectionProfile> {
+    match take_pending_elevation_checked(app) {
+        Ok(profile) => profile,
+        Err(error) => {
+            diagnostics::record("profile-store", "error", error.to_string());
+            None
         }
     }
 }
 
+pub fn save_checked(
+    app: &tauri::AppHandle,
+    profile: &ConnectionProfile,
+) -> Result<(), AetherError> {
+    use tauri_plugin_store::StoreExt;
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|error| store_error("failed to open profile store", error))?;
+    let value = serde_json::to_value(profile.clone().sanitized())
+        .map_err(|error| store_error("failed to serialize connection settings", error))?;
+    store.set(STORE_KEY, value);
+    store.set(PENDING_ELEVATION_KEY, serde_json::Value::Null);
+    store
+        .save()
+        .map_err(|error| store_error("failed to persist connection settings", error))
+}
+
+pub fn save(app: &tauri::AppHandle, profile: &ConnectionProfile) {
+    if let Err(error) = save_checked(app, profile) {
+        diagnostics::record("profile-store", "error", error.to_string());
+    }
+}
+
+pub fn save_pending_elevation_checked(
+    app: &tauri::AppHandle,
+    profile: &ConnectionProfile,
+) -> Result<(), AetherError> {
+    use tauri_plugin_store::StoreExt;
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|error| store_error("failed to open profile store", error))?;
+    let value = serde_json::to_value(profile.clone().sanitized())
+        .map_err(|error| store_error("failed to serialize elevation profile", error))?;
+    store.set(PENDING_ELEVATION_KEY, value);
+    store
+        .save()
+        .map_err(|error| store_error("failed to persist elevation profile", error))
+}
+
 #[cfg_attr(debug_assertions, allow(dead_code))]
 pub fn save_pending_elevation(app: &tauri::AppHandle, profile: &ConnectionProfile) {
-    use tauri_plugin_store::StoreExt;
-    if let Ok(store) = app.store(STORE_FILE) {
-        if let Ok(value) = serde_json::to_value(profile.clone().sanitized()) {
-            store.set(PENDING_ELEVATION_KEY, value);
-            let _ = store.save();
-        }
+    if let Err(error) = save_pending_elevation_checked(app, profile) {
+        diagnostics::record("profile-store", "error", error.to_string());
     }
 }
 
