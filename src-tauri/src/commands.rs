@@ -36,7 +36,7 @@ pub fn connect(
         // extra console window, including debug builds launched by `tauri dev`.
         let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
         let _ = crate::singbox::ensure_binary(&app)?;
-        aether::profiles::save_pending_elevation(&app, &profile);
+        aether::profiles::save_pending_elevation_checked(&app, &profile)?;
         return Err(AetherError::ElevationRequired);
     }
 
@@ -64,28 +64,19 @@ pub fn get_default_profile(app: AppHandle) -> ConnectionProfile {
 }
 
 #[tauri::command]
-pub fn take_pending_elevation_profile(app: AppHandle) -> Option<ConnectionProfile> {
+pub fn take_pending_elevation_profile(
+    app: AppHandle,
+) -> Result<Option<ConnectionProfile>, AetherError> {
     if crate::is_admin() {
-        aether::profiles::take_pending_elevation(&app)
+        aether::profiles::take_pending_elevation_checked(&app)
     } else {
-        None
+        Ok(None)
     }
 }
 
 #[tauri::command]
 pub fn set_default_profile(app: AppHandle, profile: ConnectionProfile) -> Result<(), AetherError> {
-    let profile = profile.sanitized();
-    aether::profiles::save(&app, &profile);
-
-    // The store helper historically swallowed filesystem failures. Read the
-    // value back so the frontend receives a real rejection instead of showing a
-    // setting that only changed in memory and silently reverts after restart.
-    if aether::profiles::load(&app) != profile {
-        return Err(AetherError::Internal(
-            "failed to persist connection settings".into(),
-        ));
-    }
-    Ok(())
+    aether::profiles::save_checked(&app, &profile.sanitized())
 }
 
 #[tauri::command]
@@ -121,7 +112,7 @@ pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
         std::process::exit(0);
     }
 
-    let _ = aether::profiles::take_pending_elevation(&app);
+    let _ = aether::profiles::take_pending_elevation_checked(&app);
     Err(AetherError::Internal(
         "administrator elevation was cancelled or failed".into(),
     ))
