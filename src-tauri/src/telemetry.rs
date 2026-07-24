@@ -25,19 +25,10 @@ pub struct RuntimeTelemetry {
     pub egress_probe_complete: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct TelemetryState {
     snapshot: RuntimeTelemetry,
     last_raw_traffic: TrafficStats,
-}
-
-impl Default for TelemetryState {
-    fn default() -> Self {
-        Self {
-            snapshot: RuntimeTelemetry::default(),
-            last_raw_traffic: TrafficStats::default(),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -65,8 +56,8 @@ fn emit_snapshot(app: &AppHandle, snapshot: RuntimeTelemetry) {
     let _ = app.emit(TELEMETRY_EVENT, snapshot);
 }
 
-fn reset_session(app: &AppHandle, raw_traffic: TrafficStats) -> u64 {
-    let token = SESSION_TOKEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+fn reset_session(app: &AppHandle, raw_traffic: TrafficStats) {
+    SESSION_TOKEN.fetch_add(1, Ordering::SeqCst);
     let snapshot = RuntimeTelemetry {
         sampled_at_ms: now_millis(),
         ..RuntimeTelemetry::default()
@@ -77,7 +68,6 @@ fn reset_session(app: &AppHandle, raw_traffic: TrafficStats) -> u64 {
         state.last_raw_traffic = raw_traffic;
     }
     emit_snapshot(app, snapshot);
-    token
 }
 
 fn close_session() {
@@ -151,8 +141,6 @@ fn spawn_egress_probe(app: AppHandle, token: u64, socks_addr: String) {
 pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
     std::thread::spawn(move || {
         let mut session_open = false;
-        let mut traffic_enabled = false;
-        let mut token = 0u64;
         let mut next_probe = Instant::now();
 
         loop {
@@ -161,14 +149,18 @@ pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
                 Err(_) => return,
             };
 
-            let (connected, tunneled, socks_addr) = match status {
-                ConnectionState::Connected { socks_addr, .. } => (true, false, Some(socks_addr)),
-                ConnectionState::Tunneling { socks_addr, .. } => (true, true, Some(socks_addr)),
+            let (connected, tunneled, socks_addr) = match &status {
+                ConnectionState::Connected { socks_addr, .. } => {
+                    (true, false, Some(socks_addr.clone()))
+                }
+                ConnectionState::Tunneling { socks_addr, .. } => {
+                    (true, true, Some(socks_addr.clone()))
+                }
                 _ => (false, false, None),
             };
 
             let terminal = matches!(
-                status,
+                &status,
                 ConnectionState::Idle
                     | ConnectionState::Disconnecting
                     | ConnectionState::Error { .. }
@@ -176,26 +168,19 @@ pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
 
             if terminal && session_open {
                 session_open = false;
-                traffic_enabled = false;
                 close_session();
             }
 
             if connected {
                 if !session_open {
                     session_open = true;
-                    traffic_enabled = tunneled;
                     let raw = if tunneled {
                         traffic::current()
                     } else {
                         TrafficStats::default()
                     };
-                    token = reset_session(&app, raw);
+                    reset_session(&app, raw);
                     next_probe = Instant::now();
-                } else if tunneled && !traffic_enabled {
-                    traffic_enabled = true;
-                    if let Ok(mut state) = telemetry_state().lock() {
-                        state.last_raw_traffic = traffic::current();
-                    }
                 }
 
                 if tunneled {
@@ -207,6 +192,7 @@ pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
                 if Instant::now() >= next_probe {
                     next_probe = Instant::now() + PROBE_INTERVAL;
                     if let Some(socks_addr) = socks_addr {
+                        let token = SESSION_TOKEN.load(Ordering::SeqCst);
                         spawn_egress_probe(app.clone(), token, socks_addr);
                     }
                 }
@@ -270,7 +256,11 @@ fn parse_trace(output: &str) -> Result<EgressProbe, String> {
             }
         } else if let Some(value) = line.strip_prefix("loc=") {
             let value = value.trim().to_ascii_uppercase();
-            if value.len() == 2 && value.chars().all(|character| character.is_ascii_alphanumeric()) {
+            if value.len() == 2
+                && value
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+            {
                 country_code = Some(value);
             }
         } else if let Some(value) = line.strip_prefix("__aether_time_total=") {
@@ -283,7 +273,8 @@ fn parse_trace(output: &str) -> Result<EgressProbe, String> {
     }
 
     Ok(EgressProbe {
-        public_ip: public_ip.ok_or_else(|| "telemetry response did not contain an IP".to_string())?,
+        public_ip: public_ip
+            .ok_or_else(|| "telemetry response did not contain an IP".to_string())?,
         country_code,
         latency_ms: latency_ms
             .ok_or_else(|| "telemetry response did not contain timing data".to_string())?,
