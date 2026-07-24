@@ -8,20 +8,28 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $GuiRoot = Split-Path $PSScriptRoot -Parent
-if ([string]::IsNullOrWhiteSpace($AetherRepo)) {
-    $AetherRepo = Join-Path (Split-Path $GuiRoot -Parent) "Aether"
+$UsingBundledSubmodule = [string]::IsNullOrWhiteSpace($AetherRepo)
+if ($UsingBundledSubmodule) {
+    $AetherRepo = Join-Path $GuiRoot "vendor\aether"
 }
 $AetherRepo = [System.IO.Path]::GetFullPath($AetherRepo)
 
 $Manifest = Join-Path $AetherRepo "aether\Cargo.toml"
-$BuiltBinary = Join-Path $AetherRepo "aether\target\release\aether.exe"
+if ($UsingBundledSubmodule -and -not (Test-Path $Manifest)) {
+    Write-Host "[local-core] Initializing vendor/aether submodule..."
+    & git -C $GuiRoot submodule update --init --recursive -- "vendor/aether"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not initialize vendor/aether (exit code $LASTEXITCODE)"
+    }
+}
 
+$BuiltBinary = Join-Path $AetherRepo "aether\target\release\aether.exe"
 if (-not (Test-Path $Manifest)) {
-    throw "Aether manifest not found at $Manifest. Pass -AetherRepo with the root of Nishef1/Aether."
+    throw "Aether manifest not found at $Manifest. Run 'git submodule update --init --recursive' or pass -AetherRepo explicitly."
 }
 
 if (-not $SkipBuild) {
-    Write-Host "[local-core] Building Aether from $AetherRepo..."
+    Write-Host "[local-core] Building embedded Aether core..."
     & cargo build --release --manifest-path $Manifest
     if ($LASTEXITCODE -ne 0) {
         throw "cargo build failed with exit code $LASTEXITCODE"
@@ -98,8 +106,8 @@ $Metadata = [ordered]@{
 }
 $Metadata | ConvertTo-Json | Set-Content -Path $MetadataFile -Encoding UTF8
 
-Write-Host "[local-core] Installed and selected Aether $Version"
+Write-Host "[local-core] Installed and selected embedded Aether $Version"
 Write-Host "[local-core] Binary: $Target"
 Write-Host "[local-core] SHA-256: $SourceHash"
 Write-Host "[local-core] Core reports: $ReportedVersion"
-Write-Host "[local-core] Restart Aether-GUI or reconnect. Settings > Core management will show $Version as the active managed Aether core."
+Write-Host "[local-core] Restart or reconnect Aether-GUI to use this core."
