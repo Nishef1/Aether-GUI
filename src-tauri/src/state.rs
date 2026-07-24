@@ -1,6 +1,5 @@
 use crate::aether::AetherManager;
 use crate::singbox::SingboxManager;
-use crate::xray::XrayManager;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
@@ -40,8 +39,8 @@ pub enum ConnectionState {
 
 pub struct AppState {
     pub manager: Arc<Mutex<AetherManager>>,
+    /// Owns exactly one selected system TUN child (Xray by default, sing-box fallback).
     pub singbox: Arc<Mutex<SingboxManager>>,
-    pub xray: Arc<Mutex<XrayManager>>,
 }
 
 impl Default for AppState {
@@ -49,7 +48,6 @@ impl Default for AppState {
         Self {
             manager: Arc::new(Mutex::new(AetherManager::new())),
             singbox: Arc::new(Mutex::new(SingboxManager::new())),
-            xray: Arc::new(Mutex::new(XrayManager::new())),
         }
     }
 }
