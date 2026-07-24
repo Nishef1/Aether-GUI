@@ -20,14 +20,21 @@ pub fn get_close_to_tray() -> bool {
     CLOSE_TO_TRAY.load(Ordering::Relaxed)
 }
 
-pub fn set_close_to_tray(app: &AppHandle, enabled: bool) {
-    CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
-    // Persist so it survives restarts.
+pub fn set_close_to_tray(app: &AppHandle, enabled: bool) -> Result<(), String> {
     use tauri_plugin_store::StoreExt;
-    if let Ok(store) = app.store(STORE_FILE) {
-        store.set(STORE_KEY, serde_json::Value::Bool(enabled));
-        let _ = store.save();
-    }
+
+    // Persist first. Updating the process-local flag before a failed disk write
+    // made the switch appear successful for the current session and then revert
+    // silently after restart.
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|error| format!("failed to open tray settings store: {error}"))?;
+    store.set(STORE_KEY, serde_json::Value::Bool(enabled));
+    store
+        .save()
+        .map_err(|error| format!("failed to persist tray preference: {error}"))?;
+    CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
+    Ok(())
 }
 
 /// Load persisted preference and sync the atomic.
