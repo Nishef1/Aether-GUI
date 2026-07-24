@@ -9,6 +9,7 @@ import type {
   LogLine,
   MasqueNoize,
   TrafficStats,
+  TunEngine,
   WgNoize,
 } from "@/types/connection"
 
@@ -53,6 +54,7 @@ interface ConnectionState {
   setScanMode: (scan_mode: ConnectionProfile["scan_mode"]) => void
   setIpVersion: (ip_version: ConnectionProfile["ip_version"]) => void
   setConnectionMode: (connection_mode: ConnectionMode) => Promise<void>
+  setTunEngine: (tun_engine: TunEngine) => void
   refreshTraffic: () => Promise<void>
   setQuickReconnect: (quick_reconnect: boolean) => void
   setMasqueHttp2: (masque_http2: boolean) => void
@@ -85,6 +87,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       scan_mode: "balanced",
       ip_version: "v4",
       connection_mode: "proxy",
+      tun_engine: "xray",
       quick_reconnect: true,
       masque_http2: false,
       masque_noize: "firewall",
@@ -183,6 +186,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         syncTrayState("Error")
       }
     },
+    setTunEngine: (tun_engine) => updateProfileQuietly({ tun_engine }),
 
     refreshTraffic: async () => {
       try {

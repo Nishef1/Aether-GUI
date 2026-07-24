@@ -20,7 +20,7 @@ pub enum ConnectionState {
     StartingTunnel {
         socks_addr: String,
     },
-    /// Full system traffic path through sing-box -> Aether SOCKS is verified.
+    /// Full system traffic path through the selected TUN engine and Aether SOCKS is verified.
     Tunneling {
         tun_addr: String,
         socks_addr: String,
@@ -39,6 +39,7 @@ pub enum ConnectionState {
 
 pub struct AppState {
     pub manager: Arc<Mutex<AetherManager>>,
+    /// Owns exactly one selected system TUN child (Xray by default, sing-box fallback).
     pub singbox: Arc<Mutex<SingboxManager>>,
 }
 

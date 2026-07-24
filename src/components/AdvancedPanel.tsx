@@ -1,28 +1,29 @@
-import { useState, type ReactNode } from "react";
-import { ChevronDown, Info, Settings2 } from "lucide-react";
+import { useState, type ReactNode } from "react"
+import { ChevronDown, Info, Settings2 } from "lucide-react"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Switch } from "@/components/ui/switch";
-import { ProtocolSelect } from "@/components/ProtocolSelect";
-import { ScanModeToggle } from "@/components/ScanModeToggle";
-import { IpVersionToggle } from "@/components/IpVersionToggle";
-import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
-import { NoizeProfileToggle } from "@/components/NoizeProfileToggle";
-import { BindAddressField } from "@/components/BindAddressField";
-import { useConnectionStore } from "@/state/connectionStore";
+} from "@/components/ui/collapsible"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Switch } from "@/components/ui/switch"
+import { ProtocolSelect } from "@/components/ProtocolSelect"
+import { ScanModeToggle } from "@/components/ScanModeToggle"
+import { IpVersionToggle } from "@/components/IpVersionToggle"
+import { MasqueTransportToggle } from "@/components/MasqueTransportToggle"
+import { NoizeProfileToggle } from "@/components/NoizeProfileToggle"
+import { BindAddressField } from "@/components/BindAddressField"
+import { TunEngineToggle } from "@/components/TunEngineToggle"
+import { useConnectionStore } from "@/state/connectionStore"
 
 function FieldRow({
   label,
   tooltip,
   children,
 }: {
-  label: string;
-  tooltip?: string;
-  children: ReactNode;
+  label: string
+  tooltip?: string
+  children: ReactNode
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -39,16 +40,16 @@ function FieldRow({
       </div>
       {children}
     </div>
-  );
+  )
 }
 
 export function AdvancedPanel() {
-  const status = useConnectionStore((s) => s.status);
-  const mode = useConnectionStore((s) => s.profile.connection_mode);
-  const quickReconnect = useConnectionStore((s) => s.profile.quick_reconnect);
-  const setQuickReconnect = useConnectionStore((s) => s.setQuickReconnect);
-  const [open, setOpen] = useState(false);
-  const locked = status.state !== "Idle" && status.state !== "Error";
+  const status = useConnectionStore((s) => s.status)
+  const mode = useConnectionStore((s) => s.profile.connection_mode)
+  const quickReconnect = useConnectionStore((s) => s.profile.quick_reconnect)
+  const setQuickReconnect = useConnectionStore((s) => s.setQuickReconnect)
+  const [open, setOpen] = useState(false)
+  const locked = status.state !== "Idle" && status.state !== "Error"
 
   return (
     <div className="w-full max-w-sm">
@@ -81,7 +82,7 @@ export function AdvancedPanel() {
             </FieldRow>
             <FieldRow
               label="MASQUE Transport"
-              tooltip="How the MASQUE tunnel carries traffic. HTTP/3 (QUIC) has the fastest handshake; HTTP/2 (TCP) looks like ordinary HTTPS and works where UDP is blocked or throttled. Only applies to the MASQUE protocol."
+              tooltip="HTTP/3 uses QUIC and generally handles loss and parallel traffic better. HTTP/2 looks like ordinary HTTPS and can connect where UDP is blocked, but may be slower on higher-latency links."
             >
               <MasqueTransportToggle />
             </FieldRow>
@@ -91,6 +92,15 @@ export function AdvancedPanel() {
             >
               <NoizeProfileToggle />
             </FieldRow>
+
+            {mode !== "proxy" && (
+              <FieldRow
+                label="System TUN engine"
+                tooltip="Xray is the recommended Windows system-routing layer. sing-box remains available as a compatibility fallback. Both send traffic into Aether's local SOCKS tunnel."
+              >
+                <TunEngineToggle />
+              </FieldRow>
+            )}
 
             {mode !== "tunnel" && (
               <FieldRow
@@ -126,5 +136,5 @@ export function AdvancedPanel() {
         </CollapsibleContent>
       </Collapsible>
     </div>
-  );
+  )
 }

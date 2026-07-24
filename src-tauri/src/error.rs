@@ -22,6 +22,12 @@ pub enum AetherError {
     SingboxAlreadyRunning,
     #[error("failed to prepare sing-box configuration: {0}")]
     SingboxConfigFailed(String),
+    #[error("Xray binary not found at {0}")]
+    XrayBinaryMissing(String),
+    #[error("Xray is already running")]
+    XrayAlreadyRunning,
+    #[error("failed to prepare Xray configuration: {0}")]
+    XrayConfigFailed(String),
     #[error("TUN health check failed: {0}")]
     TunHealthFailed(String),
     #[error("internal error: {0}")]

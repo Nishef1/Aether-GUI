@@ -15,6 +15,7 @@ const RELEASE_LIMIT: usize = 8;
 pub enum CoreKind {
     Aether,
     Singbox,
+    Xray,
 }
 
 impl CoreKind {
@@ -22,6 +23,7 @@ impl CoreKind {
         match self {
             Self::Aether => "aether",
             Self::Singbox => "singbox",
+            Self::Xray => "xray",
         }
     }
 
@@ -29,6 +31,7 @@ impl CoreKind {
         match self {
             Self::Aether => "CluvexStudio/Aether",
             Self::Singbox => "SagerNet/sing-box",
+            Self::Xray => "XTLS/Xray-core",
         }
     }
 
@@ -36,6 +39,7 @@ impl CoreKind {
         match self {
             Self::Aether => "aether",
             Self::Singbox => "sing-box",
+            Self::Xray => "xray",
         }
     }
 
@@ -43,6 +47,7 @@ impl CoreKind {
         match self {
             Self::Aether => "aether-version.txt",
             Self::Singbox => "sing-box-version.txt",
+            Self::Xray => "xray-version.txt",
         }
     }
 
@@ -52,6 +57,8 @@ impl CoreKind {
             (Self::Aether, false) => "fetch-aether.sh",
             (Self::Singbox, true) => "fetch-singbox.ps1",
             (Self::Singbox, false) => "fetch-singbox.sh",
+            (Self::Xray, true) => "fetch-xray.ps1",
+            (Self::Xray, false) => "fetch-xray.sh",
         }
     }
 }
@@ -539,6 +546,14 @@ mod tests {
         assert_ne!(
             executable_name(CoreKind::Aether, "v1.2.0"),
             executable_name(CoreKind::Aether, "v1.3.0")
+        );
+        assert_eq!(
+            executable_name(CoreKind::Xray, "v26.5.9"),
+            if cfg!(windows) {
+                "xray-v26.5.9.exe"
+            } else {
+                "xray-v26.5.9"
+            }
         );
     }
 }

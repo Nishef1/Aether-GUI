@@ -11,6 +11,7 @@ mod singbox;
 mod state;
 mod traffic;
 mod tray;
+mod xray;
 
 use state::AppState;
 use tauri::{Manager, WindowEvent};

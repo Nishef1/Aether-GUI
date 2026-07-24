@@ -5,8 +5,9 @@ import { useCoreStore } from "@/state/coreStore"
 import type { CoreKind, CoreRelease } from "@/types/core"
 
 const CORE_LABELS: Record<CoreKind, string> = {
-  aether: "Aether core",
-  singbox: "sing-box TUN core",
+  aether: "Aether network core",
+  xray: "Xray system TUN core",
+  singbox: "sing-box fallback TUN core",
 }
 
 function CoreCard({ kind }: { kind: CoreKind }) {
@@ -36,16 +37,13 @@ function CoreCard({ kind }: { kind: CoreKind }) {
   }, [entry.releases, entry.status])
 
   const latestStable = useMemo(
-    () =>
-      entry.releases.find((release) => !release.prerelease)?.version ?? null,
+    () => entry.releases.find((release) => !release.prerelease)?.version ?? null,
     [entry.releases]
   )
   const bundledVersion = entry.status?.bundled_version ?? null
   const fallbackSelection =
     entry.status?.active_version ?? bundledVersion ?? latestStable ?? ""
-  const [selectionOverride, setSelectionOverride] = useState<string | null>(
-    null
-  )
+  const [selectionOverride, setSelectionOverride] = useState<string | null>(null)
   const selected =
     selectionOverride &&
     (selectionOverride === bundledVersion ||
@@ -53,9 +51,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
       ? selectionOverride
       : fallbackSelection
 
-  const selectedRelease = releases.find(
-    (release) => release.version === selected
-  )
+  const selectedRelease = releases.find((release) => release.version === selected)
   const installed =
     selectedRelease?.installed ??
     entry.status?.installed_versions.includes(selected) ??
@@ -83,9 +79,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
     <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-medium text-foreground">
-            {CORE_LABELS[kind]}
-          </p>
+          <p className="text-xs font-medium text-foreground">{CORE_LABELS[kind]}</p>
           <p className="text-[10px] text-muted-foreground">
             {entry.status?.active_version
               ? `Active managed: ${entry.status.active_version}`
@@ -101,10 +95,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
           className="rounded-md p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           aria-label={`Refresh ${CORE_LABELS[kind]} releases`}
         >
-          <RefreshCw
-            size={14}
-            className={entry.loading ? "animate-spin" : ""}
-          />
+          <RefreshCw size={14} className={entry.loading ? "animate-spin" : ""} />
         </button>
       </div>
 
@@ -118,9 +109,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
         >
           {!selected && <option value="">Choose version</option>}
           {bundledVersion && (
-            <option value={bundledVersion}>
-              {bundledVersion} — bundled baseline
-            </option>
+            <option value={bundledVersion}>{bundledVersion} — bundled baseline</option>
           )}
           {releases
             .filter((release) => release.version !== bundledVersion)
@@ -139,9 +128,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
 
         <button
           type="button"
-          disabled={
-            !selected || bundledSelected || active || entry.loading || locked
-          }
+          disabled={!selected || bundledSelected || active || entry.loading || locked}
           onClick={useSelectedVersion}
           className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
         >
@@ -196,12 +183,13 @@ export function CoreManagerPanel() {
       <div>
         <p className="text-xs font-medium text-foreground">Core management</p>
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          Bundled baseline cores are available without a separate install. Managed
-          versions can be installed side-by-side and selected while disconnected.
-          Use refresh to check recent online releases.
+          Aether owns the protected SOCKS path. Xray is the default native system
+          TUN engine, with sing-box retained as an explicit fallback. Versions are
+          installed side-by-side and can only change while disconnected.
         </p>
       </div>
       <CoreCard kind="aether" />
+      <CoreCard kind="xray" />
       <CoreCard kind="singbox" />
     </div>
   )

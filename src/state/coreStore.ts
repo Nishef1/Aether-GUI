@@ -65,6 +65,7 @@ export const useCoreStore = create<CoreStore>((set, get) => {
   return {
     cores: {
       aether: emptyEntry(),
+      xray: emptyEntry(),
       singbox: emptyEntry(),
     },
 
@@ -127,7 +128,11 @@ export const useCoreStore = create<CoreStore>((set, get) => {
     },
 
     loadAll: async () => {
-      await Promise.all([get().loadLocal("aether"), get().loadLocal("singbox")])
+      await Promise.all([
+        get().loadLocal("aether"),
+        get().loadLocal("xray"),
+        get().loadLocal("singbox"),
+      ])
     },
 
     installAndUse: (kind, version) =>

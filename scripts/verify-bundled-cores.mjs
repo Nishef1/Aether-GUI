@@ -5,15 +5,19 @@ import { resolve } from "node:path"
 const root = process.cwd()
 const binaries = resolve(root, "src-tauri", "binaries")
 const required = [
-  ["aether-v1.3.0.exe", null],
+  ["aether-v1.4.0.exe", null],
   ["aether.exe", null],
-  ["aether-version.txt", "v1.3.0"],
+  ["aether-version.txt", "v1.4.0"],
   ["sing-box-v1.13.14.exe", null],
   ["sing-box.exe", null],
   ["sing-box-version.txt", "v1.13.14"],
+  ["xray-v26.6.1.exe", null],
+  ["xray.exe", null],
+  ["xray-version.txt", "v26.6.1"],
   ["wintun.dll", null],
   ["fetch-aether.ps1", null],
   ["fetch-singbox.ps1", null],
+  ["fetch-xray.ps1", null],
 ]
 
 const filePath = (name) => resolve(binaries, name)
@@ -38,11 +42,11 @@ const sha256 = (name) =>
 
 const aliasMismatches = []
 if (
-  existsSync(filePath("aether-v1.3.0.exe")) &&
+  existsSync(filePath("aether-v1.4.0.exe")) &&
   existsSync(filePath("aether.exe")) &&
-  sha256("aether-v1.3.0.exe") !== sha256("aether.exe")
+  sha256("aether-v1.4.0.exe") !== sha256("aether.exe")
 ) {
-  aliasMismatches.push("aether.exe must exactly match aether-v1.3.0.exe")
+  aliasMismatches.push("aether.exe must exactly match aether-v1.4.0.exe")
 }
 if (
   existsSync(filePath("sing-box-v1.13.14.exe")) &&
@@ -50,6 +54,13 @@ if (
   sha256("sing-box-v1.13.14.exe") !== sha256("sing-box.exe")
 ) {
   aliasMismatches.push("sing-box.exe must exactly match sing-box-v1.13.14.exe")
+}
+if (
+  existsSync(filePath("xray-v26.6.1.exe")) &&
+  existsSync(filePath("xray.exe")) &&
+  sha256("xray-v26.6.1.exe") !== sha256("xray.exe")
+) {
+  aliasMismatches.push("xray.exe must exactly match xray-v26.6.1.exe")
 }
 
 const optionalCronet = filePath("libcronet.dll")
@@ -87,5 +98,5 @@ if (failures.length) {
 }
 
 console.log(
-  "Bundled Windows core runtime resources, installer helpers, fallback aliases, and Tauri resource mappings match the pinned release contract."
+  "Bundled Windows Aether, sing-box, Xray, Wintun, installer helpers, fallback aliases, and Tauri resource mappings match the pinned release contract."
 )

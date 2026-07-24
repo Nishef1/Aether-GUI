@@ -1,4 +1,4 @@
-export type CoreKind = "aether" | "singbox";
+export type CoreKind = "aether" | "singbox" | "xray";
 
 export interface CoreRelease {
   version: string;

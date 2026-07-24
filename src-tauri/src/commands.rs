@@ -25,13 +25,17 @@ pub fn connect(
         .unwrap_or_else(|| aether::profiles::load(&app))
         .sanitized();
 
+    // A single system-TUN manager owns either Xray (default) or sing-box. Set
+    // the selection from the exact profile before resolving binaries or UAC.
+    crate::singbox::set_tun_engine(profile.tun_engine);
+
     if profile.uses_tun() && !crate::is_admin() {
         // Resolve and verify all privileged-mode dependencies before UAC. The
         // elevated copy only launches already-installed cores and resumes the
         // exact pending profile. Windows GUI-subsystem builds do not create an
         // extra console window, including debug builds launched by `tauri dev`.
         let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
-        let _ = core_manager::ensure_active(&app, CoreKind::Singbox)?;
+        let _ = crate::singbox::ensure_binary(&app)?;
         aether::profiles::save_pending_elevation(&app, &profile);
         return Err(AetherError::ElevationRequired);
     }
@@ -142,8 +146,8 @@ pub fn get_core_status(app: AppHandle, kind: CoreKind) -> Result<CoreStatus, Aet
     // has disappeared or was quarantined. `current_info` resolves the same path
     // the connection runtime will actually launch, so expose a managed active
     // version only when the resolved source is genuinely managed. This also
-    // prevents a bundled version metadata file from masquerading as a usable
-    // core when the corresponding executable was not packaged.
+    // prevents bundled version metadata from masquerading as a usable core when
+    // the corresponding executable was not packaged.
     if current.source != "managed" {
         status.active_version = None;
     }

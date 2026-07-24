@@ -1,6 +1,6 @@
-import { X } from "lucide-react";
-import { CoreManagerPanel } from "@/components/CoreManagerPanel";
-import { LiveLogViewer } from "@/components/LiveLogViewer";
+import { X } from "lucide-react"
+import { CoreManagerPanel } from "@/components/CoreManagerPanel"
+import { LiveLogViewer } from "@/components/LiveLogViewer"
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
   return (
@@ -25,7 +25,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           <div>
             <h3 className="text-xs font-medium text-foreground">Core versions</h3>
             <p className="text-[10px] leading-relaxed text-muted-foreground">
-              Install, switch, or remove inactive Aether and sing-box versions while disconnected.
+              Install, switch, or remove inactive Aether, Xray, and sing-box versions while disconnected.
             </p>
           </div>
           <CoreManagerPanel />
@@ -45,5 +45,5 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         </section>
       </div>
     </div>
-  );
+  )
 }
