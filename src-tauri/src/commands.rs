@@ -74,7 +74,17 @@ pub fn take_pending_elevation_profile(app: AppHandle) -> Option<ConnectionProfil
 
 #[tauri::command]
 pub fn set_default_profile(app: AppHandle, profile: ConnectionProfile) -> Result<(), AetherError> {
-    aether::profiles::save(&app, &profile.sanitized());
+    let profile = profile.sanitized();
+    aether::profiles::save(&app, &profile);
+
+    // The store helper historically swallowed filesystem failures. Read the
+    // value back so the frontend receives a real rejection instead of showing a
+    // setting that only changed in memory and silently reverts after restart.
+    if aether::profiles::load(&app) != profile {
+        return Err(AetherError::Internal(
+            "failed to persist connection settings".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -84,8 +94,8 @@ pub fn get_close_to_tray() -> bool {
 }
 
 #[tauri::command]
-pub fn set_close_to_tray(app: AppHandle, enabled: bool) {
-    tray::set_close_to_tray(&app, enabled);
+pub fn set_close_to_tray(app: AppHandle, enabled: bool) -> Result<(), AetherError> {
+    tray::set_close_to_tray(&app, enabled).map_err(AetherError::Internal)
 }
 
 #[tauri::command]
