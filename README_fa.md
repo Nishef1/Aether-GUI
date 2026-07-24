@@ -24,7 +24,7 @@ Aether-GUI یک کنترل‌پنل دسکتاپ سبک روی هسته واقع
 - حذف نسخه‌های managed غیرفعال؛
 - ادامه استفاده از نسخه‌های نصب‌شده در حالت آفلاین.
 
-نصب نسخه جدید فایل قبلی را overwrite نمی‌کند. انتخاب نسخه فقط pointer کوچک نسخه فعال را تغییر می‌دهد. نسخه bundled نیز recovery مستقل و تست‌شده است، نه مسیر پشتیبانی از APIهای قدیمی.
+نصب نسخه جدید فایل قبلی را overwrite نمی‌کند. انتخاب نسخه فقط pointer کوچک نسخه فعال را تغییر می‌دهد. نسخه bundled نیز recovery مستقل است، نه مسیر پشتیبانی از APIهای قدیمی.
 
 ## مدل اتصال
 
@@ -94,12 +94,14 @@ IP عمومی فقط در حافظه برای health-check استفاده می�
 
 برای TUN، ابتدا Aether و موتور انتخاب‌شده با دسترسی عادی resolve و verify می‌شوند؛ سپس UAC درخواست می‌شود و نسخه elevated دقیقاً همان profile یک‌بارمصرف را ادامه می‌دهد. دانلود، نصب یا تغییر نسخه core در حالت elevated ممنوع است.
 
-## نسخه‌های bundled تست‌شده
+## نسخه‌های bundled کاندیدا
 
 - Aether v1.4.0
-- Xray-core v26.5.9
+- Xray-core v26.6.1 — آخرین build منتشرشده upstream که فعلاً با برچسب pre-release عرضه شده است
 - sing-box v1.13.14
 - Wintun 0.14.1
+
+آخرین نسخه stable هسته Xray در upstream، نسخه `v26.3.27` است. اگر `v26.6.1` روی یک سیستم ویندوز خاص regression داشت، Core management اجازه نصب و انتخاب stable یا هر نسخه قبلی را می‌دهد.
 
 ## معماری
 
@@ -138,7 +140,7 @@ sing-box adapter = fallback سازگاری
 pnpm install
 ```
 
-آماده‌کردن coreهای bundled:
+آماده‌کردن coreهای bundled کاندیدا:
 
 ```powershell
 pnpm prepare:cores:windows
