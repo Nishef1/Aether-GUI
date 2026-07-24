@@ -106,14 +106,16 @@ The tray icon reflects connection state at a glance:
 
 ## Updates and releases
 
-Aether-GUI ships tested baseline Aether, Xray, sing-box and Wintun resources inside the desktop bundle, while newer managed core versions remain independently installable.
+Aether-GUI ships pinned Aether, Xray, sing-box and Wintun resources inside the desktop bundle, while newer managed core versions remain independently installable.
 
-The current tested Windows baseline is:
+The current Windows candidate baseline is:
 
 - Aether v1.4.0;
-- Xray-core v26.5.9;
+- Xray-core v26.6.1 — latest published upstream build, currently marked pre-release;
 - sing-box v1.13.14;
 - Wintun 0.14.1.
+
+Xray-core v26.3.27 remains the latest upstream stable release and can be installed or selected through Core management if the newer pre-release regresses on a specific Windows host.
 
 The title bar checks for:
 
@@ -163,7 +165,7 @@ Install dependencies:
 pnpm install
 ```
 
-Prepare the tested bundled baseline cores:
+Prepare the pinned bundled core candidates:
 
 ```powershell
 pnpm prepare:cores:windows
