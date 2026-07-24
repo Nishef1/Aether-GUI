@@ -44,7 +44,19 @@ jobs:
         run: pnpm lint
 
       - name: Rust check
-        run: pnpm check:rust
+        shell: pwsh
+        run: |
+          pnpm check:rust *>&1 | Tee-Object -FilePath rust-check.log
+          exit $LASTEXITCODE
+
+      - name: Upload Rust check diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-check-diagnostics
+          path: rust-check.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Rust tests
         run: pnpm test:rust
