@@ -1,9 +1,9 @@
 use serde_json::json;
 use std::path::Path;
 
-pub const TUN_INTERFACE_NAME: &str = "aether-xray";
-pub const TUN_ADDRESS: &str = "172.20.0.1/30";
-pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9877::1/126";
+pub const TUN_INTERFACE_NAME: &str = "aether-tun";
+pub const TUN_ADDRESS: &str = "172.19.0.1/30";
+pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
 
 fn process_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
@@ -24,7 +24,7 @@ pub fn generate_config(
                 "protocol": "tun",
                 "settings": {
                     "name": TUN_INTERFACE_NAME,
-                    "desc": "Aether Xray",
+                    "desc": "Aether TUN",
                     "mtu": 1500,
                     "gateway": [TUN_ADDRESS, TUN_ADDRESS_V6],
                     "dns": ["1.1.1.1", "2606:4700:4700::1111"],
@@ -106,6 +106,7 @@ mod tests {
             serde_json::from_str(&generate_config(1819, &core).unwrap()).unwrap();
 
         assert_eq!(value["inbounds"][0]["protocol"], "tun");
+        assert_eq!(value["inbounds"][0]["settings"]["gateway"][0], TUN_ADDRESS);
         assert_eq!(
             value["inbounds"][0]["settings"]["autoSystemRoutingTable"][0],
             "0.0.0.0/0"
