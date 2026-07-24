@@ -9,7 +9,7 @@ import { useCoreStore } from "@/state/coreStore"
 import type { CoreKind } from "@/types/core"
 
 const appWindow = getCurrentWindow()
-const CORE_KINDS: CoreKind[] = ["aether", "singbox"]
+const CORE_KINDS: CoreKind[] = ["aether", "xray", "singbox"]
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 interface CoreUpdate {
@@ -51,13 +51,17 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [updateError, setUpdateError] = useState<string | null>(null)
   const checkInFlight = useRef(false)
 
-  const coreUpdates = useMemo<CoreUpdate[]>(() => CORE_KINDS.flatMap((kind) => {
-    const entry = cores[kind]
-    const latest = entry.releases.find((release) => !release.prerelease)
-    const current = entry.status?.active_version ?? entry.status?.bundled_version
-    if (!latest || !current || !versionIsNewer(latest.version, current)) return []
-    return [{ kind, version: latest.version }]
-  }), [cores])
+  const coreUpdates = useMemo<CoreUpdate[]>(
+    () =>
+      CORE_KINDS.flatMap((kind) => {
+        const entry = cores[kind]
+        const latest = entry.releases.find((release) => !release.prerelease)
+        const current = entry.status?.active_version ?? entry.status?.bundled_version
+        if (!latest || !current || !versionIsNewer(latest.version, current)) return []
+        return [{ kind, version: latest.version }]
+      }),
+    [cores]
+  )
 
   useEffect(() => {
     let active = true
@@ -78,7 +82,7 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         // An application update takes precedence. Do not offer a potentially
         // incompatible core to the older UI immediately before replacing it.
         if (availableAppUpdate) return
-        await Promise.all([refreshCore("aether", true), refreshCore("singbox", true)])
+        await Promise.all(CORE_KINDS.map((kind) => refreshCore(kind, true)))
       } catch {
         // Update discovery is opportunistic and must never affect connectivity.
       } finally {
@@ -102,9 +106,14 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const canUpdateCores = hasCoreUpdates && disconnected && !isElevated && !hasAppUpdate
   const isUpdating = updateStage !== null
 
-  const updateLabel = hasAppUpdate ? "Update app" : coreUpdates.length > 1 ? "Update cores" : "Update core"
-  const updateTitle = updateError
-    ?? (isElevated
+  const updateLabel = hasAppUpdate
+    ? "Update app"
+    : coreUpdates.length > 1
+      ? "Update cores"
+      : "Update core"
+  const updateTitle =
+    updateError ??
+    (isElevated
       ? "Restart Aether-GUI normally before checking for updates"
       : !disconnected
         ? "Disconnect before updating"
@@ -126,7 +135,10 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
             setUpdateStage("Downloading…")
           } else if (event.event === "Progress") {
             downloaded += event.data.chunkLength
-            const percent = total > 0 ? ` ${Math.min(100, Math.round((downloaded / total) * 100))}%` : ""
+            const percent =
+              total > 0
+                ? ` ${Math.min(100, Math.round((downloaded / total) * 100))}%`
+                : ""
             setUpdateStage(`Downloading…${percent}`)
           } else if (event.event === "Finished") {
             setUpdateStage("Installing…")
@@ -141,7 +153,9 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
       if (canUpdateCores) {
         setUpdateStage("Updating cores…")
-        for (const update of coreUpdates) await installAndUse(update.kind, update.version)
+        for (const update of coreUpdates) {
+          await installAndUse(update.kind, update.version)
+        }
         setUpdateStage(null)
       }
     } catch (error) {
@@ -150,24 +164,72 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
     }
   }
 
-  const buttonDisabled = isUpdating || isElevated || !disconnected || (!hasAppUpdate && hasCoreUpdates && !canUpdateCores)
+  const buttonDisabled =
+    isUpdating ||
+    isElevated ||
+    !disconnected ||
+    (!hasAppUpdate && hasCoreUpdates && !canUpdateCores)
 
   return (
-    <header data-tauri-drag-region className="relative z-40 flex h-9 shrink-0 select-none items-center justify-end">
+    <header
+      data-tauri-drag-region
+      className="relative z-40 flex h-9 shrink-0 select-none items-center justify-end"
+    >
       {hasUpdate && (
-        <button type="button" disabled={buttonDisabled} title={updateTitle} aria-label={updateStage ?? updateLabel}
+        <button
+          type="button"
+          disabled={buttonDisabled}
+          title={updateTitle}
+          aria-label={updateStage ?? updateLabel}
           aria-describedby={updateError ? "update-error" : undefined}
           className="mr-1 flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
-          onClick={() => void handleUpdate()}>
-          {isUpdating ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : <Download className="size-3.5" aria-hidden="true" />}
+          onClick={() => void handleUpdate()}
+        >
+          {isUpdating ? (
+            <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <Download className="size-3.5" aria-hidden="true" />
+          )}
           <span>{updateStage ?? updateLabel}</span>
         </button>
       )}
-      {updateError && <span id="update-error" role="alert" className="sr-only">{updateError}</span>}
-      <button type="button" aria-label="Open settings" className="grid h-full w-11 place-items-center text-muted-foreground hover:bg-surface-2 hover:text-foreground" onClick={onOpenSettings}><Settings className="size-3.5" /></button>
-      <button type="button" aria-label="Minimize" className="grid h-full w-13 place-items-center text-muted-foreground hover:bg-surface-2 hover:text-foreground" onClick={() => void appWindow.minimize()}><Minus className="size-4" /></button>
-      <button type="button" aria-label="Maximize" className="grid h-full w-13 place-items-center text-muted-foreground hover:bg-surface-2 hover:text-foreground" onClick={() => void appWindow.toggleMaximize()}><Maximize2 className="size-3.5" /></button>
-      <button type="button" aria-label="Close" className="grid h-full w-13 place-items-center text-muted-foreground hover:bg-destructive hover:text-white" onClick={() => void appWindow.close()}><X className="size-4" /></button>
+      {updateError && (
+        <span id="update-error" role="alert" className="sr-only">
+          {updateError}
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label="Open settings"
+        className="grid h-full w-11 place-items-center text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+        onClick={onOpenSettings}
+      >
+        <Settings className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        aria-label="Minimize"
+        className="grid h-full w-13 place-items-center text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+        onClick={() => void appWindow.minimize()}
+      >
+        <Minus className="size-4" />
+      </button>
+      <button
+        type="button"
+        aria-label="Maximize"
+        className="grid h-full w-13 place-items-center text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+        onClick={() => void appWindow.toggleMaximize()}
+      >
+        <Maximize2 className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        aria-label="Close"
+        className="grid h-full w-13 place-items-center text-muted-foreground hover:bg-destructive hover:text-white"
+        onClick={() => void appWindow.close()}
+      >
+        <X className="size-4" />
+      </button>
     </header>
   )
 }
