@@ -21,6 +21,7 @@ const LOG_FLUSH_INTERVAL_MS = 250
 // selecting a protocol and then an IP version) must be written in order. Keep
 // the last confirmed profile on disk instead of letting slower requests win.
 let profileSaveQueue: Promise<void> = Promise.resolve()
+let profileSaveRevision = 0
 
 function saveDefaultProfile(profile: ConnectionProfile): Promise<void> {
   const request = profileSaveQueue.then(() =>
@@ -41,6 +42,7 @@ function syncTrayState(state: ConnectionStatus["state"]): void {
 interface ConnectionState {
   status: ConnectionStatus
   profile: ConnectionProfile
+  profileSaveError: string | null
   traffic: TrafficStats
   trafficBaseline: TrafficStats | null
   trafficSessionStarted: boolean
@@ -68,15 +70,29 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
   const updateProfile = (
     patch: Partial<ConnectionProfile>
   ): Promise<void> => {
+    const revision = ++profileSaveRevision
     const profile = { ...get().profile, ...patch }
-    set({ profile })
+    set({ profile, profileSaveError: null })
+
     return saveDefaultProfile(profile)
+      .then(() => {
+        if (revision === profileSaveRevision) {
+          set({ profileSaveError: null })
+        }
+      })
+      .catch((error) => {
+        const message = String(error)
+        if (revision === profileSaveRevision) {
+          set({ profileSaveError: message })
+        }
+        appendRuntimeLog(`[error:saving-profile] ${message}`)
+        throw error
+      })
   }
 
   const updateProfileQuietly = (patch: Partial<ConnectionProfile>): void => {
     void updateProfile(patch).catch(() => {
-      // saveDefaultProfile already logs the failure on the shared ordered queue.
-      // Fire-and-forget option controls should not create unhandled rejections.
+      // updateProfile records the error for inline Settings feedback and logs.
     })
   }
 
@@ -94,6 +110,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       wg_noize: "balanced",
       bind_address: "127.0.0.1:1819",
     },
+    profileSaveError: null,
     logs: [],
     sidecarError: null,
     scanBudgetSecs: null,
@@ -173,17 +190,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         // exactly one owner: connect(). This keeps dev and production behavior the
         // same and guarantees that UAC always has an exact pending connect profile.
         await updateProfile({ connection_mode })
-      } catch (e) {
-        const message = String(e)
-        set({
-          status: {
-            state: "Error",
-            message,
-            phase: "saving-profile",
-          },
-        })
-        appendRuntimeLog(`[error:saving-profile] ${message}`)
-        syncTrayState("Error")
+      } catch {
+        // updateProfile exposes the persistence failure without mislabeling it as
+        // a connection failure or changing the tray state.
       }
     },
     setTunEngine: (tun_engine) => updateProfileQuietly({ tun_engine }),
