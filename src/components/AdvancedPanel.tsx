@@ -44,10 +44,15 @@ function FieldRow({
 }
 
 export function AdvancedPanel() {
-  const status = useConnectionStore((s) => s.status)
-  const mode = useConnectionStore((s) => s.profile.connection_mode)
-  const quickReconnect = useConnectionStore((s) => s.profile.quick_reconnect)
-  const setQuickReconnect = useConnectionStore((s) => s.setQuickReconnect)
+  const status = useConnectionStore((state) => state.status)
+  const mode = useConnectionStore((state) => state.profile.connection_mode)
+  const quickReconnect = useConnectionStore(
+    (state) => state.profile.quick_reconnect
+  )
+  const profileSaveError = useConnectionStore((state) => state.profileSaveError)
+  const setQuickReconnect = useConnectionStore(
+    (state) => state.setQuickReconnect
+  )
   const [open, setOpen] = useState(false)
   const locked = status.state !== "Idle" && status.state !== "Error"
 
@@ -132,6 +137,12 @@ export function AdvancedPanel() {
                 aria-label="Quick reconnect"
               />
             </div>
+
+            {profileSaveError && (
+              <p className="text-[10px] leading-relaxed text-destructive" role="status">
+                Could not save settings: {profileSaveError}
+              </p>
+            )}
           </div>
         </CollapsibleContent>
       </Collapsible>
