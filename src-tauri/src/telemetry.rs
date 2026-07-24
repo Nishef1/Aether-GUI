@@ -74,6 +74,20 @@ fn invalidate_probe() {
     SESSION_TOKEN.fetch_add(1, Ordering::SeqCst);
 }
 
+fn clear_egress(app: &AppHandle) {
+    let payload = telemetry_state().lock().ok().map(|mut state| {
+        state.snapshot.public_ip = None;
+        state.snapshot.country_code = None;
+        state.snapshot.latency_ms = None;
+        state.snapshot.egress_probe_complete = false;
+        state.snapshot.sampled_at_ms = now_millis();
+        state.snapshot.clone()
+    });
+    if let Some(payload) = payload {
+        emit_snapshot(app, payload);
+    }
+}
+
 fn add_traffic_sample(app: &AppHandle, raw: TrafficStats) {
     let payload = telemetry_state().lock().ok().map(|mut state| {
         let received_delta = raw
@@ -215,6 +229,7 @@ pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
                     // Reject a late result from the route that just failed. The
                     // first connected sample after recovery starts a fresh probe.
                     invalidate_probe();
+                    clear_egress(&app);
                     next_probe = None;
                 }
                 was_connected = false;
