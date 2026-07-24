@@ -1,5 +1,6 @@
 use crate::aether::AetherManager;
 use crate::singbox::SingboxManager;
+use crate::xray::XrayManager;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
@@ -20,7 +21,7 @@ pub enum ConnectionState {
     StartingTunnel {
         socks_addr: String,
     },
-    /// Full system traffic path through sing-box -> Aether SOCKS is verified.
+    /// Full system traffic path through the selected TUN engine and Aether SOCKS is verified.
     Tunneling {
         tun_addr: String,
         socks_addr: String,
@@ -40,6 +41,7 @@ pub enum ConnectionState {
 pub struct AppState {
     pub manager: Arc<Mutex<AetherManager>>,
     pub singbox: Arc<Mutex<SingboxManager>>,
+    pub xray: Arc<Mutex<XrayManager>>,
 }
 
 impl Default for AppState {
@@ -47,6 +49,7 @@ impl Default for AppState {
         Self {
             manager: Arc::new(Mutex::new(AetherManager::new())),
             singbox: Arc::new(Mutex::new(SingboxManager::new())),
+            xray: Arc::new(Mutex::new(XrayManager::new())),
         }
     }
 }
