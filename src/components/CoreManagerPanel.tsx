@@ -37,8 +37,8 @@ function CoreCard({ kind }: { kind: CoreKind }) {
   }, [entry.releases, entry.status])
 
   const latestStable = useMemo(
-    () => releases.find((release) => !release.prerelease)?.version ?? null,
-    [releases]
+    () => entry.releases.find((release) => !release.prerelease)?.version ?? null,
+    [entry.releases]
   )
   const bundledVersion = entry.status?.bundled_version ?? null
   const activeManagedVersion = entry.status?.active_version ?? null
