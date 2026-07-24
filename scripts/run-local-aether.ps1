@@ -6,6 +6,38 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Some constrained Windows PowerShell environments do not expose the
+# Microsoft.PowerShell.Utility Get-FileHash cmdlet. The installer helper only
+# needs SHA-256, so provide a compatible .NET implementation in that case.
+if (-not (Get-Command "Get-FileHash" -ErrorAction SilentlyContinue)) {
+    function global:Get-FileHash {
+        param(
+            [Parameter(Mandatory = $true)][string]$Path,
+            [ValidateSet("SHA256")][string]$Algorithm = "SHA256"
+        )
+
+        $fullPath = [System.IO.Path]::GetFullPath($Path)
+        $stream = [System.IO.File]::OpenRead($fullPath)
+        try {
+            $hasher = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                $hash = $hasher.ComputeHash($stream)
+                [PSCustomObject]@{
+                    Algorithm = $Algorithm
+                    Hash = ([System.BitConverter]::ToString($hash)).Replace("-", "")
+                    Path = $fullPath
+                }
+            }
+            finally {
+                $hasher.Dispose()
+            }
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+}
+
 function Add-DirectoryToPath {
     param([Parameter(Mandatory = $true)][string]$Directory)
 
