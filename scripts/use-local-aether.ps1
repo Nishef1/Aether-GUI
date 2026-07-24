@@ -65,6 +65,60 @@ function Find-CMake {
     return $null
 }
 
+function Find-Nasm {
+    $command = Get-Command "nasm.exe" -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    if (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        $candidates.Add((Join-Path $env:ProgramFiles "NASM\nasm.exe"))
+    }
+    if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) {
+        $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "NASM\nasm.exe"))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "bin\NASM\nasm.exe"))
+
+        $wingetRoot = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
+        if (Test-Path $wingetRoot) {
+            $wingetPackages = Get-ChildItem -Path $wingetRoot -Directory -Filter "NASM.NASM_*" -ErrorAction SilentlyContinue
+            foreach ($package in $wingetPackages) {
+                $wingetNasm = Get-ChildItem -Path $package.FullName -Recurse -File -Filter "nasm.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($wingetNasm) {
+                    $candidates.Add($wingetNasm.FullName)
+                }
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $candidates.Add((Join-Path $env:USERPROFILE "scoop\apps\nasm\current\nasm.exe"))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:ChocolateyInstall)) {
+        $candidates.Add((Join-Path $env:ChocolateyInstall "bin\nasm.exe"))
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+
+    return $null
+}
+
+function Add-ToolDirectoryToPath {
+    param([Parameter(Mandatory = $true)][string]$Executable)
+
+    $directory = Split-Path $Executable -Parent
+    $pathEntries = @($env:PATH -split ';') | ForEach-Object { $_.TrimEnd('\') }
+    if ($pathEntries -notcontains $directory.TrimEnd('\')) {
+        $env:PATH = "$directory;$env:PATH"
+    }
+}
+
 function Prepare-NativeBuildTools {
     Require-Command -Name "git.exe" -InstallHint "Install Git for Windows and reopen the terminal." | Out-Null
     Require-Command -Name "cargo.exe" -InstallHint "Install Rust with rustup and reopen the terminal." | Out-Null
@@ -83,13 +137,59 @@ Alternatively, open Visual Studio Installer and add:
 "@
     }
 
-    $cmakeDir = Split-Path $cmake -Parent
-    if (($env:PATH -split ';') -notcontains $cmakeDir) {
-        $env:PATH = "$cmakeDir;$env:PATH"
+    $nasm = Find-Nasm
+    if (-not $nasm) {
+        throw @"
+NASM is required to build Aether's BoringSSL assembly on Windows but was not found.
+Install it once, reopen the terminal, and run pnpm dev:custom again:
+
+  winget install --id NASM.NASM -e --source winget
+
+The helper also detects NASM when the installer does not add it to PATH.
+"@
     }
 
+    Add-ToolDirectoryToPath -Executable $cmake
+    Add-ToolDirectoryToPath -Executable $nasm
+
+    # CMake's NASM dialect honors ASM_NASM during first configuration. Setting
+    # it explicitly also avoids relying on installers to persist a PATH update.
+    $env:ASM_NASM = $nasm
+    $env:NASM = $nasm
+
     $cmakeVersion = (& $cmake --version | Select-Object -First 1)
+    $nasmVersion = (& $nasm -v | Select-Object -First 1)
     Write-Host "[local-core] Using $cmakeVersion from $cmake"
+    Write-Host "[local-core] Using $nasmVersion from $nasm"
+}
+
+function Reset-StaleBoringSslCMakeCache {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    $cargoBuildRoot = Join-Path $RepositoryRoot "aether\target\release\build"
+    if (-not (Test-Path $cargoBuildRoot)) {
+        return
+    }
+
+    $resetCount = 0
+    $boringBuilds = Get-ChildItem -Path $cargoBuildRoot -Directory -Filter "boring-sys-*" -ErrorAction SilentlyContinue
+    foreach ($build in $boringBuilds) {
+        $cmakeBuildDir = Join-Path $build.FullName "out\build"
+        $cache = Join-Path $cmakeBuildDir "CMakeCache.txt"
+        if (-not (Test-Path $cache)) {
+            continue
+        }
+
+        $nasmWasMissing = Select-String -Path $cache -Pattern "CMAKE_ASM_NASM_COMPILER.*NOTFOUND" -Quiet -ErrorAction SilentlyContinue
+        if ($nasmWasMissing) {
+            Remove-Item $cmakeBuildDir -Recurse -Force -ErrorAction Stop
+            $resetCount += 1
+        }
+    }
+
+    if ($resetCount -gt 0) {
+        Write-Host "[local-core] Cleared $resetCount stale BoringSSL CMake cache(s) created before NASM was available"
+    }
 }
 
 $GuiRoot = Split-Path $PSScriptRoot -Parent
@@ -118,6 +218,7 @@ if (-not (Test-Path $Manifest)) {
 }
 
 if (-not $SkipBuild) {
+    Reset-StaleBoringSslCMakeCache -RepositoryRoot $AetherRepo
     Write-Host "[local-core] Building embedded Aether core..."
     & cargo build --release --manifest-path $Manifest
     if ($LASTEXITCODE -ne 0) {
