@@ -131,6 +131,26 @@ function Find-LibClangDirectory {
     return $null
 }
 
+$GuiRoot = Split-Path $PSScriptRoot -Parent
+$UsingBundledSubmodule = [string]::IsNullOrWhiteSpace($AetherRepo)
+
+if (-not $SkipBuild -and $UsingBundledSubmodule) {
+    if (-not (Get-Command "git.exe" -ErrorAction SilentlyContinue)) {
+        throw "git.exe is required to synchronize the embedded Aether submodule. Install Git for Windows and reopen the terminal."
+    }
+
+    Write-Host "[local-core] Synchronizing embedded Aether submodule..."
+    & git -C $GuiRoot submodule sync -- "vendor/aether"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not synchronize vendor/aether (exit code $LASTEXITCODE)"
+    }
+
+    & git -C $GuiRoot submodule update --init --recursive -- "vendor/aether"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not update vendor/aether to the commit recorded by Aether-GUI (exit code $LASTEXITCODE). Commit or stash local submodule changes and retry."
+    }
+}
+
 if (-not $SkipBuild) {
     $libClangDirectory = Find-LibClangDirectory
     if (-not $libClangDirectory) {
