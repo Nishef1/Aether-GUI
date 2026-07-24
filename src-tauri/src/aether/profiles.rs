@@ -75,6 +75,14 @@ impl ConnectionMode {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TunEngine {
+    #[default]
+    Xray,
+    Singbox,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum MasqueNoize {
@@ -120,6 +128,8 @@ pub struct ConnectionProfile {
     pub ip_version: IpVersion,
     #[serde(default)]
     pub connection_mode: ConnectionMode,
+    #[serde(default)]
+    pub tun_engine: TunEngine,
     /// Runtime-only derived cache used by the supervisor. `connection_mode` is
     /// the only persisted source of truth.
     #[serde(skip)]
@@ -256,6 +266,7 @@ impl Default for ConnectionProfile {
             scan_mode: ScanMode::Balanced,
             ip_version: IpVersion::V4,
             connection_mode: ConnectionMode::Proxy,
+            tun_engine: TunEngine::Xray,
             tun_enabled: false,
             quick_reconnect: true,
             masque_http2: false,
@@ -341,10 +352,11 @@ mod tests {
     }
 
     #[test]
-    fn missing_connection_mode_defaults_to_proxy() {
+    fn missing_connection_mode_defaults_to_proxy_and_xray() {
         let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4","quick_reconnect":true,"masque_http2":false,"bind_address":"127.0.0.1:1919"}"#;
         let p: ConnectionProfile = serde_json::from_str(json).unwrap();
         assert_eq!(p.connection_mode, ConnectionMode::Proxy);
+        assert_eq!(p.tun_engine, TunEngine::Xray);
         assert!(!p.uses_tun());
     }
 
