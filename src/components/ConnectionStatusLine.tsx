@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react"
+import { Gauge, Globe2 } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 import { useConnectionStore } from "@/state/connectionStore"
+import { useTelemetryStore } from "@/state/telemetryStore"
 import { useWindowFocused } from "@/state/windowFocus"
 
 const TEXT_TRANSITION = {
@@ -10,8 +12,15 @@ const TEXT_TRANSITION = {
   transition: { duration: 0.1, ease: [0.4, 0, 0.2, 1] as const },
 }
 
-const TRAFFIC_POLL_INTERVAL_MS = 2000
 const BYTE_UNITS = ["KiB", "MiB", "GiB", "TiB"]
+
+function formatElapsed(sinceMs: number, nowMs: number): string {
+  const total = Math.max(0, Math.floor((nowMs - sinceMs) / 1000))
+  const h = String(Math.floor(total / 3600)).padStart(2, "0")
+  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0")
+  const s = String(total % 60).padStart(2, "0")
+  return `${h}:${m}:${s}`
+}
 
 function useElapsed(sinceMs: number | null): {
   formatted: string
@@ -24,11 +33,11 @@ function useElapsed(sinceMs: number | null): {
     return () => clearInterval(id)
   }, [sinceMs])
   if (sinceMs == null) return { formatted: "", totalSeconds: 0 }
-  const total = Math.max(0, Math.floor((now - sinceMs) / 1000))
-  const h = String(Math.floor(total / 3600)).padStart(2, "0")
-  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0")
-  const s = String(total % 60).padStart(2, "0")
-  return { formatted: `${h}:${m}:${s}`, totalSeconds: total }
+  const totalSeconds = Math.max(0, Math.floor((now - sinceMs) / 1000))
+  return {
+    formatted: formatElapsed(sinceMs, now),
+    totalSeconds,
+  }
 }
 
 function formatBytes(bytes: number): string {
@@ -40,6 +49,22 @@ function formatBytes(bytes: number): string {
     unit += 1
   } while (value >= 1024 && unit < BYTE_UNITS.length - 1)
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${BYTE_UNITS[unit]}`
+}
+
+function countryFlag(code: string): string {
+  const normalized = code.toUpperCase()
+  if (!/^[A-Z]{2}$/.test(normalized)) return "🌐"
+  return String.fromCodePoint(
+    ...normalized.split("").map((character) => 127397 + character.charCodeAt(0))
+  )
+}
+
+function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code
+  } catch {
+    return code
+  }
 }
 
 function ScanProgressBar({
@@ -75,35 +100,26 @@ function ScanProgressBar({
 }
 
 export function ConnectionStatusLine() {
-  const status = useConnectionStore((s) => s.status)
-  const scanBudgetSecs = useConnectionStore((s) => s.scanBudgetSecs)
-  const traffic = useConnectionStore((s) => s.traffic)
-  const trafficSessionStarted = useConnectionStore(
-    (s) => s.trafficSessionStarted
-  )
-  const refreshTraffic = useConnectionStore((s) => s.refreshTraffic)
-  const preparingCores = useConnectionStore((s) => s.preparingCores)
+  const status = useConnectionStore((state) => state.status)
+  const scanBudgetSecs = useConnectionStore((state) => state.scanBudgetSecs)
+  const preparingCores = useConnectionStore((state) => state.preparingCores)
+  const telemetry = useTelemetryStore((state) => state.snapshot)
   const focused = useWindowFocused()
   const tunEnabled = useConnectionStore(
-    (s) => s.profile.connection_mode !== "proxy"
+    (state) => state.profile.connection_mode !== "proxy"
   )
   const connectedAt =
     status.state === "Connected" || status.state === "Tunneling"
       ? status.connected_at_ms
       : null
-  const elapsed = useElapsed(connectedAt).formatted
-  const trafficVisible = status.state === "Tunneling" || trafficSessionStarted
-  const shouldPollTraffic = status.state === "Tunneling" && focused
-
-  useEffect(() => {
-    if (!shouldPollTraffic) return
-    void refreshTraffic()
-    const id = setInterval(
-      () => void refreshTraffic(),
-      TRAFFIC_POLL_INTERVAL_MS
-    )
-    return () => clearInterval(id)
-  }, [refreshTraffic, shouldPollTraffic])
+  const telemetryClock =
+    connectedAt == null
+      ? 0
+      : Math.max(connectedAt, telemetry.sampled_at_ms || connectedAt)
+  const elapsed =
+    connectedAt == null ? "" : formatElapsed(connectedAt, telemetryClock)
+  const connectionReady =
+    status.state === "Connected" || status.state === "Tunneling"
 
   const [attemptStartedAt, setAttemptStartedAt] = useState<number | null>(null)
   /* eslint-disable react-hooks/set-state-in-effect -- capture transition time */
@@ -173,15 +189,20 @@ export function ConnectionStatusLine() {
         break
     }
 
+  const hasEgressInfo = Boolean(
+    telemetry.public_ip || telemetry.country_code || telemetry.latency_ms != null
+  )
+  const country = telemetry.country_code
+    ? `${countryFlag(telemetry.country_code)} ${countryName(telemetry.country_code)}`
+    : null
+
   return (
-    <div
-      aria-live="polite"
-      aria-atomic="true"
-      className="flex flex-col items-center gap-2 text-center"
-    >
+    <div className="flex flex-col items-center gap-2 text-center">
       <AnimatePresence mode="wait">
         <motion.span
           key={status.state}
+          aria-live="polite"
+          aria-atomic="true"
           className="block text-base font-medium text-foreground"
           {...TEXT_TRANSITION}
         >
@@ -200,13 +221,49 @@ export function ConnectionStatusLine() {
       {status.state === "Connecting" && (
         <ScanProgressBar percent={scanPercent} focused={focused} />
       )}
-      {tunEnabled && trafficVisible && (
+      {connectionReady && !telemetry.egress_probe_complete && (
+        <span className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
+          <Globe2 size={11} aria-hidden="true" />
+          Checking exit IP…
+        </span>
+      )}
+      {connectionReady && telemetry.egress_probe_complete && !hasEgressInfo && (
+        <span className="font-mono text-[10px] text-muted-foreground">
+          Exit information unavailable
+        </span>
+      )}
+      {connectionReady && hasEgressInfo && (
+        <div
+          className="flex max-w-sm flex-wrap items-center justify-center gap-x-2 gap-y-1 font-mono text-[10px] text-muted-foreground"
+          aria-label="Tunnel exit information"
+        >
+          {country && (
+            <span className="inline-flex items-center gap-1" title="Tunnel exit country">
+              <Globe2 size={11} aria-hidden="true" />
+              {country}
+            </span>
+          )}
+          {telemetry.public_ip && (
+            <span title="Public tunnel exit IP">{telemetry.public_ip}</span>
+          )}
+          {telemetry.latency_ms != null && (
+            <span
+              className="inline-flex items-center gap-1"
+              title="End-to-end latency through the tunnel to Cloudflare"
+            >
+              <Gauge size={11} aria-hidden="true" />
+              {telemetry.latency_ms} ms
+            </span>
+          )}
+        </div>
+      )}
+      {status.state === "Tunneling" && (
         <span
           className="font-mono text-[10px] text-muted-foreground"
-          aria-label="Traffic"
+          aria-label="Tunnel traffic"
         >
-          ↓ {formatBytes(traffic.received_bytes)} · ↑{" "}
-          {formatBytes(traffic.sent_bytes)}
+          ↓ {formatBytes(telemetry.received_bytes)} · ↑{" "}
+          {formatBytes(telemetry.sent_bytes)}
         </span>
       )}
     </div>
