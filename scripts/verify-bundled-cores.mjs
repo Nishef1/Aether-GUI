@@ -11,9 +11,9 @@ const required = [
   ["sing-box-v1.13.14.exe", null],
   ["sing-box.exe", null],
   ["sing-box-version.txt", "v1.13.14"],
-  ["xray-v26.5.9.exe", null],
+  ["xray-v26.6.1.exe", null],
   ["xray.exe", null],
-  ["xray-version.txt", "v26.5.9"],
+  ["xray-version.txt", "v26.6.1"],
   ["wintun.dll", null],
   ["fetch-aether.ps1", null],
   ["fetch-singbox.ps1", null],
@@ -56,11 +56,11 @@ if (
   aliasMismatches.push("sing-box.exe must exactly match sing-box-v1.13.14.exe")
 }
 if (
-  existsSync(filePath("xray-v26.5.9.exe")) &&
+  existsSync(filePath("xray-v26.6.1.exe")) &&
   existsSync(filePath("xray.exe")) &&
-  sha256("xray-v26.5.9.exe") !== sha256("xray.exe")
+  sha256("xray-v26.6.1.exe") !== sha256("xray.exe")
 ) {
-  aliasMismatches.push("xray.exe must exactly match xray-v26.5.9.exe")
+  aliasMismatches.push("xray.exe must exactly match xray-v26.6.1.exe")
 }
 
 const optionalCronet = filePath("libcronet.dll")
