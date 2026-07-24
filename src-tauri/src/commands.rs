@@ -131,6 +131,11 @@ pub fn get_traffic() -> crate::traffic::TrafficStats {
 }
 
 #[tauri::command]
+pub fn get_runtime_telemetry() -> crate::telemetry::RuntimeTelemetry {
+    crate::telemetry::snapshot()
+}
+
+#[tauri::command]
 pub async fn list_core_versions(
     app: AppHandle,
     kind: CoreKind,
