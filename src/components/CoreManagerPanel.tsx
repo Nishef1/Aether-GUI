@@ -18,12 +18,26 @@ function CoreCard({ kind }: { kind: CoreKind }) {
   const removeVersion = useCoreStore((state) => state.removeVersion)
   const connectionStatus = useConnectionStore((state) => state.status.state)
   const locked = connectionStatus !== "Idle" && connectionStatus !== "Error"
+  const bundledVersion = entry.status?.bundled_version ?? null
 
   const releases = useMemo(() => {
     const byVersion = new Map<string, CoreRelease>()
-    for (const release of entry.releases)
+    const installedVersions = new Set(entry.status?.installed_versions ?? [])
+
+    for (const release of entry.releases) {
+      // A bundled recovery binary is not a managed installation. Hide the same
+      // online tag unless the user has explicitly installed that version into
+      // the managed registry as well.
+      if (
+        release.version === bundledVersion &&
+        !installedVersions.has(release.version)
+      ) {
+        continue
+      }
       byVersion.set(release.version, release)
-    for (const version of entry.status?.installed_versions ?? []) {
+    }
+
+    for (const version of installedVersions) {
       if (!byVersion.has(version)) {
         byVersion.set(version, {
           version,
@@ -34,13 +48,12 @@ function CoreCard({ kind }: { kind: CoreKind }) {
       }
     }
     return [...byVersion.values()]
-  }, [entry.releases, entry.status])
+  }, [bundledVersion, entry.releases, entry.status])
 
   const latestStable = useMemo(
-    () => entry.releases.find((release) => !release.prerelease)?.version ?? null,
-    [entry.releases]
+    () => releases.find((release) => !release.prerelease)?.version ?? null,
+    [releases]
   )
-  const bundledVersion = entry.status?.bundled_version ?? null
   const activeManagedVersion = entry.status?.active_version ?? null
   const fallbackSelection = activeManagedVersion ?? latestStable ?? ""
   const [selectionOverride, setSelectionOverride] = useState<string | null>(null)
@@ -100,7 +113,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
           className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           aria-label={`${CORE_LABELS[kind]} version`}
         >
-          {!selected && <option value="">Choose version</option>}
+          {!selected && <option value="">Choose managed version</option>}
           {releases.map((release) => (
             <option key={release.version} value={release.version}>
               {release.version}
@@ -137,7 +150,7 @@ function CoreCard({ kind }: { kind: CoreKind }) {
 
       {latestStable && (
         <p className="mt-1.5 text-[10px] text-muted-foreground">
-          Latest stable: {latestStable}
+          Latest installable stable: {latestStable}
         </p>
       )}
       {bundledVersion && activeManagedVersion && (
