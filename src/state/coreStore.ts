@@ -30,6 +30,18 @@ const emptyEntry = (): CoreEntry => ({
   error: null,
 })
 
+function reconcileReleases(
+  releases: CoreRelease[],
+  status: CoreStatus
+): CoreRelease[] {
+  const installed = new Set(status.installed_versions)
+  return releases.map((release) => ({
+    ...release,
+    installed: installed.has(release.version),
+    active: status.active_version === release.version,
+  }))
+}
+
 // Keep one request per core so opening panels or clicking repeatedly never
 // duplicates local I/O or an online GitHub request.
 const localInFlight: Partial<Record<CoreKind, Promise<void>>> = {}
@@ -51,11 +63,17 @@ export const useCoreStore = create<CoreStore>((set, get) => {
   ): Promise<void> => {
     patchEntry(kind, { loading: true, error: null })
     try {
-      // Core mutation commands already return the authoritative post-mutation
-      // status. Consume it directly instead of issuing a second get_core_status
-      // IPC, which was both redundant and susceptible to an older in-flight read.
+      // Mutation commands return authoritative post-mutation status. Reconcile
+      // the cached release flags immediately so Install/Use/active labels never
+      // remain stale until the next online refresh.
       const status = await operation()
-      patchEntry(kind, { status, loading: false, loaded: true })
+      const releases = reconcileReleases(get().cores[kind].releases, status)
+      patchEntry(kind, {
+        status,
+        releases,
+        loading: false,
+        loaded: true,
+      })
     } catch (error) {
       patchEntry(kind, { loading: false, error: String(error) })
       throw error
@@ -78,11 +96,18 @@ export const useCoreStore = create<CoreStore>((set, get) => {
         patchEntry(kind, { loading: true, error: null })
         try {
           const status = await invoke<CoreStatus>("get_core_status", { kind })
-          patchEntry(kind, { status, loading: false, loaded: true })
-        } catch (error) {
           patchEntry(kind, {
+            status,
+            releases: reconcileReleases(get().cores[kind].releases, status),
             loading: false,
             loaded: true,
+          })
+        } catch (error) {
+          // A transient IPC or filesystem failure must remain retryable. Marking
+          // this as loaded used to make every later panel open a permanent no-op.
+          patchEntry(kind, {
+            loading: false,
+            loaded: false,
             error: String(error),
           })
         }
@@ -101,21 +126,27 @@ export const useCoreStore = create<CoreStore>((set, get) => {
       if (!force && get().cores[kind].onlineLoaded) return Promise.resolve()
 
       const request = (async () => {
-        await get().loadLocal(kind)
+        // A manual refresh must also retry local status. Otherwise a single
+        // startup IPC failure leaves the version selector without authoritative
+        // installed/active information for the rest of the process lifetime.
+        await get().loadLocal(kind, force)
         patchEntry(kind, { loading: true, error: null })
 
-        let releases: CoreRelease[] = []
+        let releases = get().cores[kind].releases
         let error: string | null = null
         try {
-          releases = await invoke<CoreRelease[]>("list_core_versions", { kind })
+          const fetched = await invoke<CoreRelease[]>("list_core_versions", { kind })
+          const status = get().cores[kind].status
+          releases = status ? reconcileReleases(fetched, status) : fetched
         } catch (releaseError) {
+          // Keep the last known list usable while offline instead of erasing it.
           error = `Online release list unavailable: ${String(releaseError)}`
         }
 
         patchEntry(kind, {
           releases,
           loading: false,
-          onlineLoaded: true,
+          onlineLoaded: error === null,
           error,
         })
       })()
