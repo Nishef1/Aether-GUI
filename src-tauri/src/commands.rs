@@ -27,7 +27,7 @@ pub fn connect(
 
     // A single system-TUN manager owns either Xray (default) or sing-box. Set
     // the selection from the exact profile before resolving binaries or UAC.
-    crate::singbox::set_tun_engine(profile.tun_engine.clone());
+    crate::singbox::set_tun_engine(profile.tun_engine);
 
     if profile.uses_tun() && !crate::is_admin() {
         // Resolve and verify all privileged-mode dependencies before UAC. The
