@@ -130,23 +130,27 @@ export const useCoreStore = create<CoreStore>((set, get) => {
         // startup IPC failure leaves the version selector without authoritative
         // installed/active information for the rest of the process lifetime.
         await get().loadLocal(kind, force)
-        patchEntry(kind, { loading: true, error: null })
+        const localError = get().cores[kind].status
+          ? null
+          : get().cores[kind].error
+        patchEntry(kind, { loading: true, error: localError })
 
         let releases = get().cores[kind].releases
-        let error: string | null = null
+        let releaseError: string | null = null
         try {
           const fetched = await invoke<CoreRelease[]>("list_core_versions", { kind })
           const status = get().cores[kind].status
           releases = status ? reconcileReleases(fetched, status) : fetched
-        } catch (releaseError) {
+        } catch (error) {
           // Keep the last known list usable while offline instead of erasing it.
-          error = `Online release list unavailable: ${String(releaseError)}`
+          releaseError = `Online release list unavailable: ${String(error)}`
         }
 
+        const error = [localError, releaseError].filter(Boolean).join(" · ") || null
         patchEntry(kind, {
           releases,
           loading: false,
-          onlineLoaded: error === null,
+          onlineLoaded: releaseError === null,
           error,
         })
       })()
