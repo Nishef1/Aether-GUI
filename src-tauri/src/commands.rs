@@ -112,7 +112,9 @@ pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
         std::process::exit(0);
     }
 
-    let _ = aether::profiles::take_pending_elevation_checked(&app);
+    // Elevation was cancelled, so this is best-effort cleanup. The wrapper logs
+    // a store failure without masking the cancellation error returned below.
+    let _ = aether::profiles::take_pending_elevation(&app);
     Err(AetherError::Internal(
         "administrator elevation was cancelled or failed".into(),
     ))
