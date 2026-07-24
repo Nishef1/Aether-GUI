@@ -18,12 +18,26 @@ function CoreCard({ kind }: { kind: CoreKind }) {
   const removeVersion = useCoreStore((state) => state.removeVersion)
   const connectionStatus = useConnectionStore((state) => state.status.state)
   const locked = connectionStatus !== "Idle" && connectionStatus !== "Error"
+  const bundledVersion = entry.status?.bundled_version ?? null
 
   const releases = useMemo(() => {
     const byVersion = new Map<string, CoreRelease>()
-    for (const release of entry.releases)
+    const installedVersions = new Set(entry.status?.installed_versions ?? [])
+
+    for (const release of entry.releases) {
+      // A bundled recovery binary is not a managed installation. Hide the same
+      // online tag unless the user has explicitly installed that version into
+      // the managed registry as well.
+      if (
+        release.version === bundledVersion &&
+        !installedVersions.has(release.version)
+      ) {
+        continue
+      }
       byVersion.set(release.version, release)
-    for (const version of entry.status?.installed_versions ?? []) {
+    }
+
+    for (const version of installedVersions) {
       if (!byVersion.has(version)) {
         byVersion.set(version, {
           version,
@@ -34,35 +48,27 @@ function CoreCard({ kind }: { kind: CoreKind }) {
       }
     }
     return [...byVersion.values()]
-  }, [entry.releases, entry.status])
+  }, [bundledVersion, entry.releases, entry.status])
 
   const latestStable = useMemo(
-    () => entry.releases.find((release) => !release.prerelease)?.version ?? null,
-    [entry.releases]
+    () => releases.find((release) => !release.prerelease)?.version ?? null,
+    [releases]
   )
-  const bundledVersion = entry.status?.bundled_version ?? null
-  const fallbackSelection =
-    entry.status?.active_version ?? bundledVersion ?? latestStable ?? ""
+  const activeManagedVersion = entry.status?.active_version ?? null
+  const fallbackSelection = activeManagedVersion ?? latestStable ?? ""
   const [selectionOverride, setSelectionOverride] = useState<string | null>(null)
   const selected =
-    selectionOverride &&
-    (selectionOverride === bundledVersion ||
-      releases.some((release) => release.version === selectionOverride))
+    selectionOverride && releases.some((release) => release.version === selectionOverride)
       ? selectionOverride
       : fallbackSelection
 
   const selectedRelease = releases.find((release) => release.version === selected)
-  const installed =
-    selectedRelease?.installed ??
-    entry.status?.installed_versions.includes(selected) ??
-    false
-  const bundledSelected = Boolean(
-    bundledVersion && selected === bundledVersion && !installed
-  )
-  const active = entry.status?.active_version === selected
+  const installed = entry.status
+    ? entry.status.installed_versions.includes(selected)
+    : (selectedRelease?.installed ?? false)
+  const active = activeManagedVersion === selected
 
   const useSelectedVersion = () => {
-    if (bundledSelected) return
     const action = installed ? selectVersion : installAndUse
     void action(kind, selected).catch(() => {
       // The store preserves the message in entry.error for inline display.
@@ -81,10 +87,10 @@ function CoreCard({ kind }: { kind: CoreKind }) {
         <div>
           <p className="text-xs font-medium text-foreground">{CORE_LABELS[kind]}</p>
           <p className="text-[10px] text-muted-foreground">
-            {entry.status?.active_version
-              ? `Active managed: ${entry.status.active_version}`
+            {activeManagedVersion
+              ? `Active managed: ${activeManagedVersion}`
               : bundledVersion
-                ? `Bundled baseline: ${bundledVersion}`
+                ? `Active bundled fallback: ${bundledVersion}`
                 : "No bundled or managed core detected"}
           </p>
         </div>
@@ -107,45 +113,33 @@ function CoreCard({ kind }: { kind: CoreKind }) {
           className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           aria-label={`${CORE_LABELS[kind]} version`}
         >
-          {!selected && <option value="">Choose version</option>}
-          {bundledVersion && (
-            <option value={bundledVersion}>{bundledVersion} — bundled baseline</option>
-          )}
-          {releases
-            .filter((release) => release.version !== bundledVersion)
-            .map((release) => (
-              <option key={release.version} value={release.version}>
-                {release.version}
-                {release.prerelease ? " (pre-release)" : ""}
-                {release.active
-                  ? " — active"
-                  : release.installed
-                    ? " — installed"
-                    : ""}
-              </option>
-            ))}
+          {!selected && <option value="">Choose managed version</option>}
+          {releases.map((release) => (
+            <option key={release.version} value={release.version}>
+              {release.version}
+              {release.prerelease ? " (pre-release)" : ""}
+              {release.active
+                ? " — active"
+                : release.installed
+                  ? " — installed"
+                  : ""}
+            </option>
+          ))}
         </select>
 
         <button
           type="button"
-          disabled={!selected || bundledSelected || active || entry.loading || locked}
+          disabled={!selected || active || entry.loading || locked}
           onClick={useSelectedVersion}
           className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
         >
           <Download size={13} />
-          {bundledSelected ? "Bundled" : installed ? "Use" : "Install"}
+          {installed ? "Use" : "Install"}
         </button>
 
         <button
           type="button"
-          disabled={
-            !selected ||
-            bundledSelected ||
-            !installed ||
-            active ||
-            entry.loading ||
-            locked
-          }
+          disabled={!selected || !installed || active || entry.loading || locked}
           onClick={removeSelectedVersion}
           className="rounded-md p-1.5 text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-30"
           aria-label={`Remove ${CORE_LABELS[kind]} ${selected}`}
@@ -156,11 +150,18 @@ function CoreCard({ kind }: { kind: CoreKind }) {
 
       {latestStable && (
         <p className="mt-1.5 text-[10px] text-muted-foreground">
-          Latest stable: {latestStable}
+          Latest installable stable: {latestStable}
+        </p>
+      )}
+      {bundledVersion && activeManagedVersion && (
+        <p className="mt-1 text-[10px] text-muted-foreground">
+          Bundled recovery fallback: {bundledVersion}
         </p>
       )}
       {entry.error && (
-        <p className="mt-1.5 text-[10px] text-destructive">{entry.error}</p>
+        <p className="mt-1.5 text-[10px] text-destructive" role="status">
+          {entry.error}
+        </p>
       )}
       {locked && (
         <p className="mt-1.5 text-[10px] text-muted-foreground">
@@ -172,11 +173,17 @@ function CoreCard({ kind }: { kind: CoreKind }) {
 }
 
 export function CoreManagerPanel() {
-  const loadAll = useCoreStore((state) => state.loadAll)
+  const refresh = useCoreStore((state) => state.refresh)
 
   useEffect(() => {
-    void loadAll()
-  }, [loadAll])
+    // Opening Settings should populate release selectors without requiring three
+    // separate refresh clicks. Cached local data remains visible when offline.
+    void Promise.all([
+      refresh("aether"),
+      refresh("xray"),
+      refresh("singbox"),
+    ])
+  }, [refresh])
 
   return (
     <div className="flex flex-col gap-2">

@@ -36,7 +36,7 @@ pub fn connect(
         // extra console window, including debug builds launched by `tauri dev`.
         let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
         let _ = crate::singbox::ensure_binary(&app)?;
-        aether::profiles::save_pending_elevation(&app, &profile);
+        aether::profiles::save_pending_elevation_checked(&app, &profile)?;
         return Err(AetherError::ElevationRequired);
     }
 
@@ -64,18 +64,19 @@ pub fn get_default_profile(app: AppHandle) -> ConnectionProfile {
 }
 
 #[tauri::command]
-pub fn take_pending_elevation_profile(app: AppHandle) -> Option<ConnectionProfile> {
+pub fn take_pending_elevation_profile(
+    app: AppHandle,
+) -> Result<Option<ConnectionProfile>, AetherError> {
     if crate::is_admin() {
-        aether::profiles::take_pending_elevation(&app)
+        aether::profiles::take_pending_elevation_checked(&app)
     } else {
-        None
+        Ok(None)
     }
 }
 
 #[tauri::command]
 pub fn set_default_profile(app: AppHandle, profile: ConnectionProfile) -> Result<(), AetherError> {
-    aether::profiles::save(&app, &profile.sanitized());
-    Ok(())
+    aether::profiles::save_checked(&app, &profile.sanitized())
 }
 
 #[tauri::command]
@@ -84,8 +85,8 @@ pub fn get_close_to_tray() -> bool {
 }
 
 #[tauri::command]
-pub fn set_close_to_tray(app: AppHandle, enabled: bool) {
-    tray::set_close_to_tray(&app, enabled);
+pub fn set_close_to_tray(app: AppHandle, enabled: bool) -> Result<(), AetherError> {
+    tray::set_close_to_tray(&app, enabled).map_err(AetherError::Internal)
 }
 
 #[tauri::command]
@@ -111,6 +112,8 @@ pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
         std::process::exit(0);
     }
 
+    // Elevation was cancelled, so this is best-effort cleanup. The wrapper logs
+    // a store failure without masking the cancellation error returned below.
     let _ = aether::profiles::take_pending_elevation(&app);
     Err(AetherError::Internal(
         "administrator elevation was cancelled or failed".into(),
