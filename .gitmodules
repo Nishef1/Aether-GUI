@@ -1,0 +1,4 @@
+[submodule "vendor/aether"]
+	path = vendor/aether
+	url = https://github.com/Nishef1/Aether.git
+	branch = main
