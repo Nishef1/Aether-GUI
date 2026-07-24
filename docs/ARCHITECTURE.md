@@ -11,16 +11,18 @@ Applications / OS traffic
         |
         | optional system-wide TUN
         v
-     sing-box
+Xray native TUN (default) or sing-box TUN (fallback)
         |
         v
 Aether local SOCKS5 (loopback only)
         |
         v
-Aether tunnel / upstream network
+Aether MASQUE / WireGuard / gool tunnel
 ```
 
-The GUI release lifecycle is independent from the Aether and sing-box release lifecycles.
+Aether owns protocol selection, gateway scanning, reconnects and the protected SOCKS endpoint. Xray and sing-box are system-routing adapters only.
+
+The GUI release lifecycle is independent from all external-core release lifecycles.
 
 ## Core Registry
 
@@ -35,7 +37,7 @@ Responsibilities:
 - allow upgrade and downgrade while disconnected;
 - keep installed versions usable offline;
 - refuse core installation while the GUI is elevated;
-- provide a bundled recovery binary when no managed binary is usable;
+- provide bundled recovery binaries when no managed binary is usable;
 - quarantine an Aether release that proves incompatible during early startup.
 
 Managed core layout:
@@ -47,14 +49,18 @@ app-data/
       active-version.txt
       rejected-version.txt
       aether-vX.Y.Z[.exe]
-      aether-vNext[.exe]
+    xray/
+      active-version.txt
+      xray-vX.Y.Z[.exe]
+      wintun.dll                  # Windows
     singbox/
       active-version.txt
       sing-box-vX.Y.Z[.exe]
-      sing-box-vNext[.exe]
+      wintun.dll                  # Windows
   tun/
+    xray-config.json
     singbox-config.json
-    singbox.pid
+    system-tun.pid
   logs/
     aether-gui.jsonl
     aether-gui.jsonl.1
@@ -62,33 +68,51 @@ app-data/
 
 Versioned binaries are never overwritten by switching versions. Selecting a version only changes the small active-version pointer while disconnected.
 
-The bundled binary is a safety recovery path, not a legacy API compatibility layer.
+Bundled binaries are safety recovery paths, not legacy API compatibility layers.
 
 ## Engine adapters
 
 Binary/version management and network-engine behavior are deliberately separate.
 
-- `src-tauri/src/aether/` owns Aether-specific launch arguments, PTY interaction, connection supervision and SOCKS readiness.
-- `src-tauri/src/singbox/` owns system-wide TUN configuration, sing-box process supervision and TUN health verification.
+- `src-tauri/src/aether/` owns Aether launch arguments, capability discovery, PTY interaction, connection supervision and SOCKS readiness.
+- `src-tauri/src/xray/` owns Xray native-TUN configuration and process launch primitives.
+- `src-tauri/src/singbox/config.rs` and `process.rs` own sing-box-specific configuration and process launch primitives.
+- `src-tauri/src/singbox/mod.rs` is the single system-TUN lifecycle owner. It selects exactly one adapter, validates it, supervises it, verifies the system path, and cleans up its PID.
 - `src-tauri/src/core_manager.rs` owns versions and binary selection only.
 
-A future Xray integration should follow the same boundary:
+The compatibility name `SingboxManager` remains internal while the module owns both engines; it must not be interpreted as two simultaneous TUN supervisors.
 
 ```text
 Core Registry
-  - Aether binary versions
-  - sing-box binary versions
-  - Xray binary versions (future)
+  - Aether versions
+  - Xray versions
+  - sing-box versions
 
-Engine adapters
-  - AetherAdapter
-  - XrayAdapter (future)
+Aether adapter
+  - protected loopback SOCKS
+  - MASQUE / WireGuard / gool
 
-System routing adapter
-  - sing-box TUN
+System TUN manager (one child only)
+  - Xray adapter (default)
+  - sing-box adapter (fallback)
 ```
 
-Do not add Xray by scattering `if core == xray` checks through Aether code. Add an Xray lifecycle/config adapter and register its binary descriptor in the shared Core Registry.
+Do not scatter `if engine == ...` checks through Aether lifecycle code. Engine selection belongs at the system-TUN boundary.
+
+## Profile and elevation boundary
+
+`ConnectionProfile` persists `tun_engine` with Xray as the migration-safe default.
+
+For a TUN connection:
+
+1. the normal process loads and sanitizes the exact profile;
+2. it records the selected TUN engine;
+3. it resolves Aether and that engine before elevation;
+4. it stores a one-shot pending profile;
+5. the elevated copy consumes the same profile and resumes connection;
+6. no downloader or version mutation runs while elevated.
+
+Because the application supports one active connection, the selected engine is stored atomically before launch and remains fixed for that connection generation.
 
 ## No legacy compatibility branches
 
@@ -100,63 +124,54 @@ Allowed resilience mechanisms are:
 - verified side-by-side versions;
 - explicit user downgrade;
 - bundled recovery after a proven incompatible core release;
-- configuration validation before changing system routes.
+- configuration validation before changing system routes;
+- an explicit alternative TUN engine selected by the user.
 
 These are forward-compatibility and safety mechanisms, not support for obsolete internal implementations.
 
-When a new implementation replaces an old one, remove the old implementation and its aliases instead of maintaining two paths.
+When a new implementation replaces an old one, remove the old implementation and its aliases instead of maintaining two lifecycle owners.
 
 ## TUN safety
 
-Before sing-box changes system routes:
+Before the application reports system-wide protection:
 
-1. the selected sing-box binary must exist as a managed or bundled core;
-2. the generated configuration is validated with `sing-box check`;
-3. Aether's exact executable path is routed directly so versioned executable names cannot create a routing loop;
-4. sing-box itself is routed directly;
-5. automatic route creation and default-interface detection are enabled;
-6. strict routing is enabled;
-7. the TUN interface is dual-stack;
-8. the complete data path is verified after startup and periodically afterward.
+1. the selected Xray or sing-box binary must exist as a managed or bundled core;
+2. the generated configuration must pass the engine's native validation command;
+3. the exact Aether executable path must bypass the TUN so the outer Cloudflare connection cannot recurse into Aether SOCKS;
+4. the selected TUN process must bypass its own interface;
+5. automatic route creation and outbound-interface detection must be enabled;
+6. the interface must be dual-stack;
+7. Windows DNS must be assigned to the TUN path when the selected engine supports it;
+8. the complete data path must be verified after startup and periodically afterward.
 
-For every IP family that has usable system egress, the direct system probe must match the egress observed through Aether's SOCKS path. Public IP values are compared in memory and are not persisted in diagnostics.
+For every address family that has usable system egress, the direct system probe must correlate with the egress observed through Aether's SOCKS path. Public IP values are compared in memory and are not persisted in diagnostics.
 
 The SOCKS listener is loopback-only because the upstream proxy endpoint does not provide GUI-managed proxy authentication.
 
+### Why Xray is the Windows default
+
+The sing-box v1.13 fallback can create routes and hijack port 53 internally, but it does not reliably assign Windows interface DNS in every environment. With strict routing, Windows may continue querying an unavailable physical-interface resolver and the system probe stalls at hostname resolution.
+
+Xray's native TUN settings expose `gateway`, `dns`, `autoSystemRoutingTable`, and `autoOutboundsInterface`, allowing the adapter to configure the Windows Wintun interface and DNS path as one validated unit.
+
 ## Process and memory ownership
 
-Every child process is owned by a manager object.
+Every child process is owned by one manager object.
 
-- sing-box stdout and stderr are drained for the full process lifetime;
+- only one Xray or sing-box system-TUN process can be active;
+- TUN stdout and stderr are drained for the full process lifetime;
 - Aether PTY output is drained by one bounded reader loop;
-- Aether forced termination performs kill plus process reaping;
-- sing-box forced termination performs kill plus wait;
+- forced termination performs kill plus process reaping;
 - reconnect attempts are bounded;
-- live frontend logs retain only the latest 500 entries;
-- partial PTY input is capped at 16 KiB;
+- live frontend logs are bounded;
+- partial PTY input is capped;
 - orphan cleanup validates saved PID plus expected executable identity before force-killing anything.
 
 Never kill processes globally by image name.
 
-## Privilege boundary
-
-Normal proxy-only operation is non-elevated.
-
-For TUN:
-
-1. required verified core binaries are prepared before elevation;
-2. a one-shot pending connection profile is saved;
-3. the GUI relaunches with platform elevation;
-4. the elevated process uses already-installed binaries;
-5. core installation/version changes are rejected while elevated.
-
-Long term, a dedicated minimal privileged helper would provide an even smaller privilege surface than relaunching the complete Tauri process. Until that migration is implemented, no downloader or updater is allowed to run in the elevated path.
-
 ## Diagnostics privacy
 
-Persistent JSONL diagnostics rotate at approximately 5 MiB.
-
-Before writing to disk:
+Before writing diagnostics to disk:
 
 - obvious credentials and tokens are replaced with a redacted marker;
 - the user's home/profile directory is replaced with `~`;
@@ -166,10 +181,11 @@ Before writing to disk:
 
 Keep the desktop control plane small:
 
-- do not add a second networking stack when system tools and small verified installers are sufficient;
+- do not reimplement Aether's network protocols;
+- do not run Xray and sing-box simultaneously;
 - do not duplicate core updater implementations;
 - keep the React live-log buffer bounded;
 - pause decorative motion while the window is unfocused;
-- prefer one shared Core Registry over per-engine download frameworks.
+- prefer one shared Core Registry and one system-TUN lifecycle owner.
 
 New dependencies must justify their binary-size and startup-cost impact.
