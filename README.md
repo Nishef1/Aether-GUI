@@ -7,15 +7,15 @@
 
 **English** · [فارسی](README_fa.md)
 
-Aether-GUI is a lightweight desktop control plane around the real [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) core. It can optionally place a supervised [sing-box](https://github.com/SagerNet/sing-box) TUN layer above Aether's local SOCKS5 endpoint for system-wide routing.
+Aether-GUI is a lightweight desktop control plane around the real [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) core. For system-wide routing it can place either a native [Xray-core](https://github.com/XTLS/Xray-core) TUN layer (recommended on Windows) or a supervised [sing-box](https://github.com/SagerNet/sing-box) fallback above Aether's local SOCKS5 endpoint.
 
-The GUI, Aether core, and sing-box core have independent version lifecycles.
+The GUI, Aether core, Xray core, and sing-box core have independent version lifecycles.
 
 ## Core management
 
 Open **Settings → Core management** to manage external core versions.
 
-For both Aether and sing-box you can:
+For Aether, Xray, and sing-box you can:
 
 - inspect available GitHub releases;
 - install versions side-by-side;
@@ -49,26 +49,27 @@ System-wide mode:
 ```text
 OS traffic
    ↓
-sing-box TUN
+Xray native TUN (default) or sing-box TUN (fallback)
    ↓
 Aether SOCKS5 on loopback
    ↓
-Aether tunnel
+Aether MASQUE / WireGuard / gool tunnel
    ↓
 Internet
 ```
+
+Xray and sing-box are system-routing adapters. Aether remains the network core that owns MASQUE, WireGuard, gool, gateway scanning, reconnects, and the protected SOCKS endpoint.
 
 ## TUN safety
 
 Before system routes are considered protected:
 
-- the selected sing-box executable must pass `sing-box check` against the generated configuration;
+- the selected TUN executable must pass its native configuration validation command;
 - Aether's exact versioned executable path is bypassed from the TUN to prevent routing loops;
-- sing-box itself is bypassed from its own TUN;
+- the selected TUN core is bypassed from its own interface;
 - automatic route creation and default-interface detection are enabled;
-- strict routing is enabled;
 - the TUN interface is dual-stack;
-- DNS on port 53 is hijacked into sing-box's DNS module and resolved through the protected Aether path;
+- Xray configures interface DNS on Windows; sing-box remains available as a compatibility fallback;
 - IPv4 and IPv6 system paths are verified against the protected Aether/WARP data path without persisting public IP values;
 - repeated data-plane failures tear down the broken chain instead of leaving a false Connected state.
 
@@ -76,10 +77,10 @@ The SOCKS listener is deliberately loopback-only.
 
 ## Process and diagnostics safety
 
-- Aether and sing-box processes are supervised as owned child processes.
-- No global kill-by-image-name behavior is used.
+- Aether and the selected TUN core are supervised as owned child processes.
+- Only one system TUN child can be active at a time.
 - stdout/stderr and PTY output are continuously drained.
-- forced Aether and sing-box termination reaps child processes.
+- forced Aether, Xray, and sing-box termination reaps child processes.
 - reconnect attempts are bounded.
 - frontend live logs retain only the latest 200 entries and are rendered in a lightweight bounded viewer.
 - PTY partial input is bounded.
@@ -105,11 +106,19 @@ The tray icon reflects connection state at a glance:
 
 ## Updates and releases
 
-Aether-GUI ships a tested baseline Aether core and sing-box/Wintun resources inside the desktop bundle, while newer managed core versions remain independently installable.
+Aether-GUI ships tested baseline Aether, Xray, sing-box and Wintun resources inside the desktop bundle, while newer managed core versions remain independently installable.
+
+The current tested Windows baseline is:
+
+- Aether v1.4.0;
+- Xray-core v26.5.9;
+- sing-box v1.13.14;
+- Wintun 0.14.1.
 
 The title bar checks for:
 
 - stable Aether core updates;
+- stable Xray core updates;
 - stable sing-box core updates;
 - newer stable Aether-GUI GitHub Releases.
 
@@ -121,7 +130,7 @@ See [`docs/RELEASING.md`](docs/RELEASING.md) for the release model, signing guid
 
 See:
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Core Registry, engine boundaries, TUN safety, future Xray integration.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Core Registry, engine boundaries, TUN safety, and Xray integration.
 - [`docs/UPSTREAM.md`](docs/UPSTREAM.md) — how to consume future changes from `MatinSenPai/Aether-GUI` safely.
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — beginner-friendly Windows build, run, test, upgrade and downgrade instructions.
 - [`docs/RELEASING.md`](docs/RELEASING.md) — bundled cores, NSIS distribution, app/core update strategy and release checklist.
@@ -130,19 +139,20 @@ The central rule is:
 
 ```text
 Core Registry = binary/version management
-Aether adapter = Aether lifecycle and SOCKS connection
-sing-box adapter = system-wide TUN lifecycle
-future Xray adapter = Xray-specific lifecycle/config
+Aether adapter = protected SOCKS lifecycle and network protocols
+System TUN manager = exactly one selected routing engine
+Xray adapter = recommended native TUN lifecycle/config
+sing-box adapter = compatibility TUN lifecycle/config
 ```
 
-Do not duplicate one updater per engine and do not couple the GUI version to a fixed Aether release.
+Do not duplicate one updater per engine and do not couple the GUI version to a fixed external-core release.
 
 ## Development on Windows
 
 Prerequisites:
 
 - Rust via rustup
-- Node.js
+- Node.js 24 LTS
 - pnpm
 - Microsoft C++ Build Tools with **Desktop development with C++**
 - WebView2 Runtime when not already installed
@@ -193,10 +203,11 @@ The raw executable is not the preferred standalone distribution artifact because
 ## Upstream projects
 
 - Network core: [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether)
+- Recommended native TUN engine: [XTLS/Xray-core](https://github.com/XTLS/Xray-core)
+- Fallback TUN engine: [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
 - Original GUI upstream: [MatinSenPai/Aether-GUI](https://github.com/MatinSenPai/Aether-GUI)
-- TUN engine: [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
 
-GUI upstream changes are integrated through normal Git review/merge/cherry-pick. Aether and sing-box release versions are managed independently by the runtime Core Registry.
+GUI upstream changes are integrated through normal Git review/merge/cherry-pick. Aether, Xray, and sing-box release versions are managed independently by the runtime Core Registry.
 
 ## License
 
