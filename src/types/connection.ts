@@ -44,6 +44,14 @@ export interface TrafficStats {
   sent_bytes: number
 }
 
+export interface RuntimeTelemetry extends TrafficStats {
+  public_ip: string | null
+  country_code: string | null
+  latency_ms: number | null
+  sampled_at_ms: number
+  egress_probe_complete: boolean
+}
+
 export interface LogLine {
   line: string
   timestamp: number
