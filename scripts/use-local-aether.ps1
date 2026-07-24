@@ -7,12 +7,101 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+function Require-Command {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$InstallHint
+    )
+
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if (-not $command) {
+        throw "$Name is required but was not found. $InstallHint"
+    }
+    return $command.Source
+}
+
+function Find-CMake {
+    $command = Get-Command "cmake.exe" -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    if (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        $candidates.Add((Join-Path $env:ProgramFiles "CMake\bin\cmake.exe"))
+    }
+
+    $vswhere = $null
+    if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) {
+        $vswhereCandidate = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+        if (Test-Path $vswhereCandidate) {
+            $vswhere = $vswhereCandidate
+        }
+    }
+
+    if ($vswhere) {
+        $installations = @(
+            & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.CMake.Project -property installationPath 2>$null
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+        foreach ($installation in $installations) {
+            $candidates.Add((Join-Path $installation.Trim() "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"))
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        foreach ($edition in @("Community", "Professional", "Enterprise", "BuildTools")) {
+            $candidates.Add((Join-Path $env:ProgramFiles "Microsoft Visual Studio\2022\$edition\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"))
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+
+    return $null
+}
+
+function Prepare-NativeBuildTools {
+    Require-Command -Name "git.exe" -InstallHint "Install Git for Windows and reopen the terminal." | Out-Null
+    Require-Command -Name "cargo.exe" -InstallHint "Install Rust with rustup and reopen the terminal." | Out-Null
+
+    $cmake = Find-CMake
+    if (-not $cmake) {
+        throw @"
+CMake is required to build Aether's BoringSSL dependency but was not found.
+Install it once, reopen the terminal, and run pnpm dev:custom again:
+
+  winget install --id Kitware.CMake -e --source winget
+
+Alternatively, open Visual Studio Installer and add:
+  Desktop development with C++
+  C++ CMake tools for Windows
+"@
+    }
+
+    $cmakeDir = Split-Path $cmake -Parent
+    if (($env:PATH -split ';') -notcontains $cmakeDir) {
+        $env:PATH = "$cmakeDir;$env:PATH"
+    }
+
+    $cmakeVersion = (& $cmake --version | Select-Object -First 1)
+    Write-Host "[local-core] Using $cmakeVersion from $cmake"
+}
+
 $GuiRoot = Split-Path $PSScriptRoot -Parent
 $UsingBundledSubmodule = [string]::IsNullOrWhiteSpace($AetherRepo)
 if ($UsingBundledSubmodule) {
     $AetherRepo = Join-Path $GuiRoot "vendor\aether"
 }
 $AetherRepo = [System.IO.Path]::GetFullPath($AetherRepo)
+
+if (-not $SkipBuild) {
+    Prepare-NativeBuildTools
+}
 
 $Manifest = Join-Path $AetherRepo "aether\Cargo.toml"
 if ($UsingBundledSubmodule -and -not (Test-Path $Manifest)) {
