@@ -70,7 +70,7 @@ fn reset_session(app: &AppHandle, raw_traffic: TrafficStats) {
     emit_snapshot(app, snapshot);
 }
 
-fn close_session() {
+fn invalidate_probe() {
     SESSION_TOKEN.fetch_add(1, Ordering::SeqCst);
 }
 
@@ -141,7 +141,8 @@ fn spawn_egress_probe(app: AppHandle, token: u64, socks_addr: String) {
 pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
     std::thread::spawn(move || {
         let mut session_open = false;
-        let mut next_probe = Instant::now();
+        let mut was_connected = false;
+        let mut next_probe: Option<Instant> = None;
 
         loop {
             let status = match manager.lock() {
@@ -168,7 +169,8 @@ pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
 
             if terminal && session_open {
                 session_open = false;
-                close_session();
+                invalidate_probe();
+                next_probe = None;
             }
 
             if connected {
@@ -180,7 +182,14 @@ pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
                         TrafficStats::default()
                     };
                     reset_session(&app, raw);
-                    next_probe = Instant::now();
+                    next_probe = None;
+                } else if !was_connected && tunneled {
+                    // Automatic reconnect can recreate the TUN interface and reset
+                    // its OS counters. Preserve accumulated session totals while
+                    // rebasing the raw counter used for future deltas.
+                    if let Ok(mut state) = telemetry_state().lock() {
+                        state.last_raw_traffic = traffic::current();
+                    }
                 }
 
                 if tunneled {
@@ -189,13 +198,26 @@ pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
                     touch_clock(&app);
                 }
 
-                if Instant::now() >= next_probe {
-                    next_probe = Instant::now() + PROBE_INTERVAL;
+                let now = Instant::now();
+                let should_probe = next_probe
+                    .map(|deadline| now >= deadline)
+                    .unwrap_or(true);
+                if should_probe {
+                    next_probe = Some(now + PROBE_INTERVAL);
                     if let Some(socks_addr) = socks_addr {
                         let token = SESSION_TOKEN.load(Ordering::SeqCst);
                         spawn_egress_probe(app.clone(), token, socks_addr);
                     }
                 }
+                was_connected = true;
+            } else {
+                if was_connected && !terminal {
+                    // Reject a late result from the route that just failed. The
+                    // first connected sample after recovery starts a fresh probe.
+                    invalidate_probe();
+                    next_probe = None;
+                }
+                was_connected = false;
             }
 
             std::thread::sleep(SAMPLE_INTERVAL);
