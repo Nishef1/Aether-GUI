@@ -9,6 +9,7 @@ mod events;
 mod focus;
 mod singbox;
 mod state;
+mod telemetry;
 mod traffic;
 mod tray;
 mod xray;
@@ -124,6 +125,8 @@ fn main() {
 
             aether::orphan::reap_orphan(&data_dir);
             singbox::reap_orphan(app.handle());
+            let state = app.state::<AppState>();
+            telemetry::spawn_watcher(app.handle().clone(), state.manager.clone());
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
             if let Some(window) = app.get_webview_window("main") {
@@ -152,6 +155,7 @@ fn main() {
             commands::elevate,
             commands::get_tun_status,
             commands::get_traffic,
+            commands::get_runtime_telemetry,
             commands::list_core_versions,
             commands::get_core_status,
             commands::install_core_version,
