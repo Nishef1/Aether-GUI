@@ -2,7 +2,7 @@
 
 ## Distribution and update model
 
-The public Windows artifact is the NSIS Setup EXE under `src-tauri/target/release/bundle/nsis/`, never the raw Cargo executable. It contains Aether `v1.4.0`, Xray-core `v26.5.9`, sing-box `v1.13.14`, verified `wintun.dll`, `libcronet.dll` when supplied by the selected sing-box build, executable fallback aliases, installer helpers, and version metadata. The first launch therefore works offline.
+The public Windows artifact is the NSIS Setup EXE under `src-tauri/target/release/bundle/nsis/`, never the raw Cargo executable. The current candidate package contains Aether `v1.4.0`, Xray-core `v26.6.1`, sing-box `v1.13.14`, verified `wintun.dll`, `libcronet.dll` when supplied by the selected sing-box build, executable fallback aliases, installer helpers, and version metadata. Xray `v26.6.1` is the latest published upstream build but is currently marked pre-release; it must pass the Windows smoke matrix below before the application release is promoted. Xray `v26.3.27` remains the latest stable downgrade option.
 
 Core updates remain independent. The Core Registry verifies and installs exact versioned binaries side-by-side in AppData, switches its active pointer only after success, and keeps each bundled baseline as a recovery fallback.
 
@@ -56,15 +56,16 @@ The signed build emits `*-setup.exe` and `*-setup.exe.sig` in `src-tauri/target/
 1. Bump the same SemVer in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
 2. Run `pnpm validate`, `pnpm prepare:cores:windows`, and `pnpm verify:bundled-cores:windows`.
 3. Run the clean-machine TUN smoke matrix below before tagging.
-4. Commit, then push a matching tag such as `v0.5.3`.
-5. The single `release-windows` workflow runs only for tags or manual dispatch, verifies signing secrets, creates/updates a draft GitHub Release, and uploads the NSIS EXE, updater artifact/signature, and `latest.json`.
-6. Test the draft on a clean profile before publishing it as the latest stable release. Do not publish prereleases to this endpoint.
+4. If the Xray pre-release fails, select and pin the stable `v26.3.27` baseline before building the application release.
+5. Commit, then push a matching tag such as `v0.5.3`.
+6. The single `release-windows` workflow runs only for tags or manual dispatch, verifies signing secrets, creates/updates a draft GitHub Release, and uploads the NSIS EXE, updater artifact/signature, and `latest.json`.
+7. Test the draft on a clean profile before publishing it as the latest stable release. Do not publish prereleases to the application updater endpoint.
 
 ## Required Windows TUN smoke matrix
 
 Test on a clean Windows profile with no managed cores or old Wintun DLLs:
 
-1. Confirm the setup installs all four pinned baselines and Settings reports their exact versions.
+1. Confirm the setup installs all four pinned candidates and Settings reports their exact versions.
 2. Connect in Proxy mode with MASQUE HTTP/2 and verify the loopback SOCKS path.
 3. Connect in Tunnel mode with Xray and verify:
    - `xray run -test` succeeds before routes are accepted;
@@ -77,6 +78,7 @@ Test on a clean Windows profile with no managed cores or old Wintun DLLs:
 5. Repeat at least one run for Aether WireGuard and gool. Remember that these protocols are inside Aether; changing Xray versus sing-box only changes system routing above Aether SOCKS.
 6. Disconnect and confirm routes, DNS, adapter and owned child processes are removed.
 7. Force-close during TUN operation, relaunch, and confirm orphan cleanup only terminates the owned PID and never kills unrelated processes by image name.
+8. Benchmark the same large HTTPS transfer through MASQUE HTTP/2 and HTTP/3 where available, recording RTT, throughput, CPU and memory. Do not promote the build based only on a successful handshake.
 
 ## Manual application-update test plan
 
