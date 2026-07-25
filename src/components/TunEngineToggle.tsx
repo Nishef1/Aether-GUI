@@ -4,15 +4,15 @@ import { useConnectionStore } from "@/state/connectionStore"
 import type { TunEngine } from "@/types/connection"
 
 const LABELS: Record<TunEngine, string> = {
-  xray: "Xray",
   singbox: "sing-box",
+  xray: "Xray",
 }
 
 const DESCRIPTIONS: Record<TunEngine, string> = {
-  xray:
-    "Recommended on Windows. Uses Xray's native Wintun inbound, applies interface DNS, and routes system traffic into Aether's protected SOCKS path.",
   singbox:
-    "Compatibility fallback. The current 1.13 baseline can fail Windows DNS verification on some systems; use it only when Xray is incompatible.",
+    "Recommended on Windows. strict_route and DNS hijacking keep system DNS on Aether's protected path and provide the most consistent resolver behavior.",
+  xray:
+    "Compatibility option. Xray can route plaintext DNS through Aether, but its DNS outbound cannot transparently replace browser DoH, DoT, or DoQ providers.",
 }
 
 export function TunEngineToggle() {
