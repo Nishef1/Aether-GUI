@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
+    "android:init": "tauri android init",
+    "build:android:arm64": "tauri android build --apk --target aarch64 --split-per-abi",
     "core:aether": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-local-aether.ps1",
     "core:aether:local": "pnpm core:aether",
     "core:aether:bundle:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bundle-embedded-aether.ps1",
