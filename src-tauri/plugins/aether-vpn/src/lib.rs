@@ -16,7 +16,10 @@ pub enum Error {
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
 }
 
-fn serialize_mobile_protocol<S>(protocol: &str, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_mobile_protocol<S>(
+    protocol: &str,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
