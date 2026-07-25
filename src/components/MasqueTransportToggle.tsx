@@ -10,9 +10,9 @@ const LABELS: Record<Transport, string> = {
 };
 
 const DESCRIPTIONS: Record<Transport, string> = {
-  http3: "QUIC over UDP — fastest handshake, best on networks that don't interfere with UDP.",
+  http3: "QUIC over UDP — usually the fastest option when the network allows a healthy QUIC data path.",
   http2:
-    "TCP — looks like ordinary HTTPS. Use when UDP/QUIC is blocked or throttled by the network.",
+    "TLS over TCP — may connect where UDP or QUIC is blocked, throttled, or unstable, with potentially higher latency.",
 };
 
 /** Aether ≥1.2.0's MASQUE-only transport choice. Locked outside Idle/Error
