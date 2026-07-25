@@ -71,7 +71,8 @@ fn unix_current() -> TrafficStats {
             let values = values
                 .split_whitespace()
                 .map(str::parse::<u64>)
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?;
             Some(TrafficStats {
                 // /proc/net/dev has receive bytes at index 0 and transmit
                 // bytes at index 8.
