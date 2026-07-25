@@ -13,6 +13,7 @@ mod state;
 mod telemetry;
 mod traffic;
 mod tray;
+mod tun_helper;
 mod xray;
 
 use state::AppState;
@@ -111,6 +112,13 @@ fn install_panic_hook() {
 }
 
 fn main() {
+    // The elevated TUN helper is the same executable in a headless internal
+    // mode. Handle it before the single-instance guard and before Tauri creates
+    // a WebView so privilege elevation never replaces or flashes the GUI.
+    if let Some(exit_code) = tun_helper::run_if_requested() {
+        std::process::exit(exit_code);
+    }
+
     // Acquire ownership before touching PID files. Without this guard, launching
     // a second GUI could classify the first GUI's live Aether/TUN children as
     // orphans and terminate an otherwise healthy connection.
