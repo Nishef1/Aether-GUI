@@ -1,0 +1,149 @@
+name: Promote v0.5.2 to regular release once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/promote-release-once.yml
+
+permissions:
+  contents: write
+  statuses: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-22.04
+    env:
+      OLD_TAG: preview-v0.5.2-multiplatform
+      NEW_TAG: v0.5.2
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Mark promotion pending
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=pending \
+            -f context='release/promotion' \
+            -f description='Promoting v0.5.2 to a regular GitHub release' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Promote existing release without rebuilding
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$OLD_TAG" --jq '.id')"
+          old_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$OLD_TAG" --jq '.object.sha')"
+
+          if existing_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$NEW_TAG" --jq '.object.sha' 2>/dev/null)"; then
+            if [[ "$existing_sha" != "$old_sha" ]]; then
+              echo "Tag $NEW_TAG already exists at a different commit" >&2
+              exit 1
+            fi
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$NEW_TAG" \
+              -f sha="$old_sha"
+          fi
+
+          read -r -d '' body <<'EOF' || true
+          ## Aether-GUI v0.5.2
+
+          Desktop builds are available for:
+          - Windows x64 (`.exe` and `.msi`)
+          - Linux x64 (`.AppImage`, `.deb`, and `.rpm`)
+          - macOS Apple Silicon (`.dmg`)
+          - macOS Intel (`.dmg`)
+
+          The pinned custom Aether core, sing-box, and Xray resources are bundled with the application. SHA-256 checksum files are included for every platform.
+
+          ### Unsigned build notice
+          These builds are intentionally unsigned. Windows SmartScreen and macOS Gatekeeper may display security warnings. macOS packages use ad-hoc signing and are not notarized.
+          EOF
+
+          jq -n \
+            --arg tag "$NEW_TAG" \
+            --arg target "$old_sha" \
+            --arg name "Aether-GUI v0.5.2" \
+            --arg body "$body" \
+            '{tag_name:$tag,target_commitish:$target,name:$name,body:$body,draft:false,prerelease:false,make_latest:"true"}' \
+            > release-payload.json
+
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            --input release-payload.json
+
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$NEW_TAG" \
+            --jq 'select(.draft == false and .prerelease == false and .tag_name == "v0.5.2") | .html_url'
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$OLD_TAG" >/dev/null 2>&1; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$OLD_TAG"
+          fi
+
+      - name: Convert future workflow from preview to release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/build-preview.yml')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = {
+              'name: Build unsigned desktop previews': 'name: Build unsigned desktop release',
+              'group: unsigned-desktop-preview': 'group: unsigned-desktop-release',
+              'PREVIEW_TAG: preview-v0.5.2-multiplatform': 'RELEASE_TAG: v0.5.2',
+              'Prepare preview release': 'Prepare desktop release',
+              'Mark preview build pending': 'Mark release build pending',
+              "context='preview/multiplatform'": "context='release/multiplatform'",
+              'Unsigned desktop preview build is running': 'Unsigned desktop release build is running',
+              'Recreate preview release': 'Recreate desktop release',
+              '$PREVIEW_TAG': '$RELEASE_TAG',
+              '$env:PREVIEW_TAG': '$env:RELEASE_TAG',
+              '--title "Aether-GUI 0.5.2 unsigned multi-platform preview"': '--title "Aether-GUI v0.5.2"',
+              '--notes "Unsigned test builds from the pinned custom Aether core. Windows and macOS may show operating-system security warnings. These files are previews and are not used by the in-app updater."': '--notes "Unsigned desktop release built from the pinned custom Aether core. Windows SmartScreen and macOS Gatekeeper may display warnings. SHA-256 checksum files are included for every platform."',
+              'Publish Windows preview assets': 'Publish Windows release assets',
+              'Publish Unix preview assets': 'Publish Unix release assets',
+              'Finalize preview status': 'Finalize release status',
+              'All unsigned desktop preview builds succeeded': 'All unsigned desktop release builds succeeded',
+              'Unsigned desktop preview build was cancelled': 'Unsigned desktop release build was cancelled',
+              'One or more desktop preview builds failed': 'One or more desktop release builds failed',
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'missing expected workflow text: {old}')
+              text = text.replace(old, new)
+
+          lines = [line for line in text.splitlines() if line.strip() != '--prerelease \\']
+          path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/build-preview.yml
+          git commit -m 'build: publish regular multi-platform releases'
+          git push origin HEAD:main
+
+      - name: Mark promotion success
+        if: success()
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=success \
+            -f context='release/promotion' \
+            -f description='Aether-GUI v0.5.2 is now a regular latest release' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$NEW_TAG"
+
+      - name: Mark promotion failure
+        if: failure()
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=failure \
+            -f context='release/promotion' \
+            -f description='Could not promote v0.5.2 to a regular release' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
