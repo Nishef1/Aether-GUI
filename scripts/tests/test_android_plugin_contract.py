@@ -22,6 +22,7 @@ HEV_BRIDGE = (
     / "src-tauri/plugins/aether-vpn/android/src/main/java/HevTun2Socks.kt"
 )
 HEV_BUILD_SCRIPT = ROOT / "scripts/ci/build-hev-android.sh"
+KOTLIN_PREFLIGHT_SCRIPT = ROOT / "scripts/ci/test-android-plugin-kotlin.sh"
 WORKFLOW = ROOT / ".github/workflows/build-android-arm64.yml"
 
 
@@ -71,10 +72,23 @@ class AndroidPluginContractTest(unittest.TestCase):
         )
         self.assertIn("APP_ABI := arm64-v8a", build_script)
 
-    def test_workflow_has_real_kotlin_compile_preflight(self) -> None:
+    def test_workflow_runs_real_kotlin_compile_preflight(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn(":tauri-plugin-aether-vpn:compileDebugKotlin", workflow)
+        preflight = KOTLIN_PREFLIGHT_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "bash scripts/ci/test-android-plugin-kotlin.sh",
+            workflow,
+            "The workflow must execute the dedicated Kotlin compile preflight script.",
+        )
         self.assertIn("android-plugin-kotlin-preflight.log", workflow)
+        self.assertIn(
+            ":tauri-plugin-aether-vpn:compileDebugKotlin",
+            preflight,
+            "The preflight script must compile the custom Android plugin module.",
+        )
+        self.assertIn("--stacktrace", preflight)
+        self.assertIn("--warning-mode all", preflight)
 
 
 if __name__ == "__main__":
