@@ -92,6 +92,7 @@ pub fn run_if_requested() -> Option<i32> {
 
 #[cfg(windows)]
 pub struct ElevatedTunProcess {
+    helper_handle: isize,
     helper_pid: u32,
     core_pid: u32,
     paths: ControlPaths,
@@ -110,7 +111,7 @@ impl ElevatedTunProcess {
         if let Some(code) = self.exit_code {
             return Ok(Some(ExitStatus::from_raw(code)));
         }
-        if process_is_alive(self.helper_pid) {
+        if process_handle_is_alive(self.helper_handle) {
             return Ok(None);
         }
 
@@ -119,28 +120,38 @@ impl ElevatedTunProcess {
             .and_then(|value| value.trim().parse::<u32>().ok())
             .unwrap_or(1);
         self.exit_code = Some(code);
+        self.close_helper_handle();
         self.cleanup_control_dir();
         Ok(Some(ExitStatus::from_raw(code)))
     }
 
     pub fn kill(&mut self) {
         if self.exit_code.is_some() {
+            self.close_helper_handle();
             self.cleanup_control_dir();
             return;
         }
 
         let _ = fs::write(&self.paths.stop, b"stop");
         let deadline = Instant::now() + Duration::from_secs(10);
-        while process_is_alive(self.helper_pid) && Instant::now() < deadline {
+        while process_handle_is_alive(self.helper_handle) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        if !process_is_alive(self.helper_pid) {
+        if !process_handle_is_alive(self.helper_handle) {
             self.exit_code = fs::read_to_string(&self.paths.exit)
                 .ok()
                 .and_then(|value| value.trim().parse::<u32>().ok())
                 .or(Some(0));
+            self.close_helper_handle();
             self.cleanup_control_dir();
+        }
+    }
+
+    fn close_helper_handle(&mut self) {
+        if self.helper_handle != 0 {
+            close_process_handle(self.helper_handle);
+            self.helper_handle = 0;
         }
     }
 
@@ -155,6 +166,7 @@ impl Drop for ElevatedTunProcess {
         if self.exit_code.is_none() {
             let _ = fs::write(&self.paths.stop, b"stop");
         }
+        self.close_helper_handle();
     }
 }
 
@@ -191,16 +203,17 @@ pub fn spawn(
     fs::write(&paths.request, request_json)
         .map_err(|error| AetherError::Internal(format!("write TUN helper request: {error}")))?;
 
-    if !launch_elevated_helper(&paths.request) {
+    let Some(helper_handle) = launch_elevated_helper(&paths.request) else {
         let _ = fs::remove_dir_all(&paths.dir);
         return Err(AetherError::Internal(
             "administrator approval was cancelled or the TUN helper could not start".into(),
         ));
-    }
+    };
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let ready = loop {
         if let Ok(error) = fs::read_to_string(&paths.error) {
+            close_process_handle(helper_handle);
             let _ = fs::remove_dir_all(&paths.dir);
             return Err(AetherError::SpawnFailed(format!(
                 "elevated TUN helper failed: {}",
@@ -216,8 +229,16 @@ pub fn spawn(
                 }
             }
         }
+        if !process_handle_is_alive(helper_handle) {
+            let detail = fs::read_to_string(&paths.error)
+                .unwrap_or_else(|_| "the elevated TUN helper exited before readiness".into());
+            close_process_handle(helper_handle);
+            let _ = fs::remove_dir_all(&paths.dir);
+            return Err(AetherError::SpawnFailed(detail.trim().to_string()));
+        }
         if Instant::now() >= deadline {
             let _ = fs::write(&paths.stop, b"stop");
+            close_process_handle(helper_handle);
             return Err(AetherError::SpawnFailed(
                 "timed out waiting for the elevated TUN helper".into(),
             ));
@@ -228,12 +249,13 @@ pub fn spawn(
     spawn_log_tail(
         paths.stdout.clone(),
         "stdout",
-        ready.helper_pid,
+        helper_handle,
         log_tx.clone(),
     );
-    spawn_log_tail(paths.stderr.clone(), "stderr", ready.helper_pid, log_tx);
+    spawn_log_tail(paths.stderr.clone(), "stderr", helper_handle, log_tx);
 
     Ok(ElevatedTunProcess {
+        helper_handle,
         helper_pid: ready.helper_pid,
         core_pid: ready.core_pid,
         paths,
@@ -384,7 +406,9 @@ fn expected_core_name(engine: TunEngine, binary: &Path) -> bool {
     };
     let name = name.to_ascii_lowercase();
     match engine {
-        TunEngine::Xray => name == "xray.exe" || (name.starts_with("xray-v") && name.ends_with(".exe")),
+        TunEngine::Xray => {
+            name == "xray.exe" || (name.starts_with("xray-v") && name.ends_with(".exe"))
+        }
         TunEngine::Singbox => {
             name == "sing-box.exe" || (name.starts_with("sing-box-v") && name.ends_with(".exe"))
         }
@@ -414,13 +438,15 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String>
 }
 
 #[cfg(windows)]
-fn launch_elevated_helper(request_path: &Path) -> bool {
+fn launch_elevated_helper(request_path: &Path) -> Option<isize> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::Shell::{
+        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
     let Ok(exe) = std::env::current_exe() else {
-        return false;
+        return None;
     };
     let params = format!(
         "--tun-helper {}",
@@ -432,22 +458,27 @@ fn launch_elevated_helper(request_path: &Path) -> bool {
     params_wide.push(0);
     let verb: Vec<u16> = "runas\0".encode_utf16().collect();
 
-    let result = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            verb.as_ptr(),
-            exe_wide.as_ptr(),
-            params_wide.as_ptr(),
-            std::ptr::null(),
-            SW_HIDE,
-        )
-    };
-    result as isize > 32
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    info.lpVerb = verb.as_ptr();
+    info.lpFile = exe_wide.as_ptr();
+    info.lpParameters = params_wide.as_ptr();
+    info.nShow = SW_HIDE;
+
+    let launched = unsafe { ShellExecuteExW(&mut info) } != 0;
+    if !launched || info.hProcess.is_null() {
+        return None;
+    }
+    Some(info.hProcess as isize)
 }
 
 #[cfg(windows)]
 fn quote_windows_argument(value: &str) -> String {
-    if !value.chars().any(|character| character.is_whitespace() || character == '"') {
+    if !value
+        .chars()
+        .any(|character| character.is_whitespace() || character == '"')
+    {
         return value.to_string();
     }
 
@@ -474,6 +505,29 @@ fn quote_windows_argument(value: &str) -> String {
 }
 
 #[cfg(windows)]
+fn process_handle_is_alive(handle: isize) -> bool {
+    use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+
+    if handle == 0 {
+        return false;
+    }
+    let mut exit_code = 0u32;
+    let ok = unsafe { GetExitCodeProcess(handle as _, &mut exit_code) } != 0;
+    ok && exit_code == 259
+}
+
+#[cfg(windows)]
+fn close_process_handle(handle: isize) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+
+    if handle != 0 {
+        unsafe {
+            CloseHandle(handle as _);
+        }
+    }
+}
+
+#[cfg(windows)]
 fn process_is_alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
@@ -493,7 +547,7 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn spawn_log_tail(path: PathBuf, stream: &'static str, helper_pid: u32, tx: Sender<HelperLog>) {
+fn spawn_log_tail(path: PathBuf, stream: &'static str, helper_handle: isize, tx: Sender<HelperLog>) {
     std::thread::spawn(move || {
         let mut offset = 0u64;
         loop {
@@ -517,7 +571,7 @@ fn spawn_log_tail(path: PathBuf, stream: &'static str, helper_pid: u32, tx: Send
                 }
             }
 
-            if !process_is_alive(helper_pid) {
+            if !process_handle_is_alive(helper_handle) {
                 if let Ok(metadata) = fs::metadata(&path) {
                     if offset >= metadata.len() {
                         break;
@@ -540,6 +594,9 @@ mod tests {
     #[test]
     fn quotes_windows_arguments() {
         assert_eq!(quote_windows_argument("plain"), "plain");
-        assert_eq!(quote_windows_argument("C:\\Aether GUI\\request.json"), "\"C:\\Aether GUI\\request.json\"");
+        assert_eq!(
+            quote_windows_argument("C:\\Aether GUI\\request.json"),
+            "\"C:\\Aether GUI\\request.json\""
+        );
     }
 }
