@@ -50,6 +50,14 @@ jobs:
             git submodule status --recursive
           } | tee build-logs/build-context.txt
 
+      - name: Run Android plugin source contract tests
+        shell: bash
+        run: |
+          bash scripts/ci/run-with-diagnostics.sh \
+            "Run Android plugin source contract tests" \
+            "android-plugin-contract-tests.log" \
+            python3 scripts/tests/test_android_plugin_contract.py
+
       - name: Install native build prerequisites
         shell: bash
         run: |
@@ -169,6 +177,14 @@ jobs:
             "tauri-android-init.log" \
             pnpm tauri android init --ci --skip-targets-install
 
+      - name: Compile Android plugin Kotlin preflight
+        shell: bash
+        run: |
+          bash scripts/ci/run-with-diagnostics.sh \
+            "Compile Android plugin Kotlin preflight" \
+            "android-plugin-kotlin-preflight.log" \
+            bash scripts/ci/test-android-plugin-kotlin.sh
+
       - name: Force extracted native-library packaging
         shell: bash
         run: |
@@ -258,9 +274,9 @@ jobs:
           name: Aether-Android-build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: build-logs/**
           if-no-files-found: warn
-          retention-days: 14
 
       - name: Upload Android ARM64 APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Aether-Android-arm64-v8a
