@@ -1,0 +1,118 @@
+name: Diagnose Windows core build once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/diagnose-windows-core-once.yml
+
+permissions:
+  statuses: write
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Mark diagnostic pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh api --method POST "repos/$env:GITHUB_REPOSITORY/statuses/$env:GITHUB_SHA" `
+            -f state=pending -f context='preview/windows-core-diagnostic' `
+            -f description='Diagnosing Windows custom core build' `
+            -f target_url="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native tools
+        shell: pwsh
+        run: choco install nasm llvm cmake -y --no-progress
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Capture toolchain
+        shell: pwsh
+        run: |
+          @(
+            "=== PATH ==="
+            $env:PATH
+            "=== rustc ==="
+            (rustc --version 2>&1 | Out-String)
+            "=== cargo ==="
+            (cargo --version 2>&1 | Out-String)
+            "=== clang ==="
+            (clang --version 2>&1 | Out-String)
+            "=== cmake ==="
+            (cmake --version 2>&1 | Out-String)
+            "=== nasm ==="
+            (nasm -v 2>&1 | Out-String)
+          ) | Set-Content windows-core-diagnostics.log
+
+      - name: Build custom Windows core with captured output
+        id: build
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          & pnpm core:aether:bundle:windows *>&1 | Tee-Object -FilePath windows-core-build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
+      - name: Append staged files
+        if: always()
+        shell: pwsh
+        run: |
+          @(
+            "=== src-tauri/binaries ==="
+            (Get-ChildItem src-tauri/binaries -Force | Format-Table Name,Length,LastWriteTime -AutoSize | Out-String)
+            "=== disk ==="
+            (Get-PSDrive -PSProvider FileSystem | Format-Table Name,Used,Free,Root -AutoSize | Out-String)
+          ) | Add-Content windows-core-diagnostics.log
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-core-diagnostics
+          retention-days: 14
+          path: |
+            windows-core-build.log
+            windows-core-diagnostics.log
+
+      - name: Publish diagnostic status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        shell: pwsh
+        run: |
+          if ($env:BUILD_OUTCOME -eq 'success') {
+            $state = 'success'; $description = 'Windows custom core build succeeded'
+          } else {
+            $state = 'failure'; $description = 'Windows custom core build failed; diagnostics uploaded'
+          }
+          gh api --method POST "repos/$env:GITHUB_REPOSITORY/statuses/$env:GITHUB_SHA" `
+            -f state=$state -f context='preview/windows-core-diagnostic' `
+            -f description=$description `
+            -f target_url="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+
+      - name: Fail after preserving diagnostics
+        if: steps.build.outcome == 'failure'
+        shell: pwsh
+        run: exit 1
