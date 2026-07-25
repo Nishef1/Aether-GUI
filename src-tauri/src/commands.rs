@@ -67,7 +67,12 @@ pub fn get_default_profile(app: AppHandle) -> ConnectionProfile {
 pub fn take_pending_elevation_profile(
     app: AppHandle,
 ) -> Result<Option<ConnectionProfile>, AetherError> {
-    if crate::os_is_admin() {
+    if crate::tun_helper::is_supported() {
+        // Windows no longer replaces the GUI process. Remove any handoff left
+        // by an older build so a later elevated launch cannot auto-connect it.
+        let _ = aether::profiles::take_pending_elevation(&app);
+        Ok(None)
+    } else if crate::os_is_admin() {
         aether::profiles::take_pending_elevation_checked(&app)
     } else {
         Ok(None)
