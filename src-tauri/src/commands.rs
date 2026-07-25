@@ -29,11 +29,11 @@ pub fn connect(
     // the selection from the exact profile before resolving binaries or UAC.
     crate::singbox::set_tun_engine(profile.tun_engine);
 
+    // Windows elevates only the detached TUN helper, so the normal connection
+    // lifecycle can continue inside this GUI process. Other platforms retain
+    // the existing whole-app elevation fallback until they gain an equivalent
+    // privileged helper implementation.
     if profile.uses_tun() && !crate::is_admin() {
-        // Resolve and verify all privileged-mode dependencies before UAC. The
-        // elevated copy only launches already-installed cores and resumes the
-        // exact pending profile. Windows GUI-subsystem builds do not create an
-        // extra console window, including debug builds launched by `tauri dev`.
         let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
         let _ = crate::singbox::ensure_binary(&app)?;
         aether::profiles::save_pending_elevation_checked(&app, &profile)?;
@@ -67,7 +67,12 @@ pub fn get_default_profile(app: AppHandle) -> ConnectionProfile {
 pub fn take_pending_elevation_profile(
     app: AppHandle,
 ) -> Result<Option<ConnectionProfile>, AetherError> {
-    if crate::is_admin() {
+    if crate::tun_helper::is_supported() {
+        // Windows no longer replaces the GUI process. Remove any handoff left
+        // by an older build so a later elevated launch cannot auto-connect it.
+        let _ = aether::profiles::take_pending_elevation(&app);
+        Ok(None)
+    } else if crate::os_is_admin() {
         aether::profiles::take_pending_elevation_checked(&app)
     } else {
         Ok(None)
@@ -96,24 +101,21 @@ pub fn sync_tray_state(app: AppHandle, state: String) {
 
 #[tauri::command]
 pub fn get_is_elevated() -> bool {
-    crate::is_admin()
+    crate::os_is_admin()
 }
 
 #[tauri::command]
 pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
-    if crate::is_admin() {
+    if crate::os_is_admin() {
         return Ok(());
     }
 
-    // connect() has already verified dependencies and stored the exact profile
-    // selected by the user. Do not reload or overwrite it here: doing so could
-    // replace a pending Tunnel/Both selection with the last successful profile.
+    // Kept as a non-Windows fallback. Windows no longer reaches this command for
+    // Tunnel/Both because the detached helper owns the UAC boundary.
     if crate::relaunch_as_admin() {
         std::process::exit(0);
     }
 
-    // Elevation was cancelled, so this is best-effort cleanup. The wrapper logs
-    // a store failure without masking the cancellation error returned below.
     let _ = aether::profiles::take_pending_elevation(&app);
     Err(AetherError::Internal(
         "administrator elevation was cancelled or failed".into(),
@@ -166,12 +168,6 @@ pub fn get_core_status(app: AppHandle, kind: CoreKind) -> Result<CoreStatus, Aet
     let mut status = core_manager::status(&app, kind)?;
     let current = core_manager::current_info(&app, kind)?;
 
-    // A persisted managed-version pointer is not authoritative when its binary
-    // has disappeared or was quarantined. `current_info` resolves the same path
-    // the connection runtime will actually launch, so expose a managed active
-    // version only when the resolved source is genuinely managed. This also
-    // prevents bundled version metadata from masquerading as a usable core when
-    // the corresponding executable was not packaged.
     if current.source != "managed" {
         status.active_version = None;
     }
