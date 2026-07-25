@@ -10,22 +10,42 @@ pub struct ProcessLog {
     pub line: String,
 }
 
+enum SingboxProcessKind {
+    Local(Child),
+    #[cfg(windows)]
+    Elevated(crate::tun_helper::ElevatedTunProcess),
+}
+
 pub struct SingboxProcess {
-    child: Child,
+    inner: SingboxProcessKind,
 }
 
 impl SingboxProcess {
     pub fn pid(&self) -> u32 {
-        self.child.id()
+        match &self.inner {
+            SingboxProcessKind::Local(child) => child.id(),
+            #[cfg(windows)]
+            SingboxProcessKind::Elevated(process) => process.pid(),
+        }
     }
 
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        match &mut self.inner {
+            SingboxProcessKind::Local(child) => child.try_wait(),
+            #[cfg(windows)]
+            SingboxProcessKind::Elevated(process) => process.try_wait(),
+        }
     }
 
     pub fn kill(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        match &mut self.inner {
+            SingboxProcessKind::Local(child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            #[cfg(windows)]
+            SingboxProcessKind::Elevated(process) => process.kill(),
+        }
     }
 }
 
@@ -64,6 +84,30 @@ pub fn spawn(
     config_path: &Path,
     log_tx: Sender<ProcessLog>,
 ) -> Result<SingboxProcess, AetherError> {
+    #[cfg(windows)]
+    if crate::tun_helper::is_supported() && !crate::is_admin() {
+        let (helper_tx, helper_rx) =
+            std::sync::mpsc::channel::<crate::tun_helper::HelperLog>();
+        let forwarded = log_tx.clone();
+        std::thread::spawn(move || {
+            for log in helper_rx {
+                let _ = forwarded.send(ProcessLog {
+                    stream: log.stream,
+                    line: log.line,
+                });
+            }
+        });
+        let process = crate::tun_helper::spawn(
+            crate::aether::profiles::TunEngine::Singbox,
+            binary,
+            config_path,
+            helper_tx,
+        )?;
+        return Ok(SingboxProcess {
+            inner: SingboxProcessKind::Elevated(process),
+        });
+    }
+
     let mut command = Command::new(binary);
     command
         .arg("run")
@@ -102,5 +146,7 @@ pub fn spawn(
         });
     }
 
-    Ok(SingboxProcess { child })
+    Ok(SingboxProcess {
+        inner: SingboxProcessKind::Local(child),
+    })
 }
