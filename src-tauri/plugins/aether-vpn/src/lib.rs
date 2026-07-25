@@ -38,6 +38,7 @@ pub struct VpnStatus {
     pub state: String,
     pub message: Option<String>,
     pub socks_addr: Option<String>,
+    pub tun_addr: Option<String>,
     pub connected_at_ms: Option<u64>,
 }
 
