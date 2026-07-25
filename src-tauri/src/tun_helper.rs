@@ -1,21 +1,33 @@
+#[cfg(windows)]
 use crate::aether::profiles::TunEngine;
+#[cfg(windows)]
 use crate::error::AetherError;
+#[cfg(windows)]
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
 use std::fs;
+#[cfg(windows)]
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
+#[cfg(windows)]
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::ExitStatus;
+#[cfg(windows)]
 use std::sync::mpsc::Sender;
+#[cfg(windows)]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
 const APP_IDENTIFIER: &str = "com.cluvexstudio.aethergui";
 
+#[cfg(windows)]
 #[derive(Debug)]
 pub struct HelperLog {
     pub stream: &'static str,
     pub line: String,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Serialize, Deserialize)]
 struct HelperRequest {
     engine: TunEngine,
@@ -24,11 +36,13 @@ struct HelperRequest {
     parent_pid: u32,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Serialize, Deserialize)]
 struct HelperReady {
     core_pid: u32,
 }
 
+#[cfg(windows)]
 #[derive(Clone, Debug)]
 struct ControlPaths {
     dir: PathBuf,
@@ -41,6 +55,7 @@ struct ControlPaths {
     stderr: PathBuf,
 }
 
+#[cfg(windows)]
 impl ControlPaths {
     fn from_dir(dir: PathBuf) -> Self {
         Self {
@@ -414,11 +429,10 @@ fn binary_is_in_trusted_root(binary: &Path) -> Result<bool, String> {
 
     // `tauri dev` places the GUI under src-tauri/target/debug while local cores
     // live under src-tauri/binaries. Allow only that common src-tauri root.
-    let dev_root = exe.ancestors().find_map(|ancestor| {
-        (ancestor.file_name().and_then(|name| name.to_str()) == Some("target"))
-            .then(|| ancestor.parent())
-            .flatten()
-    });
+    let dev_root = exe
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().and_then(|name| name.to_str()) == Some("target"))
+        .and_then(Path::parent);
     Ok(dev_root.is_some_and(|root| binary.starts_with(root)))
 }
 
@@ -582,7 +596,12 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn spawn_log_tail(path: PathBuf, exit_path: PathBuf, stream: &'static str, tx: Sender<HelperLog>) {
+fn spawn_log_tail(
+    path: PathBuf,
+    exit_path: PathBuf,
+    stream: &'static str,
+    tx: Sender<HelperLog>,
+) {
     std::thread::spawn(move || {
         let mut offset = 0u64;
         loop {
@@ -651,8 +670,17 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn accepts_only_expected_core_names() {
-        assert!(expected_core_name(TunEngine::Xray, Path::new("xray-v26.6.1.exe")));
-        assert!(expected_core_name(TunEngine::Singbox, Path::new("sing-box.exe")));
-        assert!(!expected_core_name(TunEngine::Xray, Path::new("xray-helper.exe")));
+        assert!(expected_core_name(
+            TunEngine::Xray,
+            Path::new("xray-v26.6.1.exe")
+        ));
+        assert!(expected_core_name(
+            TunEngine::Singbox,
+            Path::new("sing-box.exe")
+        ));
+        assert!(!expected_core_name(
+            TunEngine::Xray,
+            Path::new("xray-helper.exe")
+        ));
     }
 }
