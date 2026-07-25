@@ -1,13 +1,48 @@
 import { createHash } from "node:crypto"
-import { existsSync, readFileSync, statSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 
 const root = process.cwd()
 const binaries = resolve(root, "src-tauri", "binaries")
+const embeddedAether = resolve(root, "vendor", "aether")
+
+let embeddedAetherCommit = ""
+let embeddedAetherDirtyState = ""
+try {
+  embeddedAetherCommit = execFileSync(
+    "git",
+    ["-C", embeddedAether, "rev-parse", "--short=12", "HEAD"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  ).trim()
+  embeddedAetherDirtyState = execFileSync(
+    "git",
+    ["-C", embeddedAether, "status", "--porcelain", "--untracked-files=all"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  ).trim()
+} catch (error) {
+  throw new Error(
+    `Could not inspect the pinned vendor/aether source: ${error instanceof Error ? error.message : String(error)}`
+  )
+}
+
+if (!/^[0-9a-f]{12}$/i.test(embeddedAetherCommit)) {
+  throw new Error(`Invalid embedded Aether commit identifier: ${embeddedAetherCommit}`)
+}
+if (embeddedAetherDirtyState) {
+  throw new Error(
+    "vendor/aether contains uncommitted changes; a distributable installer must match the committed submodule pointer exactly"
+  )
+}
+
+const expectedAetherVersion = `dev-${embeddedAetherCommit}`
+const safeAetherVersion = expectedAetherVersion.replace(/[^A-Za-z0-9._-]/g, "_")
+const versionedAetherBinary = `aether-${safeAetherVersion}.exe`
+
 const required = [
-  ["aether-v1.4.0.exe", null],
+  [versionedAetherBinary, null],
   ["aether.exe", null],
-  ["aether-version.txt", "v1.4.0"],
+  ["aether-version.txt", expectedAetherVersion],
   ["sing-box-v1.13.14.exe", null],
   ["sing-box.exe", null],
   ["sing-box-version.txt", "v1.13.14"],
@@ -42,11 +77,11 @@ const sha256 = (name) =>
 
 const aliasMismatches = []
 if (
-  existsSync(filePath("aether-v1.4.0.exe")) &&
+  existsSync(filePath(versionedAetherBinary)) &&
   existsSync(filePath("aether.exe")) &&
-  sha256("aether-v1.4.0.exe") !== sha256("aether.exe")
+  sha256(versionedAetherBinary) !== sha256("aether.exe")
 ) {
-  aliasMismatches.push("aether.exe must exactly match aether-v1.4.0.exe")
+  aliasMismatches.push(`aether.exe must exactly match ${versionedAetherBinary}`)
 }
 if (
   existsSync(filePath("sing-box-v1.13.14.exe")) &&
@@ -62,6 +97,13 @@ if (
 ) {
   aliasMismatches.push("xray.exe must exactly match xray-v26.6.1.exe")
 }
+
+const staleAetherCopies = existsSync(binaries)
+  ? readdirSync(binaries)
+      .filter((name) => /^aether-.*\.exe$/i.test(name))
+      .filter((name) => name !== versionedAetherBinary)
+      .map((name) => `stale bundled Aether binary must be removed: ${name}`)
+  : []
 
 const optionalCronet = filePath("libcronet.dll")
 if (existsSync(optionalCronet) && statSync(optionalCronet).size <= 0) {
@@ -90,6 +132,7 @@ const failures = [
   ...empty,
   ...incorrect,
   ...aliasMismatches,
+  ...staleAetherCopies,
   ...invalidMappings,
 ]
 
@@ -98,5 +141,5 @@ if (failures.length) {
 }
 
 console.log(
-  "Bundled Windows Aether, sing-box, Xray, Wintun, installer helpers, fallback aliases, and Tauri resource mappings match the pinned release contract."
+  `Bundled Windows Aether ${expectedAetherVersion} matches clean vendor/aether ${embeddedAetherCommit}; sing-box, Xray, Wintun, installer helpers, aliases, and Tauri resource mappings match the pinned release contract.`
 )

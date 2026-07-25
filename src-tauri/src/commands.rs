@@ -121,6 +121,22 @@ pub fn elevate(app: AppHandle) -> Result<(), AetherError> {
 }
 
 #[tauri::command]
+pub fn prepare_app_relaunch() {
+    crate::single_instance::release_for_handoff();
+}
+
+#[tauri::command]
+pub fn restore_instance_guard() -> Result<(), AetherError> {
+    if crate::single_instance::acquire() {
+        Ok(())
+    } else {
+        Err(AetherError::Internal(
+            "another Aether-GUI instance acquired the application lock".into(),
+        ))
+    }
+}
+
+#[tauri::command]
 pub fn get_tun_status(state: State<AppState>) -> bool {
     state.singbox.lock().unwrap().is_active()
 }

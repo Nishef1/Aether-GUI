@@ -26,10 +26,11 @@ fn no_window(command: &mut Command) {
 
 fn expected_aether_name(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
+    let versioned = name.starts_with("aether-v") || name.starts_with("aether-dev-");
     if cfg!(windows) {
-        name == "aether.exe" || (name.starts_with("aether-v") && name.ends_with(".exe"))
+        name == "aether.exe" || (versioned && name.ends_with(".exe"))
     } else {
-        name == "aether" || name.starts_with("aether-v")
+        name == "aether" || versioned
     }
 }
 
@@ -138,7 +139,13 @@ mod tests {
         } else {
             "aether-v1.3.0"
         }));
+        assert!(expected_aether_name(if cfg!(windows) {
+            "aether-dev-0123456789ab.exe"
+        } else {
+            "aether-dev-0123456789ab"
+        }));
         assert!(!expected_aether_name("not-aether.exe"));
+        assert!(!expected_aether_name("aether-malware.exe"));
         assert!(!expected_aether_name("aether-malware.txt"));
     }
 }

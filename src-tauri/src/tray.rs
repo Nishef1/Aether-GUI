@@ -1,4 +1,8 @@
+use crate::aether::AetherManager;
+use crate::state::ConnectionState;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -47,6 +51,20 @@ fn load_preference(app: &AppHandle) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
+}
+
+fn state_key(state: &ConnectionState) -> &'static str {
+    match state {
+        ConnectionState::Idle => "Idle",
+        ConnectionState::Launching => "Launching",
+        ConnectionState::Connecting => "Connecting",
+        ConnectionState::Connected { .. } => "Connected",
+        ConnectionState::StartingTunnel { .. } => "StartingTunnel",
+        ConnectionState::Tunneling { .. } => "Tunneling",
+        ConnectionState::Reconnecting { .. } => "Reconnecting",
+        ConnectionState::Disconnecting => "Disconnecting",
+        ConnectionState::Error { .. } => "Error",
+    }
 }
 
 fn visual_for_state(state: &str) -> ([u8; 3], &'static str) {
@@ -108,10 +126,9 @@ fn status_badged_icon(base: &Image<'_>, color: [u8; 3]) -> Image<'static> {
     Image::new_owned(rgba, base.width(), base.height())
 }
 
-/// Keep the tray as a compact, glanceable representation of the real connection
-/// state. The frontend calls this whenever it receives a backend status event;
-/// hidden-to-tray windows still keep their listeners alive, so the icon remains
-/// current without adding another state store in Rust.
+/// Update the compact tray representation. The native state watcher is the
+/// authoritative feed; the frontend command remains a best-effort fast path for
+/// UI-only failures such as a cancelled elevation prompt.
 pub fn set_visual_state(app: &AppHandle, state: &str) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
@@ -122,6 +139,26 @@ pub fn set_visual_state(app: &AppHandle, state: &str) {
     let (color, label) = visual_for_state(state);
     let _ = tray.set_icon(Some(status_badged_icon(base, color)));
     let _ = tray.set_tooltip(Some(format!("Aether-GUI — {label}")));
+}
+
+/// Keep tray status independent of WebView event delivery. Windows may throttle
+/// or suspend a hidden WebView, but the Rust connection manager remains live.
+pub fn spawn_state_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
+    std::thread::spawn(move || {
+        let mut last_state: Option<&'static str> = None;
+        loop {
+            let state = match manager.lock() {
+                Ok(manager) => manager.status(),
+                Err(_) => return,
+            };
+            let key = state_key(&state);
+            if last_state != Some(key) {
+                set_visual_state(&app, key);
+                last_state = Some(key);
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    });
 }
 
 /// Create the system-tray icon, menu, and event handlers. Call from `setup`.
@@ -161,10 +198,15 @@ pub fn init(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn show_window(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        // Windows can refuse a normal focus request from a tray callback. Pinning
+        // only for the focus transition mirrors the elevation-startup workaround
+        // without leaving the app permanently above other windows.
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_focus();
+        let _ = window.set_always_on_top(false);
     }
 }
 
@@ -186,5 +228,24 @@ mod tests {
         assert_eq!(visual_for_state("Connecting").1, "Working");
         assert_eq!(visual_for_state("Tunneling").1, "Connected");
         assert_eq!(visual_for_state("Error").1, "Connection error");
+    }
+
+    #[test]
+    fn native_state_keys_cover_structured_states() {
+        assert_eq!(state_key(&ConnectionState::Idle), "Idle");
+        assert_eq!(
+            state_key(&ConnectionState::Connected {
+                socks_addr: "127.0.0.1:1819".into(),
+                connected_at_ms: 1,
+            }),
+            "Connected"
+        );
+        assert_eq!(
+            state_key(&ConnectionState::Error {
+                message: "failure".into(),
+                phase: "test".into(),
+            }),
+            "Error"
+        );
     }
 }

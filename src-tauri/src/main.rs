@@ -8,6 +8,7 @@ mod error;
 mod events;
 mod focus;
 mod singbox;
+mod single_instance;
 mod state;
 mod telemetry;
 mod traffic;
@@ -36,6 +37,11 @@ pub(crate) fn relaunch_as_admin() -> bool {
     let mut exe_wide: Vec<u16> = exe.as_os_str().encode_wide().collect();
     exe_wide.push(0);
     let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+
+    // The elevated process is the intentional replacement instance. Release the
+    // guard immediately before ShellExecute and reacquire it if UAC is cancelled
+    // or process creation fails.
+    single_instance::release_for_handoff();
     let result = unsafe {
         ShellExecuteW(
             std::ptr::null_mut(),
@@ -46,7 +52,11 @@ pub(crate) fn relaunch_as_admin() -> bool {
             SW_SHOWNORMAL,
         )
     };
-    result as isize > 32
+    let launched = result as isize > 32;
+    if !launched {
+        let _ = single_instance::acquire();
+    }
+    launched
 }
 
 #[cfg(unix)]
@@ -101,6 +111,14 @@ fn install_panic_hook() {
 }
 
 fn main() {
+    // Acquire ownership before touching PID files. Without this guard, launching
+    // a second GUI could classify the first GUI's live Aether/TUN children as
+    // orphans and terminate an otherwise healthy connection.
+    if !single_instance::acquire() {
+        single_instance::activate_existing_window();
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -125,10 +143,11 @@ fn main() {
 
             aether::orphan::reap_orphan(&data_dir);
             singbox::reap_orphan(app.handle());
-            let state = app.state::<AppState>();
-            telemetry::spawn_watcher(app.handle().clone(), state.manager.clone());
+            let manager = app.state::<AppState>().manager.clone();
+            telemetry::spawn_watcher(app.handle().clone(), manager.clone());
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
+            tray::spawn_state_watcher(app.handle().clone(), manager);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
@@ -153,6 +172,8 @@ fn main() {
             commands::sync_tray_state,
             commands::get_is_elevated,
             commands::elevate,
+            commands::prepare_app_relaunch,
+            commands::restore_instance_guard,
             commands::get_tun_status,
             commands::get_traffic,
             commands::get_runtime_telemetry,

@@ -174,8 +174,11 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     disconnect: async () => {
       try {
         await invoke("disconnect")
-      } catch {
-        // Nothing to do if the backend is already idle.
+      } catch (error) {
+        const message = String(error)
+        if (!message.toLowerCase().includes("no active connection")) {
+          appendRuntimeLog(`[error:disconnecting] ${message}`)
+        }
       }
     },
 
@@ -250,6 +253,8 @@ let disposeConnectionRuntime: (() => void) | null = null
 async function initializeConnectionRuntime(): Promise<void> {
   let pendingLogs: LogLine[] = []
   let flushTimer: ReturnType<typeof setTimeout> | null = null
+  let statusEventReceived = false
+  const unlisteners: Array<() => void> = []
 
   const flushLogs = () => {
     flushTimer = null
@@ -268,51 +273,78 @@ async function initializeConnectionRuntime(): Promise<void> {
     }))
   }
 
-  const [unlistenStatus, unlistenLog] = await Promise.all([
-    listen<ConnectionStatus>("aether://status", (event) => {
-      useConnectionStore.setState({
-        status: event.payload,
-        ...(event.payload.state === "Launching" ? { scanBudgetSecs: null } : {}),
+  try {
+    unlisteners.push(
+      await listen<ConnectionStatus>("aether://status", (event) => {
+        statusEventReceived = true
+        useConnectionStore.setState({
+          status: event.payload,
+          ...(event.payload.state === "Launching" ? { scanBudgetSecs: null } : {}),
+        })
+        if (event.payload.state === "Error") {
+          appendRuntimeLog(
+            `[error:${event.payload.phase}] ${event.payload.message}`
+          )
+        }
+        syncTrayState(event.payload.state)
       })
-      if (event.payload.state === "Error") {
-        appendRuntimeLog(
-          `[error:${event.payload.phase}] ${event.payload.message}`
-        )
-      }
-      syncTrayState(event.payload.state)
-    }),
-    listen<LogLine>("aether://log", (event) => {
-      pendingLogs.push(event.payload)
-      if (pendingLogs.length > MAX_PENDING_LOG_LINES * 2) {
-        pendingLogs = pendingLogs.slice(-MAX_PENDING_LOG_LINES)
-      }
-      flushTimer ??= setTimeout(flushLogs, LOG_FLUSH_INTERVAL_MS)
-    }),
-  ])
+    )
+    unlisteners.push(
+      await listen<LogLine>("aether://log", (event) => {
+        pendingLogs.push(event.payload)
+        if (pendingLogs.length > MAX_PENDING_LOG_LINES * 2) {
+          pendingLogs = pendingLogs.slice(-MAX_PENDING_LOG_LINES)
+        }
+        flushTimer ??= setTimeout(flushLogs, LOG_FLUSH_INTERVAL_MS)
+      })
+    )
+  } catch (error) {
+    unlisteners.forEach((unlisten) => unlisten())
+    if (flushTimer !== null) clearTimeout(flushTimer)
+    pendingLogs = []
+    throw error
+  }
 
   disposeConnectionRuntime = () => {
-    unlistenStatus()
-    unlistenLog()
+    unlisteners.forEach((unlisten) => unlisten())
     if (flushTimer !== null) clearTimeout(flushTimer)
     pendingLogs = []
   }
 
+  const initialProfileRevision = profileSaveRevision
   const [status, profile, pendingElevationProfile] = await Promise.all([
-    invoke<ConnectionStatus>("get_status"),
-    invoke<ConnectionProfile>("get_default_profile"),
-    invoke<ConnectionProfile | null>("take_pending_elevation_profile"),
+    invoke<ConnectionStatus>("get_status").catch((error) => {
+      appendRuntimeLog(`[error:reading-status] ${String(error)}`)
+      return useConnectionStore.getState().status
+    }),
+    invoke<ConnectionProfile>("get_default_profile").catch((error) => {
+      appendRuntimeLog(`[error:reading-profile] ${String(error)}`)
+      return useConnectionStore.getState().profile
+    }),
+    invoke<ConnectionProfile | null>("take_pending_elevation_profile").catch(
+      (error) => {
+        appendRuntimeLog(`[error:reading-elevation-profile] ${String(error)}`)
+        return null
+      }
+    ),
   ])
+
   const activeProfile = pendingElevationProfile ?? profile
-  useConnectionStore.setState({ status, profile: activeProfile })
-  if (status.state === "Error") {
+  useConnectionStore.setState({
+    ...(!statusEventReceived ? { status } : {}),
+    ...(pendingElevationProfile || initialProfileRevision === profileSaveRevision
+      ? { profile: activeProfile }
+      : {}),
+  })
+  if (!statusEventReceived && status.state === "Error") {
     appendRuntimeLog(`[error:${status.phase}] ${status.message}`)
   }
-  syncTrayState(status.state)
+  if (!statusEventReceived) syncTrayState(status.state)
 
   // A pending profile is a one-shot handoff created immediately before UAC.
   // Only the elevated process can consume it, so resuming here cannot turn a
   // normal app launch into an unexpected auto-connect.
-  if (pendingElevationProfile && status.state === "Idle") {
+  if (pendingElevationProfile && useConnectionStore.getState().status.state === "Idle") {
     queueMicrotask(() => void useConnectionStore.getState().connect())
   }
 }
@@ -327,6 +359,7 @@ export async function initConnectionListeners(): Promise<() => void> {
   connectionRuntimeInit ??= initializeConnectionRuntime().catch((error) => {
     connectionRuntimeInit = null
     console.error("Failed to initialize connection runtime:", error)
+    appendRuntimeLog(`[error:runtime-init] ${String(error)}`)
   })
   await connectionRuntimeInit
   return () => {}

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { check, type Update } from "@tauri-apps/plugin-updater"
 import { relaunch } from "@tauri-apps/plugin-process"
-import { Download, LoaderCircle, Maximize2, Minus, Settings, X } from "lucide-react"
+import { Download, LoaderCircle, Minus, Settings, X } from "lucide-react"
 import { useConnectionStore } from "@/state/connectionStore"
 import { useCoreStore } from "@/state/coreStore"
 import type { CoreKind } from "@/types/core"
@@ -26,7 +26,13 @@ function versionParts(value: string): number[] | null {
 function versionIsNewer(candidate: string, current: string): boolean {
   const next = versionParts(candidate)
   const active = versionParts(current)
-  if (!next || !active) return candidate !== current
+
+  // Local cores installed by `pnpm dev:custom` intentionally use identifiers
+  // such as `dev-<git-sha>`. They are not comparable to upstream release tags,
+  // and treating every unequal string as newer used to offer a one-click action
+  // that silently replaced the hardened local build with a public release.
+  if (!next || !active) return false
+
   const width = Math.max(next.length, active.length)
   for (let index = 0; index < width; index += 1) {
     const left = next[index] ?? 0
@@ -144,10 +150,20 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
             setUpdateStage("Installing…")
           }
         })
-        // On Windows installation exits the app; this is kept for other
-        // platforms and for a future non-Windows bundle.
+        // On Windows installation normally exits the app. For platforms or
+        // updater modes that return, hand ownership to the replacement process
+        // before relaunching and restore it if process creation fails.
         setUpdateStage("Restarting…")
-        await relaunch()
+        await invoke("prepare_app_relaunch")
+        try {
+          await relaunch()
+        } catch (error) {
+          await invoke("restore_instance_guard").catch(() => {
+            // Preserve the original relaunch error; the next normal launch still
+            // gets a clean OS-released lock if this process exits.
+          })
+          throw error
+        }
         return
       }
 
@@ -213,14 +229,6 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         onClick={() => void appWindow.minimize()}
       >
         <Minus className="size-4" />
-      </button>
-      <button
-        type="button"
-        aria-label="Maximize"
-        className="grid h-full w-13 place-items-center text-muted-foreground hover:bg-surface-2 hover:text-foreground"
-        onClick={() => void appWindow.toggleMaximize()}
-      >
-        <Maximize2 className="size-3.5" />
       </button>
       <button
         type="button"
