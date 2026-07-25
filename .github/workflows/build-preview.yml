@@ -74,24 +74,24 @@ jobs:
 
     steps:
       - name: Check out GUI and pinned Aether fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
           fetch-depth: 0
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux'
@@ -161,7 +161,7 @@ jobs:
       - name: Build ad-hoc signed macOS DMG
         if: matrix.platform == 'macos'
         env:
-          APPLE_SIGNING_IDENTITY: "-"
+          APPLE_SIGNING_IDENTITY: '-'
         run: pnpm tauri build --bundles dmg --config src-tauri/tauri.conf.unsigned.json
 
       - name: Create Windows checksums
@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload Windows workflow artifact
         if: matrix.platform == 'windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           if-no-files-found: error
@@ -215,7 +215,7 @@ jobs:
 
       - name: Upload Linux workflow artifact
         if: matrix.platform == 'linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           if-no-files-found: error
@@ -228,7 +228,7 @@ jobs:
 
       - name: Upload macOS workflow artifact
         if: matrix.platform == 'macos'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           if-no-files-found: error
