@@ -2,7 +2,11 @@
 mod android {
     use serde::{Deserialize, Serialize};
     use serde_json::{json, Value};
-    use std::{fs, sync::Mutex, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        sync::Mutex,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     use tauri::{AppHandle, Emitter, Manager, State};
     use tauri_plugin_aether_vpn::{AetherVpnExt, VpnProfile, VpnStatus};
 
@@ -28,7 +32,7 @@ mod android {
                 scan_mode: "balanced".into(),
                 ip_version: "v4".into(),
                 connection_mode: "proxy".into(),
-                tun_engine: "singbox".into(),
+                tun_engine: "xray".into(),
                 quick_reconnect: true,
                 masque_http2: false,
                 masque_noize: "firewall".into(),
@@ -157,7 +161,7 @@ mod android {
                     "phase": "android-core"
                 });
                 emit_status(&app, &value);
-                emit_log(&app, format!("[android:error] {}", message));
+                emit_log(&app, format!("[android:error] {message}"));
                 Err(message)
             }
         }
@@ -199,20 +203,34 @@ mod android {
     }
 
     #[tauri::command]
-    fn take_pending_elevation_profile() -> Option<ConnectionProfile> { None }
+    fn take_pending_elevation_profile() -> Option<ConnectionProfile> {
+        None
+    }
 
     #[tauri::command]
-    fn get_close_to_tray() -> bool { false }
+    fn get_close_to_tray() -> bool {
+        false
+    }
+
     #[tauri::command]
-    fn set_close_to_tray(_value: bool) {}
+    fn set_close_to_tray(_enabled: bool) {}
+
     #[tauri::command]
     fn sync_tray_state(_state: String) {}
+
     #[tauri::command]
-    fn get_is_elevated() -> bool { false }
+    fn get_is_elevated() -> bool {
+        false
+    }
+
     #[tauri::command]
-    fn elevate() -> Result<(), String> { Err("Android does not use desktop elevation".into()) }
+    fn elevate() -> Result<(), String> {
+        Err("Android does not use desktop elevation".into())
+    }
+
     #[tauri::command]
     fn prepare_app_relaunch() {}
+
     #[tauri::command]
     fn restore_instance_guard() {}
 
@@ -229,10 +247,12 @@ mod android {
     fn get_traffic(app: AppHandle) -> Result<Value, String> {
         app.aether_vpn()
             .traffic()
-            .map(|traffic| json!({
-                "received_bytes": traffic.received_bytes,
-                "sent_bytes": traffic.sent_bytes
-            }))
+            .map(|traffic| {
+                json!({
+                    "received_bytes": traffic.received_bytes,
+                    "sent_bytes": traffic.sent_bytes
+                })
+            })
             .map_err(|error| error.to_string())
     }
 
@@ -270,19 +290,36 @@ mod android {
     #[tauri::command]
     fn list_core_versions(kind: String) -> Value {
         if kind == "aether" {
-            json!([{ "version": "1.4.0", "prerelease": false, "installed": true, "active": true }])
+            json!([{
+                "version": "1.4.0",
+                "prerelease": false,
+                "installed": true,
+                "active": true
+            }])
         } else {
             json!([])
         }
     }
+
     #[tauri::command]
-    fn get_core_status(kind: String) -> Value { core_status(&kind) }
+    fn get_core_status(kind: String) -> Value {
+        core_status(&kind)
+    }
+
     #[tauri::command]
-    fn install_core_version(kind: String, _version: String) -> Value { core_status(&kind) }
+    fn install_core_version(kind: String, _version: String) -> Value {
+        core_status(&kind)
+    }
+
     #[tauri::command]
-    fn select_core_version(kind: String, _version: String) -> Value { core_status(&kind) }
+    fn select_core_version(kind: String, _version: String) -> Value {
+        core_status(&kind)
+    }
+
     #[tauri::command]
-    fn remove_core_version(kind: String, _version: String) -> Value { core_status(&kind) }
+    fn remove_core_version(kind: String, _version: String) -> Value {
+        core_status(&kind)
+    }
 
     #[tauri::command]
     fn get_diagnostics_path(app: AppHandle) -> Result<String, String> {
@@ -292,8 +329,7 @@ mod android {
             .map_err(|error| error.to_string())
     }
 
-    #[tauri::mobile_entry_point]
-    pub fn run() {
+    pub fn run_inner() {
         tauri::Builder::default()
             .plugin(tauri_plugin_store::Builder::default().build())
             .plugin(tauri_plugin_aether_vpn::init())
@@ -333,7 +369,10 @@ mod android {
 }
 
 #[cfg(target_os = "android")]
-pub use android::run;
+#[tauri::mobile_entry_point]
+pub fn run() {
+    android::run_inner();
+}
 
 #[cfg(not(target_os = "android"))]
 pub fn run() {}
