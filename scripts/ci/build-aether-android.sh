@@ -13,6 +13,13 @@ core="$crate_dir/target/aarch64-linux-android/release/aether"
   exit 2
 }
 
+# setup-android may expose its own default NDK through ANDROID_NDK_ROOT. Keep
+# cargo-ndk pinned to the exact NDK selected by the workflow.
+if [[ -n "${NDK_HOME:-}" ]]; then
+  export ANDROID_NDK_HOME="$NDK_HOME"
+  export ANDROID_NDK_ROOT="$NDK_HOME"
+fi
+
 cd "$crate_dir"
 cargo metadata --no-deps --format-version 1 >/dev/null
 cargo ndk \
