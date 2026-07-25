@@ -29,11 +29,17 @@ pub fn connect(
     // the selection from the exact profile before resolving binaries or UAC.
     crate::singbox::set_tun_engine(profile.tun_engine);
 
-    if profile.uses_tun() && !crate::is_admin() {
+    // Windows elevates only the detached TUN helper, so the normal connection
+    // lifecycle can continue inside this GUI process. Other platforms retain
+    // the existing whole-app elevation fallback until they gain an equivalent
+    // privileged helper implementation.
+    if profile.uses_tun()
+        && !crate::is_admin()
+        && !crate::tun_helper::is_supported()
+    {
         // Resolve and verify all privileged-mode dependencies before UAC. The
         // elevated copy only launches already-installed cores and resumes the
-        // exact pending profile. Windows GUI-subsystem builds do not create an
-        // extra console window, including debug builds launched by `tauri dev`.
+        // exact pending profile.
         let _ = core_manager::ensure_active(&app, CoreKind::Aether)?;
         let _ = crate::singbox::ensure_binary(&app)?;
         aether::profiles::save_pending_elevation_checked(&app, &profile)?;
