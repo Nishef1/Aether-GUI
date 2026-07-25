@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { AnimatePresence, motion, MotionConfig } from "motion/react"
+import { Settings } from "lucide-react"
 import { ConnectButton } from "@/components/ConnectButton"
 import { ConnectionStatusLine } from "@/components/ConnectionStatusLine"
 import { ConnectionModeToggle } from "@/components/ConnectionModeToggle"
@@ -10,6 +11,7 @@ import { SidecarErrorScreen } from "@/components/SidecarErrorScreen"
 import { SettingsPanel } from "@/components/SettingsPanel"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { TitleBar } from "@/components/TitleBar"
+import { isAndroid } from "@/lib/platform"
 import {
   initConnectionListeners,
   useConnectionStore,
@@ -23,16 +25,35 @@ const SCREEN_TRANSITION = {
   transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const },
 }
 
+function MobileHeader({ onOpenSettings }: { onOpenSettings: () => void }) {
+  return (
+    <header className="relative z-20 flex min-h-14 items-center justify-between px-5 pt-[max(env(safe-area-inset-top),0.5rem)]">
+      <div>
+        <p className="text-sm font-semibold tracking-tight">Aether</p>
+        <p className="text-[10px] text-muted-foreground">Android ARM64</p>
+      </div>
+      <button
+        type="button"
+        onClick={onOpenSettings}
+        className="grid size-9 place-items-center rounded-lg border border-border/70 bg-background/70 text-muted-foreground transition-colors hover:text-foreground"
+        aria-label="Open settings"
+      >
+        <Settings className="size-4" aria-hidden="true" />
+      </button>
+    </header>
+  )
+}
+
 function MainScreen() {
   return (
-    <div className="relative z-10 flex h-full flex-col items-center overflow-y-auto p-6">
+    <div className="relative z-10 flex h-full flex-col items-center overflow-y-auto p-6 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
       <ConnectionModeToggle />
       <div className="flex min-h-52 flex-1 flex-col items-center justify-center gap-6 py-5">
         <ConnectButton />
         <ConnectionStatusLine />
       </div>
       <AdvancedPanel />
-      <CloseToTrayToggle />
+      {!isAndroid && <CloseToTrayToggle />}
     </div>
   )
 }
@@ -54,9 +75,9 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    // Only inspect locally installed/bundled cores at startup. Online version
-    // checks are opt-in from the corresponding core's refresh button.
-    void loadCores()
+    // Android bundles one pinned ARM64 Aether core. Desktop still inspects its
+    // local core registry so version management remains unchanged there.
+    if (!isAndroid) void loadCores()
   }, [loadCores])
 
   return (
@@ -64,7 +85,11 @@ export function App() {
       <MotionConfig reducedMotion="user">
         <div className="relative flex h-svh w-full flex-col overflow-hidden bg-background">
           <AmbientBackground />
-          <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
+          {isAndroid ? (
+            <MobileHeader onOpenSettings={() => setSettingsOpen(true)} />
+          ) : (
+            <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
+          )}
           <div className="relative min-h-0 flex-1">
             <AnimatePresence mode="sync">
               {sidecarError ? (
