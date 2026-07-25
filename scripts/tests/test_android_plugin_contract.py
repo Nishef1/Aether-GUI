@@ -72,6 +72,26 @@ class AndroidPluginContractTest(unittest.TestCase):
         )
         self.assertIn("APP_ABI := arm64-v8a", build_script)
 
+    def test_kotlin_preflight_bootstraps_dynamic_tauri_gradle_files(self) -> None:
+        preflight = KOTLIN_PREFLIGHT_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn('export TAURI_ANDROID_PROJECT_PATH="$android_dir"', preflight)
+        self.assertRegex(
+            preflight,
+            re.compile(
+                r"cargo ndk\s+\\\n\s+--target arm64-v8a\s+\\\n"
+                r"\s+--platform \"\$ANDROID_MIN_API\"\s+\\\n\s+build\s+\\\n\s+--lib",
+                re.MULTILINE,
+            ),
+        )
+        self.assertIn('gradle_settings="$android_dir/tauri.settings.gradle"', preflight)
+        self.assertIn(
+            'gradle_dependencies="$android_dir/app/tauri.build.gradle.kts"',
+            preflight,
+        )
+        self.assertIn("include ':tauri-plugin-aether-vpn'", preflight)
+        self.assertIn('implementation(project(\":tauri-plugin-aether-vpn\"))', preflight)
+
     def test_workflow_runs_real_kotlin_compile_preflight(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         preflight = KOTLIN_PREFLIGHT_SCRIPT.read_text(encoding="utf-8")
