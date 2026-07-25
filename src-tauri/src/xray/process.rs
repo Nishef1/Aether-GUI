@@ -97,7 +97,7 @@ pub fn spawn(
     log_tx: Sender<ProcessLog>,
 ) -> Result<XrayProcess, AetherError> {
     #[cfg(windows)]
-    if crate::tun_helper::is_supported() && !crate::is_admin() {
+    if crate::tun_helper::is_supported() && !crate::os_is_admin() {
         let (helper_tx, helper_rx) =
             std::sync::mpsc::channel::<crate::tun_helper::HelperLog>();
         let forwarded = log_tx.clone();
