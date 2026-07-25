@@ -10,22 +10,42 @@ pub struct ProcessLog {
     pub line: String,
 }
 
+enum XrayProcessKind {
+    Local(Child),
+    #[cfg(windows)]
+    Elevated(crate::tun_helper::ElevatedTunProcess),
+}
+
 pub struct XrayProcess {
-    child: Child,
+    inner: XrayProcessKind,
 }
 
 impl XrayProcess {
     pub fn pid(&self) -> u32 {
-        self.child.id()
+        match &self.inner {
+            XrayProcessKind::Local(child) => child.id(),
+            #[cfg(windows)]
+            XrayProcessKind::Elevated(process) => process.pid(),
+        }
     }
 
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        match &mut self.inner {
+            XrayProcessKind::Local(child) => child.try_wait(),
+            #[cfg(windows)]
+            XrayProcessKind::Elevated(process) => process.try_wait(),
+        }
     }
 
     pub fn kill(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        match &mut self.inner {
+            XrayProcessKind::Local(child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            #[cfg(windows)]
+            XrayProcessKind::Elevated(process) => process.kill(),
+        }
     }
 }
 
@@ -76,6 +96,30 @@ pub fn spawn(
     config_path: &Path,
     log_tx: Sender<ProcessLog>,
 ) -> Result<XrayProcess, AetherError> {
+    #[cfg(windows)]
+    if crate::tun_helper::is_supported() && !crate::is_admin() {
+        let (helper_tx, helper_rx) =
+            std::sync::mpsc::channel::<crate::tun_helper::HelperLog>();
+        let forwarded = log_tx.clone();
+        std::thread::spawn(move || {
+            for log in helper_rx {
+                let _ = forwarded.send(ProcessLog {
+                    stream: log.stream,
+                    line: log.line,
+                });
+            }
+        });
+        let process = crate::tun_helper::spawn(
+            crate::aether::profiles::TunEngine::Xray,
+            binary,
+            config_path,
+            helper_tx,
+        )?;
+        return Ok(XrayProcess {
+            inner: XrayProcessKind::Elevated(process),
+        });
+    }
+
     let mut command = configure_command(binary);
     command
         .arg("run")
@@ -112,5 +156,7 @@ pub fn spawn(
         });
     }
 
-    Ok(XrayProcess { child })
+    Ok(XrayProcess {
+        inner: XrayProcessKind::Local(child),
+    })
 }
