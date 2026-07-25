@@ -1,6 +1,6 @@
 #![cfg(target_os = "android")]
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use tauri::{
     plugin::{Builder, PluginHandle, TauriPlugin},
     Manager, Runtime,
@@ -16,9 +16,20 @@ pub enum Error {
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
 }
 
+fn serialize_mobile_protocol<S>(protocol: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // Desktop answers Aether's protocol prompt with menu choice 1 for both
+    // Auto and MASQUE. Android has no PTY, so normalize Auto before invoking
+    // the Kotlin host and always pass an explicit --masque flag to the core.
+    serializer.serialize_str(if protocol == "auto" { "masque" } else { protocol })
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VpnProfile {
+    #[serde(serialize_with = "serialize_mobile_protocol")]
     pub protocol: String,
     pub scan_mode: String,
     pub ip_version: String,
