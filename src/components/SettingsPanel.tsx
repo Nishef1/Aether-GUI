@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react"
-import { X } from "lucide-react"
+import { Cpu, ShieldCheck, X } from "lucide-react"
 import { CoreManagerPanel } from "@/components/CoreManagerPanel"
 import { LiveLogViewer } from "@/components/LiveLogViewer"
+import { isAndroid } from "@/lib/platform"
 
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
@@ -11,6 +12,29 @@ const FOCUSABLE_SELECTOR = [
   "a[href]",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",")
+
+function MobileCoreSummary() {
+  return (
+    <div className="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-3">
+      <div className="flex items-start gap-3">
+        <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+          <Cpu className="size-4" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-foreground">Aether v1.4.0 · ARM64</p>
+          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+            This APK contains one pinned native core. Core updates arrive with a new
+            APK so a partially downloaded binary can never replace the working core.
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 border-t border-border/60 pt-2 text-[10px] text-muted-foreground">
+        <ShieldCheck className="size-3.5 text-primary" aria-hidden="true" />
+        Proxy-only alpha; system TUN remains disabled until validated.
+      </div>
+    </div>
+  )
+}
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -40,7 +64,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       if (!dialog) return
       const focusable = Array.from(
         dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
-      ).filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null)
+      ).filter(
+        (element) =>
+          !element.hasAttribute("disabled") && element.offsetParent !== null
+      )
 
       if (focusable.length === 0) {
         event.preventDefault()
@@ -77,13 +104,15 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       aria-modal="true"
       aria-labelledby="settings-title"
     >
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
+      <div className="flex min-h-12 shrink-0 items-center justify-between border-b border-border px-4 pt-[env(safe-area-inset-top)]">
         <div>
           <h2 id="settings-title" className="text-sm font-semibold text-foreground">
             Settings
           </h2>
           <p className="text-[10px] text-muted-foreground">
-            Cores, diagnostics, and runtime details
+            {isAndroid
+              ? "Mobile core, diagnostics, and runtime details"
+              : "Cores, diagnostics, and runtime details"}
           </p>
         </div>
         <button
@@ -97,15 +126,19 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 pb-[max(env(safe-area-inset-bottom),1rem)]">
         <section className="space-y-3">
           <div>
-            <h3 className="text-xs font-medium text-foreground">Core versions</h3>
+            <h3 className="text-xs font-medium text-foreground">
+              {isAndroid ? "Bundled core" : "Core versions"}
+            </h3>
             <p className="text-[10px] leading-relaxed text-muted-foreground">
-              Install, switch, or remove inactive Aether, Xray, and sing-box versions while disconnected.
+              {isAndroid
+                ? "The Android package uses one reproducible ARM64 core built with the app."
+                : "Install, switch, or remove inactive Aether, Xray, and sing-box versions while disconnected."}
             </p>
           </div>
-          <CoreManagerPanel />
+          {isAndroid ? <MobileCoreSummary /> : <CoreManagerPanel />}
         </section>
 
         <div className="my-5 h-px bg-border" />
@@ -114,8 +147,8 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           <div>
             <h3 className="text-xs font-medium text-foreground">Live logs</h3>
             <p className="text-[10px] leading-relaxed text-muted-foreground">
-              Recent bounded runtime output. Structured diagnostics restart on every app launch and
-              stop writing after the session size cap is reached.
+              Recent bounded runtime output. Structured diagnostics restart on every
+              app launch and stop writing after the session size cap is reached.
             </p>
           </div>
           <LiveLogViewer />
