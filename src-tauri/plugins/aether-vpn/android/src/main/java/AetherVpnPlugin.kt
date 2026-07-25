@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import androidx.activity.result.ActivityResult
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -19,6 +20,7 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.io.File
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.ArrayDeque
@@ -65,10 +67,10 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun start(invoke: Invoke) {
         val profile = invoke.parseArgs(VpnProfileArgs::class.java)
-        if (profile.connectionMode != "proxy") {
+        if (profile.connectionMode != "proxy" && VpnService.prepare(activity) != null) {
             invoke.reject(
-                "Android full-device TUN routing is not enabled in this ARM64 alpha yet. Select Proxy mode.",
-                "androidTunBridgeUnavailable"
+                "Android VPN permission is required before starting Tunnel or Both mode.",
+                "vpnPermissionRequired"
             )
             return
         }
@@ -78,7 +80,9 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             putExtra(AetherVpnService.EXTRA_PROTOCOL, profile.protocol)
             putExtra(AetherVpnService.EXTRA_SCAN_MODE, profile.scanMode)
             putExtra(AetherVpnService.EXTRA_IP_VERSION, profile.ipVersion)
+            putExtra(AetherVpnService.EXTRA_CONNECTION_MODE, profile.connectionMode)
             putExtra(AetherVpnService.EXTRA_BIND_ADDRESS, profile.bindAddress)
+            putExtra(AetherVpnService.EXTRA_DNS_SERVER, profile.dnsServer)
             putExtra(AetherVpnService.EXTRA_QUICK_RECONNECT, profile.quickReconnect)
             putExtra(AetherVpnService.EXTRA_MASQUE_HTTP2, profile.masqueHttp2)
             putExtra(AetherVpnService.EXTRA_MASQUE_NOIZE, profile.masqueNoize)
@@ -91,7 +95,7 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             var snapshot = AetherVpnService.snapshot()
             while (
                 System.currentTimeMillis() < deadline &&
-                snapshot.state in setOf("Idle", "Launching")
+                snapshot.state in setOf("Idle", "Launching", "StartingTunnel")
             ) {
                 Thread.sleep(150L)
                 snapshot = AetherVpnService.snapshot()
@@ -103,8 +107,8 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
                         snapshot.message ?: "Aether failed to start",
                         "aetherStartFailed"
                     )
-                    "Idle", "Launching" -> invoke.reject(
-                        "Aether did not expose its SOCKS endpoint before the startup deadline",
+                    "Idle", "Launching", "StartingTunnel" -> invoke.reject(
+                        "Aether did not become ready before the startup deadline",
                         "aetherStartTimeout"
                     )
                     else -> invoke.resolve(snapshot.toJsObject())
@@ -129,10 +133,11 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun traffic(invoke: Invoke) {
+        val traffic = AetherVpnService.trafficSnapshot()
         invoke.resolve(
             JSObject().apply {
-                put("receivedBytes", 0L)
-                put("sentBytes", 0L)
+                put("receivedBytes", traffic.receivedBytes)
+                put("sentBytes", traffic.sentBytes)
             }
         )
     }
@@ -145,7 +150,7 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     companion object {
-        private const val START_TIMEOUT_MS = 45_000L
+        private const val START_TIMEOUT_MS = 60_000L
     }
 }
 
@@ -153,18 +158,27 @@ data class ServiceSnapshot(
     val state: String,
     val message: String? = null,
     val socksAddr: String? = null,
+    val tunAddr: String? = null,
     val connectedAtMs: Long? = null,
 ) {
     fun toJsObject(): JSObject = JSObject().apply {
         put("state", state)
         message?.let { put("message", it) }
         socksAddr?.let { put("socksAddr", it) }
+        tunAddr?.let { put("tunAddr", it) }
         connectedAtMs?.let { put("connectedAtMs", it) }
     }
 }
 
+data class NativeTraffic(
+    val receivedBytes: Long = 0L,
+    val sentBytes: Long = 0L,
+)
+
 class AetherVpnService : VpnService() {
     private var coreProcess: Process? = null
+    private var vpnInterface: ParcelFileDescriptor? = null
+    private var tun2Socks: HevTun2Socks? = null
     private var stopping = false
     private val worker = Executors.newSingleThreadExecutor()
 
@@ -202,7 +216,13 @@ class AetherVpnService : VpnService() {
         val protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "auto"
         val scanMode = intent.getStringExtra(EXTRA_SCAN_MODE) ?: "balanced"
         val ipVersion = intent.getStringExtra(EXTRA_IP_VERSION) ?: "v4"
-        val bindAddress = intent.getStringExtra(EXTRA_BIND_ADDRESS) ?: "127.0.0.1:1819"
+        val connectionMode = intent.getStringExtra(EXTRA_CONNECTION_MODE) ?: "proxy"
+        val bindAddress = sanitizeBindAddress(
+            intent.getStringExtra(EXTRA_BIND_ADDRESS) ?: DEFAULT_SOCKS_ADDRESS
+        )
+        val dnsServer = sanitizeDnsServer(
+            intent.getStringExtra(EXTRA_DNS_SERVER) ?: DEFAULT_DNS_SERVER
+        )
         val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, true)
         val masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, false)
         val masqueNoize = intent.getStringExtra(EXTRA_MASQUE_NOIZE) ?: "firewall"
@@ -245,7 +265,7 @@ class AetherVpnService : VpnService() {
                     start()
                 }
 
-                if (!waitForSocks(bindAddress, process, START_TIMEOUT_MS)) {
+                if (!waitForSocks(bindAddress, process, CORE_START_TIMEOUT_MS)) {
                     val exit = if (process.isAlive) null else process.exitValue()
                     error(
                         "Aether SOCKS endpoint did not become ready" +
@@ -254,21 +274,43 @@ class AetherVpnService : VpnService() {
                 }
 
                 val connectedAt = System.currentTimeMillis()
-                updateSnapshot(
-                    ServiceSnapshot(
-                        "Connected",
-                        socksAddr = bindAddress,
-                        connectedAtMs = connectedAt,
+                if (connectionMode == "proxy") {
+                    updateSnapshot(
+                        ServiceSnapshot(
+                            state = "Connected",
+                            socksAddr = bindAddress,
+                            connectedAtMs = connectedAt,
+                        )
                     )
-                )
-                updateNotification("Connected · SOCKS $bindAddress")
-                appendLog("SOCKS endpoint ready at $bindAddress")
+                    updateNotification("Connected · SOCKS $bindAddress")
+                    appendLog("SOCKS endpoint ready at $bindAddress")
+                } else {
+                    updateSnapshot(
+                        ServiceSnapshot(
+                            state = "StartingTunnel",
+                            socksAddr = bindAddress,
+                        )
+                    )
+                    startSystemTunnel(bindAddress, dnsServer)
+                    updateSnapshot(
+                        ServiceSnapshot(
+                            state = "Tunneling",
+                            socksAddr = bindAddress,
+                            tunAddr = TUN_IPV4_ADDRESS,
+                            connectedAtMs = connectedAt,
+                        )
+                    )
+                    updateNotification("Protected · device tunnel active")
+                    appendLog("Android TUN is routing through Aether SOCKS at $bindAddress")
+                }
 
                 val exitCode = process.waitFor()
                 if (!stopping) {
+                    stopSystemTunnel()
                     error("Aether core exited unexpectedly with code $exitCode")
                 }
             } catch (error: Throwable) {
+                stopSystemTunnel()
                 appendLog("ERROR: ${error.message}")
                 if (!stopping) {
                     updateSnapshot(ServiceSnapshot("Error", error.message ?: error.toString()))
@@ -322,9 +364,96 @@ class AetherVpnService : VpnService() {
         return command
     }
 
+    private fun startSystemTunnel(bindAddress: String, dnsServer: String) {
+        if (VpnService.prepare(this) != null) {
+            error("Android VPN permission was revoked before the tunnel started")
+        }
+
+        val (socksHost, socksPort) = splitHostPort(bindAddress)
+        val builder = Builder()
+            .setSession("Aether")
+            .setMtu(TUN_MTU)
+            .addAddress(TUN_IPV4_ADDRESS, 32)
+            .addAddress(TUN_IPV6_ADDRESS, 128)
+            .addRoute("0.0.0.0", 0)
+            .addRoute("::", 0)
+            .addDnsServer(dnsServer)
+            .setBlocking(false)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            builder.setMetered(false)
+        }
+
+        // The Aether child process has the same UID as this app. Excluding the
+        // package keeps its gateway sockets outside the VPN and prevents a route
+        // loop, while traffic from every other application enters this TUN.
+        builder.addDisallowedApplication(packageName)
+
+        val descriptor = builder.establish()
+            ?: error("Android refused to establish the Aether VPN interface")
+        vpnInterface = descriptor
+
+        val configFile = writeTun2SocksConfig(socksHost, socksPort)
+        val bridge = HevTun2Socks()
+        tun2Socks = bridge
+        activeTunBridge.set(bridge)
+        bridge.TProxyStartService(configFile.absolutePath, descriptor.fd)
+    }
+
+    private fun writeTun2SocksConfig(socksHost: String, socksPort: Int): File {
+        val config = File(filesDir, "hev-socks5-tunnel.yml")
+        val nativeLog = File(filesDir, "diagnostics/hev-socks5-tunnel.log")
+        nativeLog.parentFile?.mkdirs()
+
+        config.writeText(
+            """
+            tunnel:
+              name: tun0
+              mtu: $TUN_MTU
+              multi-queue: false
+              ipv4: $TUN_IPV4_ADDRESS
+              ipv6: '$TUN_IPV6_ADDRESS'
+
+            socks5:
+              port: $socksPort
+              address: '${yamlQuote(socksHost)}'
+              udp: 'udp'
+              pipeline: true
+
+            misc:
+              task-stack-size: 86016
+              tcp-buffer-size: 65536
+              udp-recv-buffer-size: 524288
+              udp-copy-buffer-nums: 32
+              max-session-count: 2048
+              connect-timeout: 15000
+              tcp-read-write-timeout: 300000
+              udp-read-write-timeout: 60000
+              log-file: '${yamlQuote(nativeLog.absolutePath)}'
+              log-level: info
+              limit-nofile: 8192
+            """.trimIndent() + "\n"
+        )
+        return config
+    }
+
+    private fun stopSystemTunnel() {
+        activeTunBridge.getAndSet(null)?.let { bridge ->
+            runCatching { bridge.TProxyStopService() }
+                .onFailure { appendLog("tun2socks stop warning: ${it.message}") }
+        }
+        tun2Socks = null
+        vpnInterface?.let { descriptor ->
+            runCatching { descriptor.close() }
+        }
+        vpnInterface = null
+    }
+
     private fun stopCore() {
+        if (stopping && coreProcess == null && vpnInterface == null) return
         stopping = true
         updateSnapshot(ServiceSnapshot("Disconnecting"))
+        stopSystemTunnel()
         coreProcess?.let { process ->
             process.destroy()
             try {
@@ -343,9 +472,7 @@ class AetherVpnService : VpnService() {
     }
 
     private fun waitForSocks(bindAddress: String, process: Process, timeoutMs: Long): Boolean {
-        val separator = bindAddress.lastIndexOf(':')
-        val host = if (separator > 0) bindAddress.substring(0, separator) else "127.0.0.1"
-        val port = bindAddress.substringAfterLast(':', "1819").toIntOrNull() ?: 1819
+        val (host, port) = splitHostPort(bindAddress)
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline && process.isAlive && !stopping) {
             try {
@@ -359,6 +486,36 @@ class AetherVpnService : VpnService() {
         }
         return false
     }
+
+    private fun splitHostPort(value: String): Pair<String, Int> {
+        val separator = value.lastIndexOf(':')
+        if (separator <= 0) return "127.0.0.1" to 1819
+        val host = value.substring(0, separator).removePrefix("[").removeSuffix("]")
+        val port = value.substring(separator + 1).toIntOrNull() ?: 1819
+        return host to port
+    }
+
+    private fun sanitizeBindAddress(value: String): String {
+        val (host, port) = splitHostPort(value)
+        val safeHost = when (host) {
+            "localhost", "127.0.0.1", "::1" -> host
+            else -> "127.0.0.1"
+        }
+        return if (safeHost.contains(':')) "[$safeHost]:$port" else "$safeHost:$port"
+    }
+
+    private fun sanitizeDnsServer(value: String): String {
+        return runCatching {
+            val parsed = InetAddress.getByName(value.trim())
+            if (parsed.isAnyLocalAddress || parsed.isMulticastAddress) {
+                DEFAULT_DNS_SERVER
+            } else {
+                parsed.hostAddress ?: DEFAULT_DNS_SERVER
+            }
+        }.getOrDefault(DEFAULT_DNS_SERVER)
+    }
+
+    private fun yamlQuote(value: String): String = value.replace("'", "''")
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -407,7 +564,9 @@ class AetherVpnService : VpnService() {
         const val EXTRA_PROTOCOL = "protocol"
         const val EXTRA_SCAN_MODE = "scanMode"
         const val EXTRA_IP_VERSION = "ipVersion"
+        const val EXTRA_CONNECTION_MODE = "connectionMode"
         const val EXTRA_BIND_ADDRESS = "bindAddress"
+        const val EXTRA_DNS_SERVER = "dnsServer"
         const val EXTRA_QUICK_RECONNECT = "quickReconnect"
         const val EXTRA_MASQUE_HTTP2 = "masqueHttp2"
         const val EXTRA_MASQUE_NOIZE = "masqueNoize"
@@ -415,16 +574,31 @@ class AetherVpnService : VpnService() {
 
         private const val CHANNEL_ID = "aether_connection"
         private const val NOTIFICATION_ID = 1819
-        private const val START_TIMEOUT_MS = 45_000L
+        private const val CORE_START_TIMEOUT_MS = 50_000L
+        private const val TUN_MTU = 8500
+        private const val TUN_IPV4_ADDRESS = "198.18.0.1"
+        private const val TUN_IPV6_ADDRESS = "fc00::1"
+        private const val DEFAULT_SOCKS_ADDRESS = "127.0.0.1:1819"
+        private const val DEFAULT_DNS_SERVER = "1.1.1.1"
         private const val MAX_LOG_LINES = 500
         private const val MAX_DIAGNOSTICS_BYTES = 1_048_576L
         private val status = AtomicReference(idleSnapshot())
         private val logLines = ArrayDeque<String>()
+        private val activeTunBridge = AtomicReference<HevTun2Socks?>(null)
 
         fun snapshot(): ServiceSnapshot = status.get()
         fun idleSnapshot() = ServiceSnapshot("Idle")
         fun diagnosticsPath(context: Context): String =
             File(context.filesDir, "diagnostics/aether-mobile.log").absolutePath
+
+        fun trafficSnapshot(): NativeTraffic {
+            val stats = runCatching { activeTunBridge.get()?.TProxyGetStats() }.getOrNull()
+            if (stats == null || stats.size < 4) return NativeTraffic()
+            return NativeTraffic(
+                receivedBytes = stats[3].coerceAtLeast(0L),
+                sentBytes = stats[1].coerceAtLeast(0L),
+            )
+        }
 
         private fun updateSnapshot(snapshot: ServiceSnapshot) {
             status.set(snapshot)
