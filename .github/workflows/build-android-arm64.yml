@@ -31,6 +31,25 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Initialize build diagnostics
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p build-logs
+          {
+            echo "workflow_run_id=${GITHUB_RUN_ID}"
+            echo "workflow_run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "gui_commit=$(git rev-parse HEAD)"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "android_api=${ANDROID_API}"
+            echo "android_min_api=${ANDROID_MIN_API}"
+            echo "android_ndk=${ANDROID_NDK_VERSION}"
+            echo
+            echo "Submodules:"
+            git submodule status --recursive
+          } | tee build-logs/build-context.txt
+
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
@@ -55,14 +74,33 @@ jobs:
       - name: Install Android SDK and NDK
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;${ANDROID_BUILD_TOOLS}" \
-            "ndk;${ANDROID_NDK_VERSION}"
-          echo "NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          set -Eeuo pipefail
+          log="build-logs/android-sdk.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Install Android SDK and NDK"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 250 lines ---"
+              tail -n 250 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::Android SDK/NDK setup failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+          {
+            yes | sdkmanager --licenses >/dev/null || true
+            sdkmanager \
+              "platform-tools" \
+              "platforms;android-${ANDROID_API}" \
+              "build-tools;${ANDROID_BUILD_TOOLS}" \
+              "ndk;${ANDROID_NDK_VERSION}"
+            echo "NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+            echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          } 2>&1 | tee "$log"
+          trap - ERR
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
@@ -76,7 +114,26 @@ jobs:
           run_install: false
 
       - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          log="build-logs/pnpm-install.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Install JavaScript dependencies"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 250 lines ---"
+              tail -n 250 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::pnpm install failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+          pnpm install --frozen-lockfile 2>&1 | tee "$log"
+          trap - ERR
 
       - name: Set up Rust 1.88 for Android
         uses: dtolnay/rust-toolchain@1.88.0
@@ -92,36 +149,100 @@ jobs:
           cache-on-failure: true
 
       - name: Install cargo-ndk 4.1.2
-        run: cargo install cargo-ndk --version 4.1.2 --locked
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          log="build-logs/cargo-ndk-install.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Install cargo-ndk"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 250 lines ---"
+              tail -n 250 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::cargo-ndk installation failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+          cargo install cargo-ndk --version 4.1.2 --locked 2>&1 | tee "$log"
+          {
+            rustc -Vv
+            cargo -V
+            cargo ndk -V
+          } | tee -a build-logs/build-context.txt
+          trap - ERR
 
       - name: Build Aether core for arm64-v8a
         shell: bash
         run: |
-          cargo ndk \
-            --target arm64-v8a \
-            --platform "${ANDROID_MIN_API}" \
-            build \
-            --release \
-            --manifest-path vendor/aether/aether/Cargo.toml \
-            --bin aether
+          set -Eeuo pipefail
+          log="build-logs/aether-core.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Build Aether core for arm64-v8a"
+              echo "exit_code=${status}"
+              echo "working_directory=vendor/aether/aether"
+              echo "log_file=${log}"
+              echo "--- last 300 lines ---"
+              tail -n 300 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::Aether ARM64 build failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+
+          # cargo-ndk resolves cargo metadata before forwarding Cargo arguments.
+          # Run it from the actual Aether crate instead of the GUI repository root.
+          (
+            cd vendor/aether/aether
+            cargo ndk \
+              --target arm64-v8a \
+              --platform "${ANDROID_MIN_API}" \
+              build \
+              --release \
+              --bin aether
+          ) 2>&1 | tee "$log"
 
           core="vendor/aether/aether/target/aarch64-linux-android/release/aether"
           test -x "$core"
-          file "$core"
+          file "$core" | tee -a "$log" build-logs/build-context.txt
+          trap - ERR
 
       - name: Build pinned hev-socks5-tunnel for arm64-v8a
         shell: bash
         run: |
-          git clone \
-            --filter=blob:none \
-            --no-checkout \
-            https://github.com/heiher/hev-socks5-tunnel.git \
-            third-party/hev-socks5-tunnel
-          git -C third-party/hev-socks5-tunnel checkout "${HEV_SOCKS5_TUNNEL_COMMIT}"
-          git -C third-party/hev-socks5-tunnel submodule update --init --recursive --depth 1
-          test "$(git -C third-party/hev-socks5-tunnel rev-parse HEAD)" = "${HEV_SOCKS5_TUNNEL_COMMIT}"
+          set -Eeuo pipefail
+          log="build-logs/hev-socks5-tunnel.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Build pinned hev-socks5-tunnel for arm64-v8a"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 300 lines ---"
+              tail -n 300 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::hev-socks5-tunnel ARM64 build failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+          {
+            git clone \
+              --filter=blob:none \
+              --no-checkout \
+              https://github.com/heiher/hev-socks5-tunnel.git \
+              third-party/hev-socks5-tunnel
+            git -C third-party/hev-socks5-tunnel checkout "${HEV_SOCKS5_TUNNEL_COMMIT}"
+            git -C third-party/hev-socks5-tunnel submodule update --init --recursive --depth 1
+            test "$(git -C third-party/hev-socks5-tunnel rev-parse HEAD)" = "${HEV_SOCKS5_TUNNEL_COMMIT}"
 
-          cat > third-party/hev-socks5-tunnel/Application.mk <<EOF
+            cat > third-party/hev-socks5-tunnel/Application.mk <<EOF
           APP_OPTIM := release
           APP_PLATFORM := android-${ANDROID_MIN_API}
           APP_ABI := arm64-v8a
@@ -130,25 +251,62 @@ jobs:
           NDK_TOOLCHAIN_VERSION := clang
           EOF
 
-          "${NDK_HOME}/ndk-build" \
-            -C third-party/hev-socks5-tunnel \
-            NDK_PROJECT_PATH=. \
-            APP_BUILD_SCRIPT=Android.mk \
-            NDK_APPLICATION_MK=Application.mk
+            "${NDK_HOME}/ndk-build" \
+              -C third-party/hev-socks5-tunnel \
+              NDK_PROJECT_PATH=. \
+              APP_BUILD_SCRIPT=Android.mk \
+              NDK_APPLICATION_MK=Application.mk
 
-          bridge="third-party/hev-socks5-tunnel/libs/arm64-v8a/libhev-socks5-tunnel.so"
-          test -f "$bridge"
-          file "$bridge"
+            bridge="third-party/hev-socks5-tunnel/libs/arm64-v8a/libhev-socks5-tunnel.so"
+            test -f "$bridge"
+            file "$bridge"
+          } 2>&1 | tee "$log"
+          trap - ERR
 
       - name: Generate the Tauri Android project
+        shell: bash
         env:
           CI: "true"
-        run: pnpm tauri android init --ci --skip-targets-install
+        run: |
+          set -Eeuo pipefail
+          log="build-logs/tauri-android-init.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Generate the Tauri Android project"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 300 lines ---"
+              tail -n 300 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::Tauri Android project generation failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+          pnpm tauri android init --ci --skip-targets-install 2>&1 | tee "$log"
+          trap - ERR
 
       - name: Force extracted native-library packaging
         shell: bash
         run: |
-          python3 - <<'PY'
+          set -Eeuo pipefail
+          log="build-logs/native-packaging.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Force extracted native-library packaging"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 200 lines ---"
+              tail -n 200 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::Native library packaging patch failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+          python3 - <<'PY' 2>&1 | tee "$log"
           from pathlib import Path
 
           path = Path("src-tauri/gen/android/app/build.gradle.kts")
@@ -167,54 +325,146 @@ jobs:
           if "useLegacyPackaging = true" not in text:
               text = text.replace(marker, block, 1)
               path.write_text(text, encoding="utf-8")
+          print(path.read_text(encoding="utf-8")[:3000])
           PY
+          trap - ERR
 
       - name: Bundle ARM64 native components
         shell: bash
         run: |
-          destination="src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a"
-          mkdir -p "$destination"
-          cp \
-            vendor/aether/aether/target/aarch64-linux-android/release/aether \
-            "$destination/libaether_exec.so"
-          cp \
-            third-party/hev-socks5-tunnel/libs/arm64-v8a/libhev-socks5-tunnel.so \
-            "$destination/libhev-socks5-tunnel.so"
-          chmod 755 "$destination/libaether_exec.so"
-          test -x "$destination/libaether_exec.so"
-          test -f "$destination/libhev-socks5-tunnel.so"
-          file "$destination"/*.so
+          set -Eeuo pipefail
+          log="build-logs/native-bundle.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Bundle ARM64 native components"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 200 lines ---"
+              tail -n 200 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::Bundling native ARM64 components failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+          {
+            destination="src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a"
+            mkdir -p "$destination"
+            cp \
+              vendor/aether/aether/target/aarch64-linux-android/release/aether \
+              "$destination/libaether_exec.so"
+            cp \
+              third-party/hev-socks5-tunnel/libs/arm64-v8a/libhev-socks5-tunnel.so \
+              "$destination/libhev-socks5-tunnel.so"
+            chmod 755 "$destination/libaether_exec.so"
+            test -x "$destination/libaether_exec.so"
+            test -f "$destination/libhev-socks5-tunnel.so"
+            file "$destination"/*.so
+            ls -lah "$destination"
+          } 2>&1 | tee "$log"
+          trap - ERR
 
       - name: Build a directly installable ARM64 debug APK
+        shell: bash
         env:
           CI: "true"
         run: |
+          set -Eeuo pipefail
+          log="build-logs/tauri-android-build.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Build a directly installable ARM64 debug APK"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 400 lines ---"
+              tail -n 400 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::Tauri/Gradle Android APK build failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
           pnpm tauri android build \
             --debug \
             --apk \
             --target aarch64 \
-            --split-per-abi
+            --split-per-abi \
+            2>&1 | tee "$log"
+          trap - ERR
 
       - name: Collect APK and checksums
         shell: bash
         run: |
-          mkdir -p artifacts
-          mapfile -t apks < <(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' | sort)
-          test "${#apks[@]}" -gt 0
-          for apk in "${apks[@]}"; do
-            name="$(basename "$apk")"
-            cp "$apk" "artifacts/$name"
-          done
-          cp THIRD_PARTY_NOTICES.md artifacts/
-          printf '%s  %s\n' \
-            "${HEV_SOCKS5_TUNNEL_COMMIT}" \
-            "hev-socks5-tunnel" \
-            > artifacts/NATIVE_SOURCES.txt
-          (
-            cd artifacts
-            sha256sum *.apk > SHA256SUMS.txt
-          )
-          ls -lh artifacts
+          set -Eeuo pipefail
+          log="build-logs/collect-artifacts.log"
+          on_error() {
+            status=$?
+            {
+              echo "failed_step=Collect APK and checksums"
+              echo "exit_code=${status}"
+              echo "log_file=${log}"
+              echo "--- last 200 lines ---"
+              tail -n 200 "$log" || true
+            } > build-logs/failure-summary.txt
+            echo "::error::APK artifact collection failed. Download the Android build diagnostics artifact for the complete captured log."
+            cat build-logs/failure-summary.txt
+            exit "$status"
+          }
+          trap on_error ERR
+          {
+            mkdir -p artifacts
+            mapfile -t apks < <(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' | sort)
+            test "${#apks[@]}" -gt 0
+            for apk in "${apks[@]}"; do
+              name="$(basename "$apk")"
+              cp "$apk" "artifacts/$name"
+            done
+            cp THIRD_PARTY_NOTICES.md artifacts/
+            printf '%s  %s\n' \
+              "${HEV_SOCKS5_TUNNEL_COMMIT}" \
+              "hev-socks5-tunnel" \
+              > artifacts/NATIVE_SOURCES.txt
+            (
+              cd artifacts
+              sha256sum *.apk > SHA256SUMS.txt
+            )
+            ls -lh artifacts
+          } 2>&1 | tee "$log"
+          trap - ERR
+
+      - name: Write concise diagnostic summary
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build-logs
+          {
+            echo "# Android ARM64 build diagnostics"
+            echo
+            echo "- Run: ${GITHUB_RUN_ID}"
+            echo "- Attempt: ${GITHUB_RUN_ATTEMPT}"
+            echo "- Commit: $(git rev-parse HEAD 2>/dev/null || echo unknown)"
+            echo
+            if [[ -f build-logs/failure-summary.txt ]]; then
+              echo "## Captured failure"
+              echo '```text'
+              cat build-logs/failure-summary.txt
+              echo '```'
+            else
+              echo "No captured command failure. Critical command logs are still attached in the diagnostics artifact."
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY" > build-logs/job-summary.md
+
+      - name: Upload Android build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aether-Android-build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build-logs/**
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload Android ARM64 APK
         uses: actions/upload-artifact@v4
