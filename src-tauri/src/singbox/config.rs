@@ -1,3 +1,4 @@
+use crate::aether::profiles;
 use serde::Serialize;
 use std::path::Path;
 
@@ -18,6 +19,7 @@ pub fn generate_config(
     aether_socks_port: u16,
     aether_binary: &Path,
 ) -> Result<String, serde_json::Error> {
+    let dns_server = profiles::active_dns_server();
     let config = Config {
         log: LogConfig {
             // Per-flow info logs are extremely high volume in TUN mode and can
@@ -33,7 +35,7 @@ pub fn generate_config(
                 // ASSOCIATE behavior. General TUN UDP traffic is still supported.
                 type_: "tcp".into(),
                 tag: "dns-proxy".into(),
-                server: "1.1.1.1".into(),
+                server: dns_server,
                 server_port: 53,
                 detour: "proxy".into(),
             }],
@@ -232,6 +234,7 @@ mod tests {
         assert_eq!(value["inbounds"][0]["address"][0], TUN_ADDRESS);
         assert_eq!(value["inbounds"][0]["address"][1], TUN_ADDRESS_V6);
         assert_eq!(value["dns"]["servers"][0]["type"], "tcp");
+        assert_eq!(value["dns"]["servers"][0]["server"], "1.1.1.1");
         assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
         assert_eq!(value["log"]["level"], "warn");
     }
@@ -265,6 +268,7 @@ mod tests {
         assert_eq!(value["route"]["final"], "proxy");
         assert_eq!(value["dns"]["final"], "dns-proxy");
         assert_eq!(value["dns"]["servers"][0]["type"], "tcp");
+        assert_eq!(value["dns"]["servers"][0]["server"], "1.1.1.1");
         assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
         assert_eq!(value["route"]["rules"][2]["port"][0], 53);
         assert_eq!(value["route"]["rules"][2]["action"], "hijack-dns");
