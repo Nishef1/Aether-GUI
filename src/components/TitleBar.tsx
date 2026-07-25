@@ -26,7 +26,13 @@ function versionParts(value: string): number[] | null {
 function versionIsNewer(candidate: string, current: string): boolean {
   const next = versionParts(candidate)
   const active = versionParts(current)
-  if (!next || !active) return candidate !== current
+
+  // Local cores installed by `pnpm dev:custom` intentionally use identifiers
+  // such as `dev-<git-sha>`. They are not comparable to upstream release tags,
+  // and treating every unequal string as newer used to offer a one-click action
+  // that silently replaced the hardened local build with a public release.
+  if (!next || !active) return false
+
   const width = Math.max(next.length, active.length)
   for (let index = 0; index < width; index += 1) {
     const left = next[index] ?? 0
