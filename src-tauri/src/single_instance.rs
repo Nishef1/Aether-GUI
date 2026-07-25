@@ -1,15 +1,15 @@
 #[cfg(windows)]
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(windows)]
 const INSTANCE_MUTEX_NAME: &str = "Local\\com.cluvexstudio.aethergui.instance";
 #[cfg(windows)]
 const WINDOW_TITLE: &str = "Aether-GUI";
 
-// Keep the mutex handle alive for the lifetime of the process. Windows releases
-// it automatically on process exit, including abnormal termination.
+// Keep the mutex handle alive for the process lifetime, while still allowing a
+// controlled handoff immediately before UAC elevation or an app relaunch.
 #[cfg(windows)]
-static INSTANCE_MUTEX: OnceLock<usize> = OnceLock::new();
+static INSTANCE_MUTEX_HANDLE: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(windows)]
 fn wide_null(value: &str) -> Vec<u16> {
@@ -28,6 +28,10 @@ pub fn acquire() -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
 
+    if INSTANCE_MUTEX_HANDLE.load(Ordering::Acquire) != 0 {
+        return true;
+    }
+
     let name = wide_null(INSTANCE_MUTEX_NAME);
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
     if handle.is_null() {
@@ -43,8 +47,22 @@ pub fn acquire() -> bool {
         return false;
     }
 
-    let _ = INSTANCE_MUTEX.set(handle as usize);
+    INSTANCE_MUTEX_HANDLE.store(handle as usize, Ordering::Release);
     true
+}
+
+/// Release ownership immediately before creating the replacement process. The
+/// caller must reacquire when the handoff is cancelled or fails.
+#[cfg(windows)]
+pub fn release_for_handoff() {
+    use windows_sys::Win32::Foundation::CloseHandle;
+
+    let handle = INSTANCE_MUTEX_HANDLE.swap(0, Ordering::AcqRel);
+    if handle != 0 {
+        unsafe {
+            CloseHandle(handle as _);
+        }
+    }
 }
 
 /// Best-effort activation for a second-launch attempt. This covers the common
@@ -72,6 +90,9 @@ pub fn activate_existing_window() {
 pub fn acquire() -> bool {
     true
 }
+
+#[cfg(not(windows))]
+pub fn release_for_handoff() {}
 
 #[cfg(not(windows))]
 pub fn activate_existing_window() {}
