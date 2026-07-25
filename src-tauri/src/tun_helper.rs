@@ -8,6 +8,8 @@ use std::process::ExitStatus;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+const APP_IDENTIFIER: &str = "com.cluvexstudio.aethergui";
+
 #[derive(Debug)]
 pub struct HelperLog {
     pub stream: &'static str,
@@ -24,7 +26,6 @@ struct HelperRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct HelperReady {
-    helper_pid: u32,
     core_pid: u32,
 }
 
@@ -55,13 +56,8 @@ impl ControlPaths {
     }
 
     fn from_request(request: &Path) -> Option<Self> {
-        let dir = request.parent()?.to_path_buf();
-        let paths = Self::from_dir(dir);
-        if paths.request == request {
-            Some(paths)
-        } else {
-            None
-        }
+        let paths = Self::from_dir(request.parent()?.to_path_buf());
+        (paths.request == request).then_some(paths)
     }
 }
 
@@ -83,7 +79,7 @@ pub fn run_if_requested() -> Option<i32> {
         if args.next().is_some() {
             return Some(2);
         }
-        return Some(run_helper(Path::new(&request_path)));
+        Some(run_helper(Path::new(&request_path)))
     }
 
     #[cfg(not(windows))]
@@ -93,7 +89,6 @@ pub fn run_if_requested() -> Option<i32> {
 #[cfg(windows)]
 pub struct ElevatedTunProcess {
     helper_handle: isize,
-    helper_pid: u32,
     core_pid: u32,
     paths: ControlPaths,
     exit_code: Option<u32>,
@@ -115,10 +110,7 @@ impl ElevatedTunProcess {
             return Ok(None);
         }
 
-        let code = fs::read_to_string(&self.paths.exit)
-            .ok()
-            .and_then(|value| value.trim().parse::<u32>().ok())
-            .unwrap_or(1);
+        let code = read_exit_code(&self.paths).unwrap_or(1);
         self.exit_code = Some(code);
         self.close_helper_handle();
         self.cleanup_control_dir();
@@ -139,10 +131,7 @@ impl ElevatedTunProcess {
         }
 
         if !process_handle_is_alive(self.helper_handle) {
-            self.exit_code = fs::read_to_string(&self.paths.exit)
-                .ok()
-                .and_then(|value| value.trim().parse::<u32>().ok())
-                .or(Some(0));
+            self.exit_code = read_exit_code(&self.paths).or(Some(0));
             self.close_helper_handle();
             self.cleanup_control_dir();
         }
@@ -180,6 +169,13 @@ pub fn spawn(
     let tun_dir = config
         .parent()
         .ok_or_else(|| AetherError::Internal("TUN config has no runtime directory".into()))?;
+    let trusted_tun = trusted_tun_dir().map_err(AetherError::Internal)?;
+    if !same_canonical_path(tun_dir, &trusted_tun) {
+        return Err(AetherError::Internal(
+            "TUN config is outside the application runtime directory".into(),
+        ));
+    }
+
     let session = format!(
         "{}-{}",
         std::process::id(),
@@ -221,12 +217,8 @@ pub fn spawn(
             )));
         }
         if let Ok(contents) = fs::read(&paths.ready) {
-            match serde_json::from_slice::<HelperReady>(&contents) {
-                Ok(ready) => break ready,
-                Err(_) => {
-                    // The helper publishes readiness atomically, but antivirus
-                    // scanning can briefly expose the destination before rename.
-                }
+            if let Ok(ready) = serde_json::from_slice::<HelperReady>(&contents) {
+                break ready;
             }
         }
         if !process_handle_is_alive(helper_handle) {
@@ -239,6 +231,7 @@ pub fn spawn(
         if Instant::now() >= deadline {
             let _ = fs::write(&paths.stop, b"stop");
             close_process_handle(helper_handle);
+            schedule_control_cleanup(paths.clone());
             return Err(AetherError::SpawnFailed(
                 "timed out waiting for the elevated TUN helper".into(),
             ));
@@ -248,15 +241,14 @@ pub fn spawn(
 
     spawn_log_tail(
         paths.stdout.clone(),
+        paths.exit.clone(),
         "stdout",
-        helper_handle,
         log_tx.clone(),
     );
-    spawn_log_tail(paths.stderr.clone(), "stderr", helper_handle, log_tx);
+    spawn_log_tail(paths.stderr.clone(), paths.exit.clone(), "stderr", log_tx);
 
     Ok(ElevatedTunProcess {
         helper_handle,
-        helper_pid: ready.helper_pid,
         core_pid: ready.core_pid,
         paths,
         exit_code: None,
@@ -266,8 +258,7 @@ pub fn spawn(
 #[cfg(windows)]
 fn run_helper(request_path: &Path) -> i32 {
     let fallback_paths = ControlPaths::from_request(request_path);
-    let result = run_helper_inner(request_path);
-    match result {
+    match run_helper_inner(request_path) {
         Ok(code) => code,
         Err(error) => {
             if let Some(paths) = fallback_paths {
@@ -281,7 +272,7 @@ fn run_helper(request_path: &Path) -> i32 {
 
 #[cfg(windows)]
 fn run_helper_inner(request_path: &Path) -> Result<i32, String> {
-    if !crate::is_admin() {
+    if !crate::os_is_admin() {
         return Err("TUN helper was not granted administrator privileges".into());
     }
 
@@ -300,16 +291,11 @@ fn run_helper_inner(request_path: &Path) -> Result<i32, String> {
         return Err("requesting GUI process is no longer running".into());
     }
 
-    let tun_dir = paths
-        .dir
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| "helper runtime is outside the TUN directory".to_string())?;
-    let tun_dir = fs::canonicalize(tun_dir)
-        .map_err(|error| format!("canonicalize TUN runtime: {error}"))?;
+    let trusted_tun = fs::canonicalize(trusted_tun_dir()?)
+        .map_err(|error| format!("canonicalize trusted TUN runtime: {error}"))?;
     let config = fs::canonicalize(&request.config)
         .map_err(|error| format!("canonicalize TUN config: {error}"))?;
-    if config.parent() != Some(tun_dir.as_path()) {
+    if config.parent() != Some(trusted_tun.as_path()) {
         return Err("TUN config is outside the application runtime directory".into());
     }
     let expected_config = match request.engine {
@@ -324,6 +310,9 @@ fn run_helper_inner(request_path: &Path) -> Result<i32, String> {
         .map_err(|error| format!("canonicalize TUN core: {error}"))?;
     if !expected_core_name(request.engine, &binary) {
         return Err("unexpected TUN core executable name".into());
+    }
+    if !binary_is_in_trusted_root(&binary)? {
+        return Err("TUN core is outside application-managed locations".into());
     }
     if request.engine == TunEngine::Xray {
         let wintun = binary
@@ -359,7 +348,6 @@ fn run_helper_inner(request_path: &Path) -> Result<i32, String> {
         .spawn()
         .map_err(|error| format!("launch elevated TUN core: {error}"))?;
     let ready = HelperReady {
-        helper_pid: std::process::id(),
         core_pid: child.id(),
     };
     write_json_atomic(&paths.ready, &ready)?;
@@ -382,21 +370,56 @@ fn run_helper_inner(request_path: &Path) -> Result<i32, String> {
     };
 
     let _ = fs::write(&paths.exit, code.to_string());
-    clear_pid_if_owned(&tun_dir, ready.core_pid);
+    clear_pid_if_owned(&trusted_tun, ready.core_pid);
     Ok(code as i32)
+}
+
+#[cfg(windows)]
+fn trusted_tun_dir() -> Result<PathBuf, String> {
+    let roaming = std::env::var_os("APPDATA")
+        .ok_or_else(|| "APPDATA is unavailable for the TUN helper".to_string())?;
+    Ok(PathBuf::from(roaming).join(APP_IDENTIFIER).join("tun"))
 }
 
 #[cfg(windows)]
 fn validate_control_dir(dir: &Path) -> Result<(), String> {
     let canonical = fs::canonicalize(dir)
         .map_err(|error| format!("canonicalize helper runtime: {error}"))?;
-    let Some(elevation) = canonical.parent() else {
-        return Err("helper runtime has no elevation parent".into());
-    };
-    if elevation.file_name().and_then(|name| name.to_str()) != Some("elevation") {
-        return Err("helper runtime is outside the elevation directory".into());
+    let trusted_elevation = fs::canonicalize(trusted_tun_dir()?.join("elevation"))
+        .map_err(|error| format!("canonicalize trusted elevation runtime: {error}"))?;
+    if canonical.parent() != Some(trusted_elevation.as_path()) {
+        return Err("helper runtime is outside the trusted elevation directory".into());
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn binary_is_in_trusted_root(binary: &Path) -> Result<bool, String> {
+    let app_data_root = trusted_tun_dir()?
+        .parent()
+        .ok_or_else(|| "application data root is unavailable".to_string())?
+        .to_path_buf();
+    let app_data_root = fs::canonicalize(app_data_root)
+        .map_err(|error| format!("canonicalize application data root: {error}"))?;
+
+    let exe = fs::canonicalize(std::env::current_exe().map_err(|error| error.to_string())?)
+        .map_err(|error| format!("canonicalize helper executable: {error}"))?;
+    let install_root = exe
+        .parent()
+        .ok_or_else(|| "helper executable has no parent directory".to_string())?;
+
+    if binary.starts_with(&app_data_root) || binary.starts_with(install_root) {
+        return Ok(true);
+    }
+
+    // `tauri dev` places the GUI under src-tauri/target/debug while local cores
+    // live under src-tauri/binaries. Allow only that common src-tauri root.
+    let dev_root = exe.ancestors().find_map(|ancestor| {
+        (ancestor.file_name().and_then(|name| name.to_str()) == Some("target"))
+            .then(|| ancestor.parent())
+            .flatten()
+    });
+    Ok(dev_root.is_some_and(|root| binary.starts_with(root)))
 }
 
 #[cfg(windows)]
@@ -416,6 +439,14 @@ fn expected_core_name(engine: TunEngine, binary: &Path) -> bool {
 }
 
 #[cfg(windows)]
+fn same_canonical_path(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
 fn clear_pid_if_owned(tun_dir: &Path, core_pid: u32) {
     let path = tun_dir.join("system-tun.pid");
     let owned = fs::read_to_string(&path)
@@ -425,6 +456,13 @@ fn clear_pid_if_owned(tun_dir: &Path, core_pid: u32) {
     if owned {
         let _ = fs::remove_file(path);
     }
+}
+
+#[cfg(windows)]
+fn read_exit_code(paths: &ControlPaths) -> Option<u32> {
+    fs::read_to_string(&paths.exit)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
 }
 
 #[cfg(windows)]
@@ -445,9 +483,7 @@ fn launch_elevated_helper(request_path: &Path) -> Option<isize> {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
-    let Ok(exe) = std::env::current_exe() else {
-        return None;
-    };
+    let exe = std::env::current_exe().ok()?;
     let params = format!(
         "--tun-helper {}",
         quote_windows_argument(&request_path.as_os_str().to_string_lossy())
@@ -466,11 +502,11 @@ fn launch_elevated_helper(request_path: &Path) -> Option<isize> {
     info.lpParameters = params_wide.as_ptr();
     info.nShow = SW_HIDE;
 
-    let launched = unsafe { ShellExecuteExW(&mut info) } != 0;
-    if !launched || info.hProcess.is_null() {
-        return None;
+    if unsafe { ShellExecuteExW(&mut info) } == 0 || info.hProcess.is_null() {
+        None
+    } else {
+        Some(info.hProcess as isize)
     }
-    Some(info.hProcess as isize)
 }
 
 #[cfg(windows)]
@@ -512,8 +548,7 @@ fn process_handle_is_alive(handle: isize) -> bool {
         return false;
     }
     let mut exit_code = 0u32;
-    let ok = unsafe { GetExitCodeProcess(handle as _, &mut exit_code) } != 0;
-    ok && exit_code == 259
+    unsafe { GetExitCodeProcess(handle as _, &mut exit_code) != 0 } && exit_code == 259
 }
 
 #[cfg(windows)]
@@ -547,7 +582,7 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn spawn_log_tail(path: PathBuf, stream: &'static str, helper_handle: isize, tx: Sender<HelperLog>) {
+fn spawn_log_tail(path: PathBuf, exit_path: PathBuf, stream: &'static str, tx: Sender<HelperLog>) {
     std::thread::spawn(move || {
         let mut offset = 0u64;
         loop {
@@ -571,17 +606,30 @@ fn spawn_log_tail(path: PathBuf, stream: &'static str, helper_handle: isize, tx:
                 }
             }
 
-            if !process_handle_is_alive(helper_handle) {
-                if let Ok(metadata) = fs::metadata(&path) {
-                    if offset >= metadata.len() {
-                        break;
-                    }
-                } else {
-                    break;
-                }
+            let control_dir_exists = path.parent().is_some_and(Path::exists);
+            if !control_dir_exists {
+                break;
+            }
+            if exit_path.exists()
+                && fs::metadata(&path)
+                    .map(|metadata| offset >= metadata.len())
+                    .unwrap_or(true)
+            {
+                break;
             }
             std::thread::sleep(Duration::from_millis(150));
         }
+    });
+}
+
+#[cfg(windows)]
+fn schedule_control_cleanup(paths: ControlPaths) {
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !paths.exit.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        let _ = fs::remove_dir_all(paths.dir);
     });
 }
 
@@ -598,5 +646,13 @@ mod tests {
             quote_windows_argument("C:\\Aether GUI\\request.json"),
             "\"C:\\Aether GUI\\request.json\""
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn accepts_only_expected_core_names() {
+        assert!(expected_core_name(TunEngine::Xray, Path::new("xray-v26.6.1.exe")));
+        assert!(expected_core_name(TunEngine::Singbox, Path::new("sing-box.exe")));
+        assert!(!expected_core_name(TunEngine::Xray, Path::new("xray-helper.exe")));
     }
 }
