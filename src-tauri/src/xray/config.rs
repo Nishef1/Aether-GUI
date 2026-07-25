@@ -64,6 +64,13 @@ pub fn generate_config(
                 },
                 {
                     "type": "field",
+                    "inboundTag": ["tun-in"],
+                    "port": "53,853",
+                    "network": "tcp,udp",
+                    "outboundTag": "proxy"
+                },
+                {
+                    "type": "field",
                     "ip": [
                         "127.0.0.0/8",
                         "10.0.0.0/8",
@@ -96,7 +103,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn xray_tun_routes_system_traffic_to_aether_socks() {
+    fn xray_tun_routes_system_traffic_and_dns_to_aether_socks() {
         let core = PathBuf::from(if cfg!(windows) {
             r"C:\Users\test\AppData\Roaming\Aether-GUI\cores\aether\aether-v1.4.0.exe"
         } else {
@@ -117,9 +124,15 @@ mod tests {
         );
         assert_eq!(value["outbounds"][0]["protocol"], "socks");
         assert_eq!(value["outbounds"][0]["settings"]["port"], 1819);
-        assert_eq!(value["routing"]["rules"][0]["outboundTag"], "direct");
-        assert_eq!(value["routing"]["rules"][2]["outboundTag"], "proxy");
-        assert!(!value["routing"]["rules"][0]["process"][0]
+
+        let rules = value["routing"]["rules"].as_array().unwrap();
+        assert_eq!(rules[0]["outboundTag"], "direct");
+        assert_eq!(rules[1]["port"], "53,853");
+        assert_eq!(rules[1]["network"], "tcp,udp");
+        assert_eq!(rules[1]["outboundTag"], "proxy");
+        assert_eq!(rules[2]["outboundTag"], "direct");
+        assert_eq!(rules[3]["outboundTag"], "proxy");
+        assert!(!rules[0]["process"][0]
             .as_str()
             .unwrap()
             .contains('\\'));
