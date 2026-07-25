@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { check, type Update } from "@tauri-apps/plugin-updater"
 import { relaunch } from "@tauri-apps/plugin-process"
-import { Download, LoaderCircle, Maximize2, Minus, Settings, X } from "lucide-react"
+import { Download, LoaderCircle, Minus, Settings, X } from "lucide-react"
 import { useConnectionStore } from "@/state/connectionStore"
 import { useCoreStore } from "@/state/coreStore"
 import type { CoreKind } from "@/types/core"
@@ -219,14 +219,6 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         onClick={() => void appWindow.minimize()}
       >
         <Minus className="size-4" />
-      </button>
-      <button
-        type="button"
-        aria-label="Maximize"
-        className="grid h-full w-13 place-items-center text-muted-foreground hover:bg-surface-2 hover:text-foreground"
-        onClick={() => void appWindow.toggleMaximize()}
-      >
-        <Maximize2 className="size-3.5" />
       </button>
       <button
         type="button"
