@@ -20,9 +20,26 @@ use state::AppState;
 use tauri::{Manager, WindowEvent};
 
 #[cfg(windows)]
-pub(crate) fn is_admin() -> bool {
+pub(crate) fn os_is_admin() -> bool {
     use windows_sys::Win32::UI::Shell::IsUserAnAdmin;
     unsafe { IsUserAnAdmin() != 0 }
+}
+
+#[cfg(unix)]
+pub(crate) fn os_is_admin() -> bool {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "0")
+        .unwrap_or(false)
+}
+
+/// Compatibility gate used by the existing connection supervisor. On Windows,
+/// a standard-user GUI can satisfy privileged TUN work through the detached
+/// helper, so the supervisor must not demand a whole-app relaunch. Callers that
+/// need the process's actual integrity level must use `os_is_admin()` instead.
+pub(crate) fn is_admin() -> bool {
+    os_is_admin() || tun_helper::is_supported()
 }
 
 #[cfg(windows)]
@@ -58,15 +75,6 @@ pub(crate) fn relaunch_as_admin() -> bool {
         let _ = single_instance::acquire();
     }
     launched
-}
-
-#[cfg(unix)]
-pub(crate) fn is_admin() -> bool {
-    std::process::Command::new("id")
-        .arg("-u")
-        .output()
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "0")
-        .unwrap_or(false)
 }
 
 #[cfg(target_os = "linux")]
@@ -159,9 +167,6 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
-                // Temporarily pin the window while focusing it. This works
-                // around Windows foreground restrictions after elevation;
-                // the window is not left permanently always-on-top.
                 let _ = window.set_always_on_top(true);
                 let _ = window.set_focus();
                 let _ = window.set_always_on_top(false);
