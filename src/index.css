@@ -119,9 +119,44 @@
     }
 }
 
-/* Radix's Collapsible exposes the measured content height as this CSS var
-   specifically so height can be animated without JS measurement — no Motion
-   dependency needed for this interaction (see LogsPanel.tsx). */
+/* Radix exposes the measured content height so the disclosure can animate to
+   its real size without JS measurement. Height and opacity are kept together
+   here to avoid the abrupt snap of generic enter/exit utility animations. */
+@keyframes advanced-collapsible-open {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+
+@keyframes advanced-collapsible-close {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+.advanced-collapsible-content {
+  overflow: hidden;
+  transform-origin: top;
+  will-change: height, opacity;
+}
+
+.advanced-collapsible-content[data-state="open"] {
+  animation: advanced-collapsible-open 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.advanced-collapsible-content[data-state="closed"] {
+  animation: advanced-collapsible-close 210ms cubic-bezier(0.4, 0, 1, 1);
+}
 
 /* All LOOPING animation lives here as pure CSS on compositor-promoted layers
    (transform/opacity only) — Chromium runs these entirely off the main
@@ -166,6 +201,6 @@
    motion; the connecting/connected pulses are active state feedback and are
    deliberately left running (matches the original Motion behavior). */
 @media (prefers-reduced-motion: reduce) {
+  .advanced-collapsible-content[data-state] { animation: none; }
   .anim-ring-breathe, .anim-orb-a, .anim-orb-b { animation: none; }
 }
-
