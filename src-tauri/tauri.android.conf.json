@@ -16,7 +16,7 @@
     "resources": [],
     "createUpdaterArtifacts": false,
     "android": {
-      "minSdkVersion": 26
+      "minSdkVersion": 29
     }
   }
 }
