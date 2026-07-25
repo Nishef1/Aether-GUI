@@ -38,13 +38,18 @@ try {
     # build from changing the developer's currently selected managed core.
     & (Join-Path $PSScriptRoot "run-local-aether.ps1") -AppDataDir $TemporaryAppData
 
-    if (-not (Test-Path $BuiltBinary) -or (Get-Item $BuiltBinary).Length -le 0) {
-        throw "Embedded Aether build did not produce a usable executable at $BuiltBinary"
-    }
-
     $GitSha = (& git -C $AetherRepo rev-parse --short=12 HEAD 2>$null | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($GitSha)) {
         throw "Could not determine the pinned embedded Aether commit"
+    }
+
+    $DirtyState = (& git -C $AetherRepo status --porcelain --untracked-files=all 2>$null | Out-String).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($DirtyState)) {
+        throw "vendor/aether contains uncommitted changes. Commit them and update the GUI submodule pointer before building a distributable installer."
+    }
+
+    if (-not (Test-Path $BuiltBinary) -or (Get-Item $BuiltBinary).Length -le 0) {
+        throw "Embedded Aether build did not produce a usable executable at $BuiltBinary"
     }
 
     $Version = "dev-$GitSha"
