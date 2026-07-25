@@ -40,22 +40,15 @@ export function ConnectionModeToggle() {
       <div className="grid grid-cols-3 gap-1 rounded-xl bg-surface-2/70 p-1 ring-1 ring-white/8">
         {MODES.map(({ value, label, icon: Icon, description }) => {
           const selected = mode === value
-          const unavailableOnAndroid = isAndroid && value !== "proxy"
-          const disabled = locked || unavailableOnAndroid
           return (
             <button
               key={value}
               type="button"
-              disabled={disabled}
-              aria-disabled={disabled}
+              disabled={locked}
               aria-pressed={selected}
-              title={
-                unavailableOnAndroid
-                  ? "Full-device Android VPN is not included in this ARM64 alpha"
-                  : description
-              }
+              title={description}
               onClick={() => void setMode(value)}
-              className={`flex min-w-0 flex-col items-center gap-1 rounded-lg px-2 py-2.5 text-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-45 ${
+              className={`flex min-w-0 flex-col items-center gap-1 rounded-lg px-2 py-2.5 text-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60 ${
                 selected
                   ? "bg-background text-foreground shadow-sm ring-1 ring-white/10"
                   : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
@@ -64,7 +57,7 @@ export function ConnectionModeToggle() {
               <Icon className="size-4" aria-hidden="true" />
               <span className="text-xs font-medium">{label}</span>
               <span className="truncate text-[9px] text-muted-foreground">
-                {unavailableOnAndroid ? "Coming next" : description}
+                {description}
               </span>
             </button>
           )
@@ -72,9 +65,8 @@ export function ConnectionModeToggle() {
       </div>
       {isAndroid && (
         <p className="mt-2 px-1 text-center text-[10px] leading-relaxed text-muted-foreground">
-          ARM64 alpha exposes Aether&apos;s protected SOCKS5 endpoint. The Android
-          TUN-to-SOCKS bridge is intentionally disabled until it can be validated
-          without risking a device-wide traffic black hole.
+          Tunnel and Both use Android VpnService with an ARM64 native TUN-to-SOCKS
+          bridge. Android asks for VPN permission on first connection.
         </p>
       )}
     </div>
