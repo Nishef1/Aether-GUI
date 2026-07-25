@@ -27,6 +27,14 @@ if [[ -n "$VERSION" ]]; then
   API_URL="https://api.github.com/repos/${REPO}/releases/tags/${VERSION}"
 fi
 
+HEADERS=(
+  -H 'Accept: application/vnd.github+json'
+  -H 'User-Agent: Aether-GUI-Core-Manager'
+)
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  HEADERS+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+
 mkdir -p "$DEST_DIR"
 TMP_DIR="$(mktemp -d "${DEST_DIR}/_xray_install_XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -43,10 +51,8 @@ case "$(uname -s)-$(uname -m)" in
 esac
 
 RELEASE_JSON="$TMP_DIR/release.json"
-curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 45 \
-  -H 'Accept: application/vnd.github+json' \
-  -H 'User-Agent: Aether-GUI-Core-Manager' \
-  "$API_URL" -o "$RELEASE_JSON"
+curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 60 \
+  "${HEADERS[@]}" "$API_URL" -o "$RELEASE_JSON"
 
 # Emit one tab-separated record instead of using Bash 4-only `readarray`.
 # macOS still ships Bash 3.2, so keep this installer portable across the
@@ -86,9 +92,8 @@ fi
 ARCHIVE="$TMP_DIR/$ASSET_NAME"
 EXTRACT_DIR="$TMP_DIR/extract"
 mkdir -p "$EXTRACT_DIR"
-curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 \
-  -H 'User-Agent: Aether-GUI-Core-Manager' \
-  "$DOWNLOAD_URL" -o "$ARCHIVE"
+curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 \
+  "${HEADERS[@]}" "$DOWNLOAD_URL" -o "$ARCHIVE"
 
 if command -v sha256sum >/dev/null 2>&1; then
   ACTUAL_SHA="$(sha256sum "$ARCHIVE" | awk '{print tolower($1)}')"
