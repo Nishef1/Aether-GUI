@@ -59,7 +59,7 @@ export function AdvancedPanel() {
   return (
     <div className="w-full max-w-sm">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-surface-2/80 px-3 py-2.5 text-left outline-none transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out hover:-translate-y-px hover:border-primary/35 hover:bg-surface-3/90 hover:shadow-[0_8px_24px_rgba(0,0,0,0.18)] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:border-primary/30 data-[state=open]:bg-primary/8 data-[state=open]:shadow-[inset_0_1px_0_color-mix(in_oklch,var(--color-primary)_18%,transparent)] motion-reduce:transform-none motion-reduce:transition-none">
+        <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-surface-2/80 px-3 py-2.5 text-left outline-none transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out hover:-translate-y-px hover:border-primary/35 hover:bg-surface-3/90 hover:shadow-[0_8px_24px_rgba(0,0,0,0.18)] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:border-primary/30 data-[state=open]:bg-primary/8 data-[state=open]:shadow-[inset_0_1px_0_rgba(242,113,28,0.18)] motion-reduce:transform-none motion-reduce:transition-none">
           <span className="flex min-w-0 items-center gap-3">
             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/12 text-primary ring-1 ring-primary/20 transition-colors duration-200 group-hover:bg-primary/18 group-data-[state=open]:bg-primary/20">
               <Settings2 size={16} aria-hidden="true" />
@@ -85,7 +85,7 @@ export function AdvancedPanel() {
 
         <CollapsibleContent className="advanced-collapsible-content">
           <div className="pt-2.5">
-            <div className="flex flex-col gap-4 rounded-xl border border-border/80 bg-surface-1/78 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+            <div className="flex flex-col gap-4 rounded-xl border border-border/80 bg-surface-1/80 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
               <FieldRow
                 label="Protocol"
                 tooltip="MASQUE carries traffic over HTTP transports and may blend better with common web traffic. WireGuard is lighter and faster when its UDP path works. gool nests WireGuard sessions but does not guarantee better censorship resistance."
