@@ -8,20 +8,31 @@ const binaries = resolve(root, "src-tauri", "binaries")
 const embeddedAether = resolve(root, "vendor", "aether")
 
 let embeddedAetherCommit = ""
+let embeddedAetherDirtyState = ""
 try {
   embeddedAetherCommit = execFileSync(
     "git",
     ["-C", embeddedAether, "rev-parse", "--short=12", "HEAD"],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
   ).trim()
+  embeddedAetherDirtyState = execFileSync(
+    "git",
+    ["-C", embeddedAether, "status", "--porcelain", "--untracked-files=all"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  ).trim()
 } catch (error) {
   throw new Error(
-    `Could not read the pinned vendor/aether commit: ${error instanceof Error ? error.message : String(error)}`
+    `Could not inspect the pinned vendor/aether source: ${error instanceof Error ? error.message : String(error)}`
   )
 }
 
 if (!/^[0-9a-f]{12}$/i.test(embeddedAetherCommit)) {
   throw new Error(`Invalid embedded Aether commit identifier: ${embeddedAetherCommit}`)
+}
+if (embeddedAetherDirtyState) {
+  throw new Error(
+    "vendor/aether contains uncommitted changes; a distributable installer must match the committed submodule pointer exactly"
+  )
 }
 
 const expectedAetherVersion = `dev-${embeddedAetherCommit}`
@@ -130,5 +141,5 @@ if (failures.length) {
 }
 
 console.log(
-  `Bundled Windows Aether ${expectedAetherVersion} matches vendor/aether ${embeddedAetherCommit}; sing-box, Xray, Wintun, installer helpers, aliases, and Tauri resource mappings match the pinned release contract.`
+  `Bundled Windows Aether ${expectedAetherVersion} matches clean vendor/aether ${embeddedAetherCommit}; sing-box, Xray, Wintun, installer helpers, aliases, and Tauri resource mappings match the pinned release contract.`
 )
