@@ -31,7 +31,7 @@ mod android {
                 protocol: "auto".into(),
                 scan_mode: "balanced".into(),
                 ip_version: "v4".into(),
-                connection_mode: "proxy".into(),
+                connection_mode: "tunnel".into(),
                 tun_engine: "xray".into(),
                 quick_reconnect: true,
                 masque_http2: false,
@@ -100,8 +100,18 @@ mod android {
     fn status_value(status: VpnStatus) -> Value {
         match status.state.as_str() {
             "Launching" => json!({ "state": "Launching" }),
+            "StartingTunnel" => json!({
+                "state": "StartingTunnel",
+                "socks_addr": status.socks_addr.unwrap_or_else(|| "127.0.0.1:1819".into())
+            }),
             "Connected" => json!({
                 "state": "Connected",
+                "socks_addr": status.socks_addr.unwrap_or_else(|| "127.0.0.1:1819".into()),
+                "connected_at_ms": status.connected_at_ms.unwrap_or_else(now_ms)
+            }),
+            "Tunneling" => json!({
+                "state": "Tunneling",
+                "tun_addr": status.tun_addr.unwrap_or_else(|| "198.18.0.1".into()),
                 "socks_addr": status.socks_addr.unwrap_or_else(|| "127.0.0.1:1819".into()),
                 "connected_at_ms": status.connected_at_ms.unwrap_or_else(now_ms)
             }),
@@ -134,11 +144,15 @@ mod android {
     ) -> Result<(), String> {
         let profile = profile_override.unwrap_or_else(|| state.profile.lock().unwrap().clone());
         if profile.connection_mode != "proxy" {
-            return Err(
-                "Android ARM64 alpha currently supports Proxy mode. The full-device TUN bridge is still being integrated."
-                    .into(),
-            );
+            let permission = app
+                .aether_vpn()
+                .prepare()
+                .map_err(|error| error.to_string())?;
+            if !permission.prepared {
+                return Err("Android VPN permission was not granted".into());
+            }
         }
+
         save_profile(&app, &profile)?;
         *state.profile.lock().unwrap() = profile.clone();
 
@@ -146,11 +160,15 @@ mod android {
         emit_status(&app, &launching);
         emit_log(&app, "[android] starting bundled ARM64 Aether core");
 
-        match app.aether_vpn().start(profile.into()) {
+        match app.aether_vpn().start(profile.clone().into()) {
             Ok(status) => {
                 let value = status_value(status);
                 emit_status(&app, &value);
-                emit_log(&app, "[android] Aether SOCKS endpoint is ready");
+                if profile.connection_mode == "proxy" {
+                    emit_log(&app, "[android] Aether SOCKS endpoint is ready");
+                } else {
+                    emit_log(&app, "[android] full-device TUN is active through Aether");
+                }
                 Ok(())
             }
             Err(error) => {
@@ -174,7 +192,7 @@ mod android {
         app.aether_vpn().stop().map_err(|error| error.to_string())?;
         let idle = json!({ "state": "Idle" });
         emit_status(&app, &idle);
-        emit_log(&app, "[android] Aether core stopped");
+        emit_log(&app, "[android] Aether core and TUN stopped");
         Ok(())
     }
 
@@ -235,12 +253,23 @@ mod android {
     fn restore_instance_guard() {}
 
     #[tauri::command]
-    fn get_tun_status() -> Value {
-        json!({
-            "available": false,
-            "active": false,
-            "message": "Android TUN-to-SOCKS bridge is not bundled in this alpha"
-        })
+    fn get_tun_status(app: AppHandle) -> Value {
+        match app.aether_vpn().status() {
+            Ok(status) => json!({
+                "available": true,
+                "active": status.state == "Tunneling",
+                "message": if status.state == "Tunneling" {
+                    "Android VpnService and tun2socks are active"
+                } else {
+                    "Android TUN is available"
+                }
+            }),
+            Err(error) => json!({
+                "available": true,
+                "active": false,
+                "message": error.to_string()
+            }),
+        }
     }
 
     #[tauri::command]
