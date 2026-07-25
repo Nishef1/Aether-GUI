@@ -48,13 +48,20 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-HEADERS=(-H 'User-Agent: Aether-GUI-Core-Manager')
+HEADERS=(
+  -H 'Accept: application/vnd.github+json'
+  -H 'User-Agent: Aether-GUI-Core-Manager'
+)
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  HEADERS+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
 if [[ -n "$VERSION" ]]; then
   API_URL="https://api.github.com/repos/${REPO}/releases/tags/${VERSION}"
 else
   API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 fi
-RELEASE_JSON="$(curl -fsSL "${HEADERS[@]}" "$API_URL")"
+RELEASE_JSON="$(curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 60 \
+  "${HEADERS[@]}" "$API_URL")"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "Node.js is required to parse sing-box release metadata" >&2
@@ -100,7 +107,8 @@ ARCHIVE="$TMP_DIR/$ASSET"
 EXTRACT_DIR="$TMP_DIR/extract"
 mkdir -p "$EXTRACT_DIR"
 
-curl -fL --retry 2 "${HEADERS[@]}" -o "$ARCHIVE" "$URL"
+curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 \
+  "${HEADERS[@]}" -o "$ARCHIVE" "$URL"
 if command -v sha256sum >/dev/null 2>&1; then
   ACTUAL="$(sha256sum "$ARCHIVE" | awk '{print tolower($1)}')"
 elif command -v shasum >/dev/null 2>&1; then
