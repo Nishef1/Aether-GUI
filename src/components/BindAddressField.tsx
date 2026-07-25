@@ -52,8 +52,8 @@ export function BindAddressField() {
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur()
           if (event.key === "Escape") {
+            event.preventDefault()
             setDraftPort(null)
-            event.currentTarget.blur()
           }
         }}
         aria-invalid={invalid}
