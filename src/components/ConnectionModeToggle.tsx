@@ -1,12 +1,13 @@
-import { Globe2, Layers3, Network } from "lucide-react";
-import { useConnectionStore } from "@/state/connectionStore";
-import type { ConnectionMode } from "@/types/connection";
+import { Globe2, Layers3, Network } from "lucide-react"
+import { isAndroid } from "@/lib/platform"
+import { useConnectionStore } from "@/state/connectionStore"
+import type { ConnectionMode } from "@/types/connection"
 
 const MODES: Array<{
-  value: ConnectionMode;
-  label: string;
-  icon: typeof Network;
-  description: string;
+  value: ConnectionMode
+  label: string
+  icon: typeof Network
+  description: string
 }> = [
   {
     value: "proxy",
@@ -26,28 +27,35 @@ const MODES: Array<{
     icon: Layers3,
     description: "TUN + local SOCKS5",
   },
-];
+]
 
 export function ConnectionModeToggle() {
-  const mode = useConnectionStore((state) => state.profile.connection_mode);
-  const setMode = useConnectionStore((state) => state.setConnectionMode);
-  const status = useConnectionStore((state) => state.status);
-  const locked = status.state !== "Idle" && status.state !== "Error";
+  const mode = useConnectionStore((state) => state.profile.connection_mode)
+  const setMode = useConnectionStore((state) => state.setConnectionMode)
+  const status = useConnectionStore((state) => state.status)
+  const locked = status.state !== "Idle" && status.state !== "Error"
 
   return (
     <div className="w-full max-w-sm" aria-label="Connection mode">
       <div className="grid grid-cols-3 gap-1 rounded-xl bg-surface-2/70 p-1 ring-1 ring-white/8">
         {MODES.map(({ value, label, icon: Icon, description }) => {
-          const selected = mode === value;
+          const selected = mode === value
+          const unavailableOnAndroid = isAndroid && value !== "proxy"
+          const disabled = locked || unavailableOnAndroid
           return (
             <button
               key={value}
               type="button"
-              disabled={locked}
+              disabled={disabled}
+              aria-disabled={disabled}
               aria-pressed={selected}
-              title={description}
-              onClick={() => setMode(value)}
-              className={`flex min-w-0 flex-col items-center gap-1 rounded-lg px-2 py-2.5 text-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60 ${
+              title={
+                unavailableOnAndroid
+                  ? "Full-device Android VPN is not included in this ARM64 alpha"
+                  : description
+              }
+              onClick={() => void setMode(value)}
+              className={`flex min-w-0 flex-col items-center gap-1 rounded-lg px-2 py-2.5 text-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-45 ${
                 selected
                   ? "bg-background text-foreground shadow-sm ring-1 ring-white/10"
                   : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
@@ -55,11 +63,20 @@ export function ConnectionModeToggle() {
             >
               <Icon className="size-4" aria-hidden="true" />
               <span className="text-xs font-medium">{label}</span>
-              <span className="truncate text-[9px] text-muted-foreground">{description}</span>
+              <span className="truncate text-[9px] text-muted-foreground">
+                {unavailableOnAndroid ? "Coming next" : description}
+              </span>
             </button>
-          );
+          )
         })}
       </div>
+      {isAndroid && (
+        <p className="mt-2 px-1 text-center text-[10px] leading-relaxed text-muted-foreground">
+          ARM64 alpha exposes Aether&apos;s protected SOCKS5 endpoint. The Android
+          TUN-to-SOCKS bridge is intentionally disabled until it can be validated
+          without risking a device-wide traffic black hole.
+        </p>
+      )}
     </div>
-  );
+  )
 }
