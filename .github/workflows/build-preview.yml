@@ -53,6 +53,10 @@ jobs:
     needs: prepare-release
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
+    env:
+      # The core installers use authenticated GitHub API/download requests on
+      # hosted runners to avoid sharing the anonymous rate limit across jobs.
+      GITHUB_TOKEN: ${{ github.token }}
     strategy:
       fail-fast: false
       matrix:
@@ -102,7 +106,7 @@ jobs:
           sudo apt-get install -y \
             build-essential clang libclang-dev cmake nasm curl wget file unzip \
             libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+            libayatana-appindicator3-dev librsvg2-dev patchelf rpm libfuse2
 
       - name: Install macOS native build dependencies
         if: matrix.platform == 'macos'
@@ -187,7 +191,10 @@ jobs:
         run: |
           set -euo pipefail
           bundle_dir="src-tauri/target/release/bundle"
-          mapfile -d '' files < <(find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -print0 | sort -z)
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done < <(find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -print | sort)
           test "${#files[@]}" -gt 0
           checksum="$bundle_dir/${{ matrix.artifact }}-SHA256SUMS.txt"
           : > "$checksum"
@@ -259,7 +266,10 @@ jobs:
         run: |
           set -euo pipefail
           bundle_dir="src-tauri/target/release/bundle"
-          mapfile -d '' files < <(find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '${{ matrix.artifact }}-SHA256SUMS.txt' \) -print0)
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done < <(find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '${{ matrix.artifact }}-SHA256SUMS.txt' \) -print | sort)
           test "${#files[@]}" -gt 0
           gh release upload "$PREVIEW_TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
 
