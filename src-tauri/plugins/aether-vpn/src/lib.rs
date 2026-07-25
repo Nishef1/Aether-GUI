@@ -17,6 +17,7 @@ pub enum Error {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VpnProfile {
     pub protocol: String,
     pub scan_mode: String,
