@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import { create } from "zustand"
 import type { ConnectionStatus, RuntimeTelemetry } from "@/types/connection"
 
@@ -25,6 +26,14 @@ function freshEmptyTelemetry(): RuntimeTelemetry {
 
 function applyTelemetry(snapshot: RuntimeTelemetry): void {
   useTelemetryStore.setState({ snapshot })
+}
+
+function refreshAfterFocus(focused: boolean): void {
+  if (focused) {
+    // WebView timers and event dispatch can be throttled while minimized. Pull
+    // the native snapshot immediately when the window becomes active again.
+    void useTelemetryStore.getState().refresh()
+  }
 }
 
 export const useTelemetryStore = create<TelemetryStore>(() => ({
@@ -65,11 +74,15 @@ async function initializeTelemetryRuntime(): Promise<void> {
     )
     unlisteners.push(
       await listen<boolean>("app://focused", (event) => {
-        if (event.payload) {
-          // WebView timers and event dispatch can be throttled while minimized.
-          // Pull the native snapshot immediately when the window returns.
-          void useTelemetryStore.getState().refresh()
-        }
+        refreshAfterFocus(event.payload)
+      })
+    )
+    // The Rust foreground-window watcher is authoritative on Windows. Tauri's
+    // native window event is retained as a fast secondary signal and as the
+    // primary focus source on Linux/macOS, where the Win32 watcher is absent.
+    unlisteners.push(
+      await getCurrentWindow().onFocusChanged(({ payload }) => {
+        refreshAfterFocus(payload)
       })
     )
   } catch (error) {
