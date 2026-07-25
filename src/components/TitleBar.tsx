@@ -150,10 +150,20 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
             setUpdateStage("Installing…")
           }
         })
-        // On Windows installation exits the app; this is kept for other
-        // platforms and for a future non-Windows bundle.
+        // On Windows installation normally exits the app. For platforms or
+        // updater modes that return, hand ownership to the replacement process
+        // before relaunching and restore it if process creation fails.
         setUpdateStage("Restarting…")
-        await relaunch()
+        await invoke("prepare_app_relaunch")
+        try {
+          await relaunch()
+        } catch (error) {
+          await invoke("restore_instance_guard").catch(() => {
+            // Preserve the original relaunch error; the next normal launch still
+            // gets a clean OS-released lock if this process exits.
+          })
+          throw error
+        }
         return
       }
 
