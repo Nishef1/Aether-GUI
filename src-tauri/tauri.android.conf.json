@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Aether",
+        "resizable": true,
+        "decorations": true,
+        "backgroundColor": "#0D0D0F"
+      }
+    ]
+  },
+  "bundle": {
+    "resources": [],
+    "android": {
+      "minSdkVersion": 26
+    }
+  }
+}
