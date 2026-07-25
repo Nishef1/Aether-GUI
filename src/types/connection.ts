@@ -35,6 +35,8 @@ export interface ConnectionProfile {
   masque_http2: boolean
   masque_noize: MasqueNoize
   wg_noize: WgNoize
+  /** DNS resolver used by the system TUN engines. Defaults to Cloudflare. */
+  dns_server: string
   /** Loopback-only SOCKS5 address. The port is configurable. */
   bind_address: string
 }
