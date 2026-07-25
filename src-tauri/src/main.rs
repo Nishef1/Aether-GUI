@@ -8,6 +8,7 @@ mod error;
 mod events;
 mod focus;
 mod singbox;
+mod single_instance;
 mod state;
 mod telemetry;
 mod traffic;
@@ -101,6 +102,14 @@ fn install_panic_hook() {
 }
 
 fn main() {
+    // Acquire ownership before touching PID files. Without this guard, launching
+    // a second GUI could classify the first GUI's live Aether/TUN children as
+    // orphans and terminate an otherwise healthy connection.
+    if !single_instance::acquire() {
+        single_instance::activate_existing_window();
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
