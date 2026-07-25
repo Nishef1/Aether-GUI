@@ -76,15 +76,20 @@ class AndroidPluginContractTest(unittest.TestCase):
         )
         self.assertIn("APP_ABI := arm64-v8a", build_script)
 
-    def test_kotlin_preflight_bootstraps_dynamic_tauri_gradle_files(self) -> None:
+    def test_kotlin_preflight_bootstraps_tauri_android_environment(self) -> None:
         preflight = KOTLIN_PREFLIGHT_SCRIPT.read_text(encoding="utf-8")
 
         self.assertIn('export TAURI_ANDROID_PROJECT_PATH="$android_dir"', preflight)
+        self.assertIn('export TAURI_ANDROID_PACKAGE_UNESCAPED="$app_package"', preflight)
+        self.assertIn('export WRY_ANDROID_PACKAGE="$app_package"', preflight)
+        self.assertIn('export WRY_ANDROID_LIBRARY="$app_library"', preflight)
+        self.assertIn('export WRY_ANDROID_KOTLIN_FILES_OUT_DIR="$kotlin_out_dir"', preflight)
+        self.assertIn('export ANDROID_NDK_ROOT="$NDK_HOME"', preflight)
         self.assertRegex(
             preflight,
             re.compile(
                 r"cargo ndk\s+\\\n\s+--target arm64-v8a\s+\\\n"
-                r"\s+--platform \"\$ANDROID_MIN_API\"\s+\\\n\s+build\s+\\\n\s+--lib",
+                r"\s+--platform \"\$ANDROID_MIN_API\"\s+\\\n\s+check\s+\\\n\s+--lib",
                 re.MULTILINE,
             ),
         )
@@ -99,11 +104,32 @@ class AndroidPluginContractTest(unittest.TestCase):
     def test_kotlin_preflight_executes_bootstrap_before_gradle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
-            android_dir = workspace / "src-tauri/gen/android"
+            tauri_dir = workspace / "src-tauri"
+            android_dir = tauri_dir / "gen/android"
             app_dir = android_dir / "app"
             bin_dir = workspace / "mock-bin"
             app_dir.mkdir(parents=True)
             bin_dir.mkdir()
+
+            (tauri_dir / "tauri.conf.json").write_text(
+                '{"identifier":"com.cluvexstudio.aethergui"}\n',
+                encoding="utf-8",
+            )
+            (tauri_dir / "Cargo.toml").write_text(
+                textwrap.dedent(
+                    """\
+                    [package]
+                    name = "aether-gui"
+                    version = "0.5.2"
+                    edition = "2021"
+
+                    [lib]
+                    name = "aether_gui_lib"
+                    crate-type = ["staticlib", "cdylib", "rlib"]
+                    """
+                ),
+                encoding="utf-8",
+            )
             (android_dir / "settings.gradle").write_text(
                 "apply from: 'tauri.settings.gradle'\n",
                 encoding="utf-8",
@@ -115,7 +141,20 @@ class AndroidPluginContractTest(unittest.TestCase):
                     """\
                     #!/usr/bin/env bash
                     set -euo pipefail
+                    test "$WRY_ANDROID_PACKAGE" = "com.cluvexstudio.aethergui"
+                    test "$TAURI_ANDROID_PACKAGE_UNESCAPED" = "com.cluvexstudio.aethergui"
+                    test "$WRY_ANDROID_LIBRARY" = "aether_gui_lib"
+                    test "$WRY_ANDROID_KOTLIN_FILES_OUT_DIR" = \
+                      "$GITHUB_WORKSPACE/src-tauri/gen/android/app/src/main/java/com/cluvexstudio/aethergui/generated"
+                    test -d "$WRY_ANDROID_KOTLIN_FILES_OUT_DIR"
+                    test "$ANDROID_NDK_HOME" = "/opt/android/ndk"
+                    test "$ANDROID_NDK_ROOT" = "/opt/android/ndk"
                     printf '%s\n' "$@" > "$GITHUB_WORKSPACE/cargo-args.txt"
+                    {
+                      printf 'WRY_ANDROID_PACKAGE=%s\n' "$WRY_ANDROID_PACKAGE"
+                      printf 'WRY_ANDROID_LIBRARY=%s\n' "$WRY_ANDROID_LIBRARY"
+                      printf 'WRY_ANDROID_KOTLIN_FILES_OUT_DIR=%s\n' "$WRY_ANDROID_KOTLIN_FILES_OUT_DIR"
+                    } > "$GITHUB_WORKSPACE/android-env.txt"
                     mkdir -p "$TAURI_ANDROID_PROJECT_PATH/app"
                     printf "%s\n" \
                       "include ':tauri-plugin-aether-vpn'" \
@@ -137,6 +176,7 @@ class AndroidPluginContractTest(unittest.TestCase):
                     set -euo pipefail
                     test -s "$GITHUB_WORKSPACE/src-tauri/gen/android/tauri.settings.gradle"
                     test -s "$GITHUB_WORKSPACE/src-tauri/gen/android/app/tauri.build.gradle.kts"
+                    test -d "$GITHUB_WORKSPACE/src-tauri/gen/android/app/src/main/java/com/cluvexstudio/aethergui/generated"
                     printf '%s\n' "$@" > "$GITHUB_WORKSPACE/gradle-args.txt"
                     """
                 ),
@@ -149,6 +189,7 @@ class AndroidPluginContractTest(unittest.TestCase):
                 {
                     "ANDROID_MIN_API": "29",
                     "GITHUB_WORKSPACE": str(workspace),
+                    "NDK_HOME": "/opt/android/ndk",
                     "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
                 }
             )
@@ -168,10 +209,14 @@ class AndroidPluginContractTest(unittest.TestCase):
             )
             cargo_args = (workspace / "cargo-args.txt").read_text(encoding="utf-8")
             gradle_args = (workspace / "gradle-args.txt").read_text(encoding="utf-8")
+            android_env = (workspace / "android-env.txt").read_text(encoding="utf-8")
             self.assertIn("ndk", cargo_args)
             self.assertIn("arm64-v8a", cargo_args)
             self.assertIn("29", cargo_args)
+            self.assertIn("check", cargo_args)
             self.assertIn("--lib", cargo_args)
+            self.assertIn("WRY_ANDROID_PACKAGE=com.cluvexstudio.aethergui", android_env)
+            self.assertIn("WRY_ANDROID_LIBRARY=aether_gui_lib", android_env)
             self.assertIn(":tauri-plugin-aether-vpn:compileDebugKotlin", gradle_args)
             self.assertIn("--stacktrace", gradle_args)
 
