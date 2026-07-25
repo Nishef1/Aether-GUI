@@ -176,6 +176,7 @@ function DnsServerField() {
 export function AdvancedPanel() {
   const status = useConnectionStore((state) => state.status)
   const mode = useConnectionStore((state) => state.profile.connection_mode)
+  const tunEngine = useConnectionStore((state) => state.profile.tun_engine)
   const quickReconnect = useConnectionStore(
     (state) => state.profile.quick_reconnect
   )
@@ -248,10 +249,19 @@ export function AdvancedPanel() {
                 <>
                   <FieldRow
                     label="System TUN engine"
-                    tooltip="Xray is the recommended Windows system-routing layer. sing-box remains available as a compatibility fallback. Both send traffic into Aether's local SOCKS tunnel."
+                    tooltip="sing-box is recommended on Windows because strict routing and DNS hijacking provide consistent system DNS enforcement. Xray remains available for compatibility but cannot transparently replace browser DoH, DoT, or DoQ."
                   >
                     <TunEngineToggle />
                   </FieldRow>
+                  {tunEngine === "xray" && (
+                    <p
+                      className="rounded-lg border border-warning/25 bg-warning/8 px-2.5 py-2 text-[10px] leading-relaxed text-warning"
+                      role="status"
+                    >
+                      Xray protects plaintext DNS, but browser Secure DNS can keep its own provider.
+                      Use sing-box when resolver consistency is required.
+                    </p>
+                  )}
                   <FieldRow
                     label="DNS resolver"
                     tooltip="Plain DNS is intercepted and sent to this resolver through Aether. Encrypted DNS selected inside a browser is still tunneled, but the browser controls its provider."
