@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useConnectionStore } from "@/state/connectionStore"
 
 const DEFAULT_PORT = "1819"
@@ -23,29 +23,26 @@ export function BindAddressField() {
   const status = useConnectionStore((state) => state.status)
   const locked = status.state !== "Idle" && status.state !== "Error"
   const persistedPort = portFromAddress(bind)
-  const [draftPort, setDraftPort] = useState(persistedPort)
-
-  useEffect(() => {
-    setDraftPort(persistedPort)
-  }, [persistedPort])
+  const [draftPort, setDraftPort] = useState<string | null>(null)
+  const displayedPort = draftPort ?? persistedPort
 
   const commit = () => {
-    const normalized = normalizePort(draftPort)
-    setDraftPort(normalized)
+    const normalized = normalizePort(displayedPort)
     const nextAddress = `${LOOPBACK}:${normalized}`
     if (nextAddress !== bind) setBindAddress(nextAddress)
+    setDraftPort(null)
   }
 
   const invalid =
-    draftPort.length > 0 &&
-    (Number(draftPort) < 1 || Number(draftPort) > 65535)
+    displayedPort.length > 0 &&
+    (Number(displayedPort) < 1 || Number(displayedPort) > 65535)
 
   return (
     <div className="flex items-center justify-between gap-3">
       <input
         type="text"
         inputMode="numeric"
-        value={draftPort}
+        value={displayedPort}
         placeholder={DEFAULT_PORT}
         disabled={locked}
         onChange={(event) =>
@@ -55,7 +52,7 @@ export function BindAddressField() {
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur()
           if (event.key === "Escape") {
-            setDraftPort(persistedPort)
+            setDraftPort(null)
             event.currentTarget.blur()
           }
         }}
