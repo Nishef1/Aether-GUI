@@ -69,17 +69,21 @@ const ARIA_LABEL: Record<Phase, string> = {
 }
 
 export function ConnectButton() {
-  const status = useConnectionStore((s) => s.status)
-  const connect = useConnectionStore((s) => s.connect)
-  const disconnect = useConnectionStore((s) => s.disconnect)
-  const preparingCores = useConnectionStore((s) => s.preparingCores)
+  const status = useConnectionStore((state) => state.status)
+  const connect = useConnectionStore((state) => state.connect)
+  const disconnect = useConnectionStore((state) => state.disconnect)
+  const preparingCores = useConnectionStore((state) => state.preparingCores)
   const focused = useWindowFocused()
 
   const phase = preparingCores ? "connecting" : phaseOf(status)
   const Icon = ICONS[phase]
-  const playState = {
-    animationPlayState: focused ? ("running" as const) : ("paused" as const),
-  }
+  const activeMotion = phase === "connecting" || phase === "connected"
+  const idlePlayState =
+    phase === "idle"
+      ? {
+          animationPlayState: focused ? ("running" as const) : ("paused" as const),
+        }
+      : undefined
 
   const handleClick = () => {
     if (phase === "idle" || phase === "error") {
@@ -102,6 +106,7 @@ export function ConnectButton() {
     >
       <span
         aria-hidden
+        data-runtime-animation={activeMotion ? "active" : undefined}
         className={cn(
           "absolute inset-0 rounded-full bg-surface-2",
           RING_ANIM[phase]
@@ -110,13 +115,14 @@ export function ConnectButton() {
           boxShadow: RING_SHADOW[phase],
           transition: "box-shadow 0.15s ease",
           willChange: "transform, opacity",
-          ...playState,
+          ...idlePlayState,
         }}
       />
 
       {GLOW[phase] && (
         <span
           aria-hidden
+          data-runtime-animation="active"
           className={cn(
             "pointer-events-none absolute inset-0 rounded-full",
             phase === "connecting" ? "anim-glow-fast" : "anim-glow-slow"
@@ -124,13 +130,12 @@ export function ConnectButton() {
           style={{
             boxShadow: GLOW[phase],
             willChange: "transform, opacity",
-            ...playState,
           }}
         />
       )}
 
       <AnimatePresence>
-        {(phase === "connecting" || phase === "connected") && (
+        {activeMotion && (
           <motion.span
             key={phase}
             aria-hidden
@@ -163,7 +168,7 @@ export function ConnectButton() {
           <Icon
             size={48}
             strokeWidth={2}
-            style={phase === "connecting" ? playState : undefined}
+            data-runtime-animation={phase === "connecting" ? "active" : undefined}
             className={
               phase === "connecting"
                 ? "animate-spin text-status-connecting"
