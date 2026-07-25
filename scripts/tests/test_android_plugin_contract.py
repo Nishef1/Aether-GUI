@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -91,6 +95,85 @@ class AndroidPluginContractTest(unittest.TestCase):
         )
         self.assertIn("include ':tauri-plugin-aether-vpn'", preflight)
         self.assertIn('implementation(project(\":tauri-plugin-aether-vpn\"))', preflight)
+
+    def test_kotlin_preflight_executes_bootstrap_before_gradle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            android_dir = workspace / "src-tauri/gen/android"
+            app_dir = android_dir / "app"
+            bin_dir = workspace / "mock-bin"
+            app_dir.mkdir(parents=True)
+            bin_dir.mkdir()
+            (android_dir / "settings.gradle").write_text(
+                "apply from: 'tauri.settings.gradle'\n",
+                encoding="utf-8",
+            )
+
+            cargo = bin_dir / "cargo"
+            cargo.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    printf '%s\n' "$@" > "$GITHUB_WORKSPACE/cargo-args.txt"
+                    mkdir -p "$TAURI_ANDROID_PROJECT_PATH/app"
+                    printf "%s\n" \
+                      "include ':tauri-plugin-aether-vpn'" \
+                      > "$TAURI_ANDROID_PROJECT_PATH/tauri.settings.gradle"
+                    printf "%s\n" \
+                      'implementation(project(\":tauri-plugin-aether-vpn\"))' \
+                      > "$TAURI_ANDROID_PROJECT_PATH/app/tauri.build.gradle.kts"
+                    """
+                ),
+                encoding="utf-8",
+            )
+            cargo.chmod(0o755)
+
+            gradlew = android_dir / "gradlew"
+            gradlew.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    test -s "$GITHUB_WORKSPACE/src-tauri/gen/android/tauri.settings.gradle"
+                    test -s "$GITHUB_WORKSPACE/src-tauri/gen/android/app/tauri.build.gradle.kts"
+                    printf '%s\n' "$@" > "$GITHUB_WORKSPACE/gradle-args.txt"
+                    """
+                ),
+                encoding="utf-8",
+            )
+            gradlew.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ANDROID_MIN_API": "29",
+                    "GITHUB_WORKSPACE": str(workspace),
+                    "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(KOTLIN_PREFLIGHT_SCRIPT)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"preflight failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            )
+            cargo_args = (workspace / "cargo-args.txt").read_text(encoding="utf-8")
+            gradle_args = (workspace / "gradle-args.txt").read_text(encoding="utf-8")
+            self.assertIn("ndk", cargo_args)
+            self.assertIn("arm64-v8a", cargo_args)
+            self.assertIn("29", cargo_args)
+            self.assertIn("--lib", cargo_args)
+            self.assertIn(":tauri-plugin-aether-vpn:compileDebugKotlin", gradle_args)
+            self.assertIn("--stacktrace", gradle_args)
 
     def test_workflow_runs_real_kotlin_compile_preflight(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
