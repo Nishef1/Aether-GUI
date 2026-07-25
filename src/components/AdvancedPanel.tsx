@@ -5,6 +5,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Switch } from "@/components/ui/switch"
 import { ProtocolSelect } from "@/components/ProtocolSelect"
@@ -15,6 +22,33 @@ import { NoizeProfileToggle } from "@/components/NoizeProfileToggle"
 import { BindAddressField } from "@/components/BindAddressField"
 import { TunEngineToggle } from "@/components/TunEngineToggle"
 import { useConnectionStore } from "@/state/connectionStore"
+
+const DEFAULT_DNS = "1.1.1.1"
+const DNS_PRESETS = [
+  { value: "1.1.1.1", label: "Cloudflare · 1.1.1.1" },
+  { value: "8.8.8.8", label: "Google · 8.8.8.8" },
+  { value: "9.9.9.9", label: "Quad9 · 9.9.9.9" },
+  { value: "94.140.14.14", label: "AdGuard · 94.140.14.14" },
+] as const
+
+function normalizeIpAddress(value: string): string | null {
+  const candidate = value.trim()
+  const ipv4 = candidate.split(".")
+  if (
+    ipv4.length === 4 &&
+    ipv4.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+  ) {
+    return ipv4.map((part) => String(Number(part))).join(".")
+  }
+
+  if (!candidate.includes(":")) return null
+  try {
+    const hostname = new URL(`http://[${candidate}]/`).hostname.replace(/^\[|\]$/g, "")
+    return hostname.includes(":") ? hostname : null
+  } catch {
+    return null
+  }
+}
 
 function FieldRow({
   label,
@@ -39,6 +73,102 @@ function FieldRow({
         )}
       </div>
       {children}
+    </div>
+  )
+}
+
+function DnsServerField() {
+  const status = useConnectionStore((state) => state.status)
+  const dnsServer = useConnectionStore((state) => state.profile.dns_server)
+  const setDnsServer = useConnectionStore((state) => state.setDnsServer)
+  const [customMode, setCustomMode] = useState(false)
+  const [draft, setDraft] = useState<string | null>(null)
+  const locked = status.state !== "Idle" && status.state !== "Error"
+  const preset = DNS_PRESETS.some((entry) => entry.value === dnsServer)
+  const selection = customMode || !preset ? "custom" : dnsServer
+  const displayed = draft ?? (preset ? "" : dnsServer)
+  const normalized = normalizeIpAddress(displayed)
+  const invalid = displayed.length > 0 && normalized === null
+
+  const commitCustom = () => {
+    if (displayed.trim().length === 0) {
+      setDnsServer(DEFAULT_DNS)
+      setDraft(null)
+      setCustomMode(false)
+      return
+    }
+    if (!normalized) return
+    setDnsServer(normalized)
+    setDraft(null)
+    setCustomMode(false)
+  }
+
+  return (
+    <div className="space-y-2">
+      <Select
+        value={selection}
+        disabled={locked}
+        onValueChange={(value) => {
+          if (value === "custom") {
+            setCustomMode(true)
+            setDraft(preset ? "" : dnsServer)
+            return
+          }
+          setCustomMode(false)
+          setDraft(null)
+          setDnsServer(value)
+        }}
+      >
+        <SelectTrigger
+          size="sm"
+          className="w-full border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-2"
+          aria-label="DNS resolver"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {DNS_PRESETS.map((entry) => (
+            <SelectItem key={entry.value} value={entry.value}>
+              {entry.label}
+            </SelectItem>
+          ))}
+          <SelectItem value="custom">Custom IP</SelectItem>
+        </SelectContent>
+      </Select>
+
+      {selection === "custom" && (
+        <div className="space-y-1">
+          <input
+            type="text"
+            value={displayed}
+            placeholder={DEFAULT_DNS}
+            disabled={locked}
+            onChange={(event) => setDraft(event.target.value.slice(0, 64))}
+            onBlur={commitCustom}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur()
+              if (event.key === "Escape") {
+                event.preventDefault()
+                setDraft(null)
+                setCustomMode(false)
+              }
+            }}
+            aria-label="Custom DNS IP address"
+            aria-invalid={invalid}
+            className="h-8 w-full rounded-md bg-black/20 px-2.5 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+          />
+          {invalid && (
+            <p className="text-[10px] text-destructive" role="status">
+              Enter a valid IPv4 or IPv6 address.
+            </p>
+          )}
+        </div>
+      )}
+
+      <p className="text-[10px] leading-relaxed text-muted-foreground">
+        Controls system and plaintext DNS in TUN mode. Browser Secure DNS remains tunneled but may
+        use and report its own provider.
+      </p>
     </div>
   )
 }
@@ -115,12 +245,20 @@ export function AdvancedPanel() {
               </FieldRow>
 
               {mode !== "proxy" && (
-                <FieldRow
-                  label="System TUN engine"
-                  tooltip="Xray is the recommended Windows system-routing layer. sing-box remains available as a compatibility fallback. Both send traffic into Aether's local SOCKS tunnel."
-                >
-                  <TunEngineToggle />
-                </FieldRow>
+                <>
+                  <FieldRow
+                    label="System TUN engine"
+                    tooltip="Xray is the recommended Windows system-routing layer. sing-box remains available as a compatibility fallback. Both send traffic into Aether's local SOCKS tunnel."
+                  >
+                    <TunEngineToggle />
+                  </FieldRow>
+                  <FieldRow
+                    label="DNS resolver"
+                    tooltip="Plain DNS is intercepted and sent to this resolver through Aether. Encrypted DNS selected inside a browser is still tunneled, but the browser controls its provider."
+                  >
+                    <DnsServerField />
+                  </FieldRow>
+                </>
               )}
 
               {mode !== "tunnel" && (
