@@ -562,7 +562,7 @@ fn process_handle_is_alive(handle: isize) -> bool {
         return false;
     }
     let mut exit_code = 0u32;
-    unsafe { GetExitCodeProcess(handle as _, &mut exit_code) != 0 } && exit_code == 259
+    (unsafe { GetExitCodeProcess(handle as _, &mut exit_code) != 0 }) && exit_code == 259
 }
 
 #[cfg(windows)]
