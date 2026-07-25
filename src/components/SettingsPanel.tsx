@@ -30,7 +30,7 @@ function MobileCoreSummary() {
       </div>
       <div className="flex items-center gap-2 border-t border-border/60 pt-2 text-[10px] text-muted-foreground">
         <ShieldCheck className="size-3.5 text-primary" aria-hidden="true" />
-        Proxy-only alpha; system TUN remains disabled until validated.
+        Android VpnService and the pinned ARM64 TUN-to-SOCKS bridge are bundled.
       </div>
     </div>
   )
@@ -134,7 +134,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             </h3>
             <p className="text-[10px] leading-relaxed text-muted-foreground">
               {isAndroid
-                ? "The Android package uses one reproducible ARM64 core built with the app."
+                ? "The Android package uses reproducible ARM64 native components built with the app."
                 : "Install, switch, or remove inactive Aether, Xray, and sing-box versions while disconnected."}
             </p>
           </div>
