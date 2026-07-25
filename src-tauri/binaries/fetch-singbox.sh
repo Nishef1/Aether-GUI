@@ -24,6 +24,19 @@ done
 
 mkdir -p "$DEST_DIR"
 
+# The embedded Aether fork compiles BoringSSL and leaves a multi-gigabyte Cargo
+# target directory. Hosted macOS/Linux runners have limited free space, and the
+# final binary has already been staged before this installer runs. Reclaim only
+# that disposable CI cache; local developer builds keep their incremental cache.
+if [[ "${CI:-}" == "true" ]]; then
+  REPO_ROOT="$(cd "$DEST_DIR/../.." && pwd)"
+  AETHER_TARGET="$REPO_ROOT/vendor/aether/aether/target"
+  if [[ -d "$AETHER_TARGET" ]]; then
+    echo "[core-installer] reclaiming embedded Aether CI build cache"
+    rm -rf "$AETHER_TARGET"
+  fi
+fi
+
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)   PLATFORM="linux-amd64" ;;
   Linux-aarch64)  PLATFORM="linux-arm64" ;;
