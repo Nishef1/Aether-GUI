@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { isAndroid } from "@/lib/platform"
 import { useConnectionStore } from "@/state/connectionStore"
 import type { TunEngine } from "@/types/connection"
 
@@ -22,6 +24,21 @@ export function TunEngineToggle() {
   const setTunEngine = useConnectionStore((state) => state.setTunEngine)
   const locked = status.state !== "Idle" && status.state !== "Error"
   const proxyOnly = mode === "proxy"
+
+  useEffect(() => {
+    // The mobile profile keeps the desktop-compatible field for schema parity,
+    // but Android always uses VpnService + the bundled native tun2socks bridge.
+    if (isAndroid && engine !== "singbox") setTunEngine("singbox")
+  }, [engine, setTunEngine])
+
+  if (isAndroid) {
+    return (
+      <div className="flex h-9 items-center justify-between rounded-full bg-black/20 px-3 text-xs ring-1 ring-white/10">
+        <span className="text-foreground">Android native</span>
+        <span className="text-[10px] text-muted-foreground">VpnService + tun2socks</span>
+      </div>
+    )
+  }
 
   return (
     <ToggleGroup
