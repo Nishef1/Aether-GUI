@@ -62,6 +62,7 @@ interface ConnectionState {
   setMasqueHttp2: (masque_http2: boolean) => void
   setMasqueNoize: (masque_noize: MasqueNoize) => void
   setWgNoize: (wg_noize: WgNoize) => void
+  setDnsServer: (dns_server: string) => void
   setBindAddress: (bind_address: string) => void
   retryAfterSidecarError: () => void
 }
@@ -108,6 +109,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       masque_http2: false,
       masque_noize: "firewall",
       wg_noize: "balanced",
+      dns_server: "1.1.1.1",
       bind_address: "127.0.0.1:1819",
     },
     profileSaveError: null,
@@ -225,6 +227,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     setMasqueHttp2: (masque_http2) => updateProfileQuietly({ masque_http2 }),
     setMasqueNoize: (masque_noize) => updateProfileQuietly({ masque_noize }),
     setWgNoize: (wg_noize) => updateProfileQuietly({ wg_noize }),
+    setDnsServer: (dns_server) => updateProfileQuietly({ dns_server }),
     setBindAddress: (bind_address) => updateProfileQuietly({ bind_address }),
     retryAfterSidecarError: () => set({ sidecarError: null }),
   }
