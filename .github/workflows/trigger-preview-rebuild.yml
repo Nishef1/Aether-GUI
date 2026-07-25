@@ -13,7 +13,7 @@ jobs:
   dispatch:
     runs-on: ubuntu-22.04
     steps:
-      - name: Dispatch the manual preview workflow
+      - name: Dispatch preview after CI disk cleanup fix
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run build-preview.yml --repo "$GITHUB_REPOSITORY" --ref main
