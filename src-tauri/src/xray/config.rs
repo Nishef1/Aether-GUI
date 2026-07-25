@@ -1,3 +1,4 @@
+use crate::aether::profiles;
 use serde_json::json;
 use std::path::Path;
 
@@ -13,6 +14,7 @@ pub fn generate_config(
     aether_socks_port: u16,
     aether_binary: &Path,
 ) -> Result<String, serde_json::Error> {
+    let dns_server = profiles::active_dns_server();
     let config = json!({
         "log": {
             "loglevel": "warning",
@@ -27,7 +29,7 @@ pub fn generate_config(
                     "desc": "Aether TUN",
                     "mtu": 1500,
                     "gateway": [TUN_ADDRESS, TUN_ADDRESS_V6],
-                    "dns": ["1.1.1.1", "2606:4700:4700::1111"],
+                    "dns": [dns_server.clone()],
                     "autoSystemRoutingTable": ["0.0.0.0/0", "::/0"],
                     "autoOutboundsInterface": "auto"
                 },
@@ -49,6 +51,24 @@ pub fn generate_config(
                 }
             },
             {
+                "tag": "dns-out",
+                "protocol": "dns",
+                "settings": {
+                    "rewriteNetwork": "tcp",
+                    "rewriteAddress": dns_server,
+                    "rewritePort": 53,
+                    "rules": [
+                        {
+                            "action": "direct"
+                        }
+                    ]
+                },
+                "proxySettings": {
+                    "tag": "proxy",
+                    "transportLayer": false
+                }
+            },
+            {
                 "tag": "direct",
                 "protocol": "freedom",
                 "settings": {}
@@ -65,7 +85,14 @@ pub fn generate_config(
                 {
                     "type": "field",
                     "inboundTag": ["tun-in"],
-                    "port": "53,853",
+                    "port": "53",
+                    "network": "tcp,udp",
+                    "outboundTag": "dns-out"
+                },
+                {
+                    "type": "field",
+                    "inboundTag": ["tun-in"],
+                    "port": "853",
                     "network": "tcp,udp",
                     "outboundTag": "proxy"
                 },
@@ -103,7 +130,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn xray_tun_routes_system_traffic_and_dns_to_aether_socks() {
+    fn xray_tun_rewrites_plaintext_dns_to_cloudflare_through_aether() {
         let core = PathBuf::from(if cfg!(windows) {
             r"C:\Users\test\AppData\Roaming\Aether-GUI\cores\aether\aether-v1.4.0.exe"
         } else {
@@ -114,6 +141,7 @@ mod tests {
 
         assert_eq!(value["inbounds"][0]["protocol"], "tun");
         assert_eq!(value["inbounds"][0]["settings"]["gateway"][0], TUN_ADDRESS);
+        assert_eq!(value["inbounds"][0]["settings"]["dns"][0], "1.1.1.1");
         assert_eq!(
             value["inbounds"][0]["settings"]["autoSystemRoutingTable"][0],
             "0.0.0.0/0"
@@ -124,14 +152,20 @@ mod tests {
         );
         assert_eq!(value["outbounds"][0]["protocol"], "socks");
         assert_eq!(value["outbounds"][0]["settings"]["port"], 1819);
+        assert_eq!(value["outbounds"][1]["protocol"], "dns");
+        assert_eq!(value["outbounds"][1]["settings"]["rewriteNetwork"], "tcp");
+        assert_eq!(value["outbounds"][1]["settings"]["rewriteAddress"], "1.1.1.1");
+        assert_eq!(value["outbounds"][1]["proxySettings"]["tag"], "proxy");
 
         let rules = value["routing"]["rules"].as_array().unwrap();
         assert_eq!(rules[0]["outboundTag"], "direct");
-        assert_eq!(rules[1]["port"], "53,853");
+        assert_eq!(rules[1]["port"], "53");
         assert_eq!(rules[1]["network"], "tcp,udp");
-        assert_eq!(rules[1]["outboundTag"], "proxy");
-        assert_eq!(rules[2]["outboundTag"], "direct");
-        assert_eq!(rules[3]["outboundTag"], "proxy");
+        assert_eq!(rules[1]["outboundTag"], "dns-out");
+        assert_eq!(rules[2]["port"], "853");
+        assert_eq!(rules[2]["outboundTag"], "proxy");
+        assert_eq!(rules[3]["outboundTag"], "direct");
+        assert_eq!(rules[4]["outboundTag"], "proxy");
         assert!(!rules[0]["process"][0]
             .as_str()
             .unwrap()
