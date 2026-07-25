@@ -1,10 +1,10 @@
-name: Build unsigned desktop previews
+name: Build unsigned desktop release
 
 on:
   workflow_dispatch:
 
 concurrency:
-  group: unsigned-desktop-preview
+  group: unsigned-desktop-release
   cancel-in-progress: true
 
 permissions:
@@ -12,35 +12,35 @@ permissions:
   statuses: write
 
 env:
-  PREVIEW_TAG: preview-v0.5.2-multiplatform
+  RELEASE_TAG: v0.5.2
 
 jobs:
   prepare-release:
-    name: Prepare preview release
+    name: Prepare desktop release
     runs-on: ubuntu-22.04
     steps:
-      - name: Mark preview build pending
+      - name: Mark release build pending
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state=pending \
-            -f context='preview/multiplatform' \
-            -f description='Unsigned desktop preview build is running' \
+            -f context='release/multiplatform' \
+            -f description='Unsigned desktop release build is running' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
-      - name: Recreate preview release
+      - name: Recreate desktop release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete "$PREVIEW_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
-          gh release create "$PREVIEW_TAG" \
+          gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "Aether-GUI 0.5.2 unsigned multi-platform preview" \
-            --notes "Unsigned test builds from the pinned custom Aether core. Windows and macOS may show operating-system security warnings. These files are previews and are not used by the in-app updater."
+            --latest \
+            --title "Aether-GUI v0.5.2" \
+            --notes "Unsigned desktop release built from the pinned custom Aether core. Windows SmartScreen and macOS Gatekeeper may display warnings. SHA-256 checksum files are included for every platform."
 
   build:
     name: ${{ matrix.name }}
@@ -237,7 +237,7 @@ jobs:
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/${{ matrix.artifact }}-SHA256SUMS.txt
 
-      - name: Publish Windows preview assets
+      - name: Publish Windows release assets
         if: matrix.platform == 'windows'
         shell: pwsh
         env:
@@ -249,10 +249,10 @@ jobs:
             Get-ChildItem "$bundleDir/msi" -Filter '*.msi' -File
             Get-Item "$bundleDir/${{ matrix.artifact }}-SHA256SUMS.txt"
           ) | ForEach-Object { $_.FullName }
-          & gh release upload $env:PREVIEW_TAG @upload --repo $env:GITHUB_REPOSITORY --clobber
+          & gh release upload $env:RELEASE_TAG @upload --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE -ne 0) { throw "GitHub release upload failed with exit code $LASTEXITCODE" }
 
-      - name: Publish Unix preview assets
+      - name: Publish Unix release assets
         if: matrix.platform != 'windows'
         shell: bash
         env:
@@ -265,10 +265,10 @@ jobs:
             files+=("$file")
           done < <(find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '${{ matrix.artifact }}-SHA256SUMS.txt' \) -print | sort)
           test "${#files[@]}" -gt 0
-          gh release upload "$PREVIEW_TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
 
   finalize:
-    name: Finalize preview status
+    name: Finalize release status
     needs:
       - prepare-release
       - build
@@ -283,20 +283,20 @@ jobs:
           case "$BUILD_RESULT" in
             success)
               state=success
-              description='All unsigned desktop preview builds succeeded'
+              description='All unsigned desktop release builds succeeded'
               ;;
             cancelled)
               state=error
-              description='Unsigned desktop preview build was cancelled'
+              description='Unsigned desktop release build was cancelled'
               ;;
             *)
               state=failure
-              description='One or more desktop preview builds failed'
+              description='One or more desktop release builds failed'
               ;;
           esac
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state="$state" \
-            -f context='preview/multiplatform' \
+            -f context='release/multiplatform' \
             -f description="$description" \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
