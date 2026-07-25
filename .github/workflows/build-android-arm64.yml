@@ -14,6 +14,8 @@ env:
   ANDROID_API: "36"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "27.2.12479018"
+  ANDROID_MIN_API: "29"
+  HEV_SOCKS5_TUNNEL_COMMIT: "da33382c7282b4e764408535704f3cd96fea9a14"
   VITE_AETHER_PLATFORM: android
 
 jobs:
@@ -97,7 +99,7 @@ jobs:
         run: |
           cargo ndk \
             --target arm64-v8a \
-            --platform 26 \
+            --platform "${ANDROID_MIN_API}" \
             build \
             --release \
             --manifest-path vendor/aether/aether/Cargo.toml \
@@ -106,6 +108,37 @@ jobs:
           core="vendor/aether/aether/target/aarch64-linux-android/release/aether"
           test -x "$core"
           file "$core"
+
+      - name: Build pinned hev-socks5-tunnel for arm64-v8a
+        shell: bash
+        run: |
+          git clone \
+            --filter=blob:none \
+            --no-checkout \
+            https://github.com/heiher/hev-socks5-tunnel.git \
+            third-party/hev-socks5-tunnel
+          git -C third-party/hev-socks5-tunnel checkout "${HEV_SOCKS5_TUNNEL_COMMIT}"
+          git -C third-party/hev-socks5-tunnel submodule update --init --recursive --depth 1
+          test "$(git -C third-party/hev-socks5-tunnel rev-parse HEAD)" = "${HEV_SOCKS5_TUNNEL_COMMIT}"
+
+          cat > third-party/hev-socks5-tunnel/Application.mk <<EOF
+          APP_OPTIM := release
+          APP_PLATFORM := android-${ANDROID_MIN_API}
+          APP_ABI := arm64-v8a
+          APP_CFLAGS := -O3 -DPKGNAME=com/cluvexstudio/aethergui/vpn -DCLSNAME=HevTun2Socks
+          APP_SUPPORT_FLEXIBLE_PAGE_SIZES := true
+          NDK_TOOLCHAIN_VERSION := clang
+          EOF
+
+          "${NDK_HOME}/ndk-build" \
+            -C third-party/hev-socks5-tunnel \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=Android.mk \
+            NDK_APPLICATION_MK=Application.mk
+
+          bridge="third-party/hev-socks5-tunnel/libs/arm64-v8a/libhev-socks5-tunnel.so"
+          test -f "$bridge"
+          file "$bridge"
 
       - name: Generate the Tauri Android project
         env:
@@ -136,7 +169,7 @@ jobs:
               path.write_text(text, encoding="utf-8")
           PY
 
-      - name: Bundle the ARM64 Aether executable
+      - name: Bundle ARM64 native components
         shell: bash
         run: |
           destination="src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a"
@@ -144,8 +177,13 @@ jobs:
           cp \
             vendor/aether/aether/target/aarch64-linux-android/release/aether \
             "$destination/libaether_exec.so"
+          cp \
+            third-party/hev-socks5-tunnel/libs/arm64-v8a/libhev-socks5-tunnel.so \
+            "$destination/libhev-socks5-tunnel.so"
           chmod 755 "$destination/libaether_exec.so"
           test -x "$destination/libaether_exec.so"
+          test -f "$destination/libhev-socks5-tunnel.so"
+          file "$destination"/*.so
 
       - name: Build a directly installable ARM64 debug APK
         env:
@@ -167,6 +205,11 @@ jobs:
             name="$(basename "$apk")"
             cp "$apk" "artifacts/$name"
           done
+          cp THIRD_PARTY_NOTICES.md artifacts/
+          printf '%s  %s\n' \
+            "${HEV_SOCKS5_TUNNEL_COMMIT}" \
+            "hev-socks5-tunnel" \
+            > artifacts/NATIVE_SOURCES.txt
           (
             cd artifacts
             sha256sum *.apk > SHA256SUMS.txt
