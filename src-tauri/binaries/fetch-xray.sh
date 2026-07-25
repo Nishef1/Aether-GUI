@@ -48,7 +48,10 @@ curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 45 \
   -H 'User-Agent: Aether-GUI-Core-Manager' \
   "$API_URL" -o "$RELEASE_JSON"
 
-readarray -t META < <(python3 - "$RELEASE_JSON" "$ASSET_NAME" <<'PY'
+# Emit one tab-separated record instead of using Bash 4-only `readarray`.
+# macOS still ships Bash 3.2, so keep this installer portable across the
+# GitHub-hosted Linux and macOS runners.
+META="$(python3 - "$RELEASE_JSON" "$ASSET_NAME" <<'PY'
 import json, sys
 path, name = sys.argv[1:]
 with open(path, encoding='utf-8') as f:
@@ -59,15 +62,18 @@ if not asset:
 digest = asset.get('digest') or ''
 if not digest.startswith('sha256:'):
     raise SystemExit(f"GitHub did not provide a SHA-256 digest for {name}")
-print(release.get('tag_name') or '')
-print(asset.get('browser_download_url') or '')
-print(digest.split(':', 1)[1].lower())
+tag = release.get('tag_name') or ''
+url = asset.get('browser_download_url') or ''
+sha = digest.split(':', 1)[1].lower()
+if not tag or not url or not sha:
+    raise SystemExit("Incomplete Xray release metadata")
+print("\t".join((tag, url, sha)))
 PY
-)
+)"
+IFS=$'\t' read -r TAG DOWNLOAD_URL EXPECTED_SHA <<EOF
+$META
+EOF
 
-TAG="${META[0]}"
-DOWNLOAD_URL="${META[1]}"
-EXPECTED_SHA="${META[2]}"
 if [[ -z "$TAG" || -z "$DOWNLOAD_URL" || -z "$EXPECTED_SHA" ]]; then
   echo "Incomplete Xray release metadata" >&2
   exit 1
@@ -84,7 +90,19 @@ curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 \
   -H 'User-Agent: Aether-GUI-Core-Manager' \
   "$DOWNLOAD_URL" -o "$ARCHIVE"
 
-echo "$EXPECTED_SHA  $ARCHIVE" | sha256sum -c -
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL_SHA="$(sha256sum "$ARCHIVE" | awk '{print tolower($1)}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL_SHA="$(shasum -a 256 "$ARCHIVE" | awk '{print tolower($1)}')"
+else
+  echo "Neither sha256sum nor shasum is available" >&2
+  exit 1
+fi
+if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+  echo "Checksum mismatch for $ASSET_NAME" >&2
+  exit 1
+fi
+
 unzip -q "$ARCHIVE" -d "$EXTRACT_DIR"
 DOWNLOADED="$(find "$EXTRACT_DIR" -type f -name xray -print -quit)"
 if [[ -z "$DOWNLOADED" || ! -s "$DOWNLOADED" ]]; then
@@ -100,6 +118,7 @@ VERSION_FILE="$DEST_DIR/xray-version.txt"
 install -m 0755 "$DOWNLOADED" "$VERSIONED_TARGET.new"
 mv -f "$VERSIONED_TARGET.new" "$VERSIONED_TARGET"
 cp -f "$VERSIONED_TARGET" "$FALLBACK_TARGET"
+chmod 0755 "$FALLBACK_TARGET"
 printf '%s' "$TAG" > "$VERSION_FILE"
 
 test -s "$VERSIONED_TARGET"
