@@ -1,4 +1,6 @@
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+#[cfg(windows)]
+use tauri::Emitter;
 
 /// Emits `app://focused` (bool) whenever the app gains or loses the
 /// foreground. Exists because neither signal the webview can see is
