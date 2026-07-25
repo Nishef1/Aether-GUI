@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
-import android.os.IBinder
 import androidx.activity.result.ActivityResult
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -24,6 +23,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 @InvokeArg
@@ -49,7 +49,7 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     fun prepare(invoke: Invoke) {
         val permissionIntent = VpnService.prepare(activity)
         if (permissionIntent == null) {
-            invoke.resolve(JSObject().put("prepared", true))
+            invoke.resolve(JSObject().apply { put("prepared", true) })
             return
         }
         startActivityForResult(invoke, permissionIntent, "vpnPermissionResult")
@@ -57,7 +57,9 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
 
     @ActivityCallback
     private fun vpnPermissionResult(invoke: Invoke, result: ActivityResult) {
-        invoke.resolve(JSObject().put("prepared", result.resultCode == Activity.RESULT_OK))
+        invoke.resolve(
+            JSObject().apply { put("prepared", result.resultCode == Activity.RESULT_OK) }
+        )
     }
 
     @Command
@@ -77,6 +79,7 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             putExtra(AetherVpnService.EXTRA_SCAN_MODE, profile.scanMode)
             putExtra(AetherVpnService.EXTRA_IP_VERSION, profile.ipVersion)
             putExtra(AetherVpnService.EXTRA_BIND_ADDRESS, profile.bindAddress)
+            putExtra(AetherVpnService.EXTRA_QUICK_RECONNECT, profile.quickReconnect)
             putExtra(AetherVpnService.EXTRA_MASQUE_HTTP2, profile.masqueHttp2)
             putExtra(AetherVpnService.EXTRA_MASQUE_NOIZE, profile.masqueNoize)
             putExtra(AetherVpnService.EXTRA_WG_NOIZE, profile.wgNoize)
@@ -84,18 +87,27 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
         ContextCompat.startForegroundService(activity, intent)
 
         executor.execute {
-            val deadline = System.currentTimeMillis() + 45_000L
+            val deadline = System.currentTimeMillis() + START_TIMEOUT_MS
             var snapshot = AetherVpnService.snapshot()
-            while (System.currentTimeMillis() < deadline && snapshot.state in setOf("Idle", "Launching")) {
+            while (
+                System.currentTimeMillis() < deadline &&
+                snapshot.state in setOf("Idle", "Launching")
+            ) {
                 Thread.sleep(150L)
                 snapshot = AetherVpnService.snapshot()
             }
-            val result = snapshot.toJsObject()
+
             activity.runOnUiThread {
-                if (snapshot.state == "Error") {
-                    invoke.reject(snapshot.message ?: "Aether failed to start", "aetherStartFailed")
-                } else {
-                    invoke.resolve(result)
+                when (snapshot.state) {
+                    "Error" -> invoke.reject(
+                        snapshot.message ?: "Aether failed to start",
+                        "aetherStartFailed"
+                    )
+                    "Idle", "Launching" -> invoke.reject(
+                        "Aether did not expose its SOCKS endpoint before the startup deadline",
+                        "aetherStartTimeout"
+                    )
+                    else -> invoke.resolve(snapshot.toJsObject())
                 }
             }
         }
@@ -118,15 +130,22 @@ class AetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun traffic(invoke: Invoke) {
         invoke.resolve(
-            JSObject()
-                .put("receivedBytes", 0L)
-                .put("sentBytes", 0L)
+            JSObject().apply {
+                put("receivedBytes", 0L)
+                put("sentBytes", 0L)
+            }
         )
     }
 
     @Command
     fun diagnostics(invoke: Invoke) {
-        invoke.resolve(JSObject().put("path", AetherVpnService.diagnosticsPath(activity)))
+        invoke.resolve(
+            JSObject().apply { put("path", AetherVpnService.diagnosticsPath(activity)) }
+        )
+    }
+
+    companion object {
+        private const val START_TIMEOUT_MS = 45_000L
     }
 }
 
@@ -162,8 +181,6 @@ class AetherVpnService : VpnService() {
         return Service.START_NOT_STICKY
     }
 
-    override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)
-
     override fun onRevoke() {
         stopCore()
         super.onRevoke()
@@ -186,6 +203,7 @@ class AetherVpnService : VpnService() {
         val scanMode = intent.getStringExtra(EXTRA_SCAN_MODE) ?: "balanced"
         val ipVersion = intent.getStringExtra(EXTRA_IP_VERSION) ?: "v4"
         val bindAddress = intent.getStringExtra(EXTRA_BIND_ADDRESS) ?: "127.0.0.1:1819"
+        val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, true)
         val masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, false)
         val masqueNoize = intent.getStringExtra(EXTRA_MASQUE_NOIZE) ?: "firewall"
         val wgNoize = intent.getStringExtra(EXTRA_WG_NOIZE) ?: "balanced"
@@ -197,19 +215,23 @@ class AetherVpnService : VpnService() {
                     error("Bundled ARM64 Aether core was not found at ${executable.absolutePath}")
                 }
 
-                val processBuilder = ProcessBuilder(executable.absolutePath)
-                    .redirectErrorStream(true)
+                val command = buildCoreCommand(
+                    executable = executable,
+                    protocol = protocol,
+                    scanMode = scanMode,
+                    ipVersion = ipVersion,
+                    bindAddress = bindAddress,
+                    quickReconnect = quickReconnect,
+                    masqueNoize = masqueNoize,
+                    wgNoize = wgNoize,
+                )
+                val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
                 val environment = processBuilder.environment()
                 environment["AETHER_CONFIG"] = File(filesDir, "aether.toml").absolutePath
-                environment["AETHER_SCAN_MODE"] = scanMode
-                environment["AETHER_IP_VERSION"] = ipVersion
-                environment["AETHER_SOCKS"] = bindAddress
-                environment["AETHER_LOG_LEVEL"] = "info"
-                environment["AETHER_NOIZE"] = if (protocol == "wireguard" || protocol == "gool") wgNoize else masqueNoize
                 environment["AETHER_MASQUE_HTTP2"] = if (masqueHttp2) "1" else "0"
-                if (protocol != "auto") environment["AETHER_PROTOCOL"] = protocol
+                environment["AETHER_LOG_LEVEL"] = "info"
 
-                appendLog("Starting ${executable.name}; protocol=$protocol bind=$bindAddress")
+                appendLog("Starting Aether; args=${command.drop(1).joinToString(" ")}")
                 val process = processBuilder.start()
                 coreProcess = process
 
@@ -223,13 +245,22 @@ class AetherVpnService : VpnService() {
                     start()
                 }
 
-                if (!waitForSocks(bindAddress, process, 45_000L)) {
+                if (!waitForSocks(bindAddress, process, START_TIMEOUT_MS)) {
                     val exit = if (process.isAlive) null else process.exitValue()
-                    error("Aether SOCKS endpoint did not become ready${exit?.let { "; exit=$it" } ?: ""}")
+                    error(
+                        "Aether SOCKS endpoint did not become ready" +
+                            (exit?.let { "; exit=$it" } ?: "")
+                    )
                 }
 
                 val connectedAt = System.currentTimeMillis()
-                updateSnapshot(ServiceSnapshot("Connected", socksAddr = bindAddress, connectedAtMs = connectedAt))
+                updateSnapshot(
+                    ServiceSnapshot(
+                        "Connected",
+                        socksAddr = bindAddress,
+                        connectedAtMs = connectedAt,
+                    )
+                )
                 updateNotification("Connected · SOCKS $bindAddress")
                 appendLog("SOCKS endpoint ready at $bindAddress")
 
@@ -247,13 +278,57 @@ class AetherVpnService : VpnService() {
         }
     }
 
+    private fun buildCoreCommand(
+        executable: File,
+        protocol: String,
+        scanMode: String,
+        ipVersion: String,
+        bindAddress: String,
+        quickReconnect: Boolean,
+        masqueNoize: String,
+        wgNoize: String,
+    ): List<String> {
+        val command = mutableListOf(executable.absolutePath)
+
+        when (protocol) {
+            "masque" -> command += "--masque"
+            "wireguard" -> command += "--wg"
+            "gool" -> command += "--gool"
+        }
+
+        command += when (scanMode) {
+            "turbo" -> "--turbo"
+            "thorough" -> "--thorough"
+            "stealth" -> "--stealth"
+            "ironclad" -> "--ironclad"
+            else -> "--balanced"
+        }
+
+        command += when (ipVersion) {
+            "v6" -> "-6"
+            "both" -> "--dual"
+            else -> "-4"
+        }
+
+        command += if (quickReconnect) "--quick-reconnect" else "--no-quick-reconnect"
+        command += listOf(
+            "--noize",
+            if (protocol == "wireguard" || protocol == "gool") wgNoize else masqueNoize,
+            "--bind",
+            bindAddress,
+            "--log-level",
+            "info",
+        )
+        return command
+    }
+
     private fun stopCore() {
         stopping = true
         updateSnapshot(ServiceSnapshot("Disconnecting"))
         coreProcess?.let { process ->
             process.destroy()
             try {
-                if (!process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                if (!process.waitFor(2, TimeUnit.SECONDS)) {
                     process.destroyForcibly()
                 }
             } catch (_: InterruptedException) {
@@ -313,11 +388,16 @@ class AetherVpnService : VpnService() {
 
     private fun appendLog(line: String) {
         synchronized(logLines) {
+            val stamped = "${System.currentTimeMillis()} $line"
             if (logLines.size >= MAX_LOG_LINES) logLines.removeFirst()
-            logLines.addLast("${System.currentTimeMillis()} $line")
+            logLines.addLast(stamped)
+
             val file = File(diagnosticsPath(this))
             file.parentFile?.mkdirs()
-            file.appendText("${System.currentTimeMillis()} $line\n")
+            if (file.length() >= MAX_DIAGNOSTICS_BYTES) {
+                file.writeText("${System.currentTimeMillis()} [android] diagnostics truncated\n")
+            }
+            file.appendText("$stamped\n")
         }
     }
 
@@ -328,13 +408,16 @@ class AetherVpnService : VpnService() {
         const val EXTRA_SCAN_MODE = "scanMode"
         const val EXTRA_IP_VERSION = "ipVersion"
         const val EXTRA_BIND_ADDRESS = "bindAddress"
+        const val EXTRA_QUICK_RECONNECT = "quickReconnect"
         const val EXTRA_MASQUE_HTTP2 = "masqueHttp2"
         const val EXTRA_MASQUE_NOIZE = "masqueNoize"
         const val EXTRA_WG_NOIZE = "wgNoize"
 
         private const val CHANNEL_ID = "aether_connection"
         private const val NOTIFICATION_ID = 1819
+        private const val START_TIMEOUT_MS = 45_000L
         private const val MAX_LOG_LINES = 500
+        private const val MAX_DIAGNOSTICS_BYTES = 1_048_576L
         private val status = AtomicReference(idleSnapshot())
         private val logLines = ArrayDeque<String>()
 
