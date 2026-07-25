@@ -226,7 +226,7 @@ fn spawn_process(
     match engine {
         TunEngine::Singbox => process::spawn(binary, config_path, log_tx).map(TunnelProcess::Singbox),
         TunEngine::Xray => {
-            let (xray_tx, xray_rx) = mpsc::channel();
+            let (xray_tx, xray_rx) = mpsc::channel::<xray::process::ProcessLog>();
             std::thread::spawn(move || {
                 for log in xray_rx {
                     let _ = log_tx.send(process::ProcessLog {
@@ -275,7 +275,7 @@ pub fn start_tunnel(
     );
 
     emit_log(&app, engine, "info", "starting system TUN process");
-    let (log_tx, log_rx) = mpsc::channel();
+    let (log_tx, log_rx) = mpsc::channel::<process::ProcessLog>();
     let process = spawn_process(engine, &binary, &config_path, log_tx)?;
     let pid = process.pid();
     write_pid(&app, pid, engine);
