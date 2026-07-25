@@ -35,13 +35,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {
-      "binaries/*.exe": "binaries/",
-      "binaries/*.dll": "binaries/",
-      "binaries/*-version.txt": "binaries/",
-      "binaries/*.ps1": "binaries/",
-      "binaries/*.sh": "binaries/"
-    },
+    "resources": [
+      "binaries/*"
+    ],
     "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
