@@ -72,7 +72,7 @@ export function AdvancedPanel() {
           <div className="flex flex-col gap-4 pb-2">
             <FieldRow
               label="Protocol"
-              tooltip="MASQUE disguises traffic as normal HTTPS — best against strict censorship. WireGuard is lighter and faster. gool nests two WireGuard tunnels for extra security at a speed cost."
+              tooltip="MASQUE carries traffic over HTTP transports and may blend better with common web traffic. WireGuard is lighter and faster when its UDP path works. gool nests WireGuard sessions but does not guarantee better censorship resistance."
             >
               <ProtocolSelect />
             </FieldRow>
@@ -87,13 +87,13 @@ export function AdvancedPanel() {
             </FieldRow>
             <FieldRow
               label="MASQUE Transport"
-              tooltip="HTTP/3 uses QUIC and generally handles loss and parallel traffic better. HTTP/2 looks like ordinary HTTPS and can connect where UDP is blocked, but may be slower on higher-latency links."
+              tooltip="HTTP/3 uses QUIC over UDP and generally handles loss and parallel traffic better. HTTP/2 uses TLS over TCP and may connect where UDP or QUIC is disrupted, with potentially higher latency."
             >
               <MasqueTransportToggle />
             </FieldRow>
             <FieldRow
               label="Obfuscation"
-              tooltip="Disguises the handshake so DPI can't fingerprint the protocol. Heavier profiles send more decoy traffic — try escalating if the default doesn't connect. Options change based on the selected protocol."
+              tooltip="Changes initial packet and timing patterns to reduce simple protocol fingerprinting. Heavier profiles add overhead and cannot make a connection invisible or overcome endpoint and IP blocking."
             >
               <NoizeProfileToggle />
             </FieldRow>
