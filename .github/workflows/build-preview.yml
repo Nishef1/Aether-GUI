@@ -1,12 +1,6 @@
 name: Build unsigned desktop previews
 
 on:
-  # This path-limited push trigger runs preview builds only when this workflow
-  # itself changes. Ordinary source commits and pull requests do not run it.
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/build-preview.yml
   workflow_dispatch:
 
 concurrency:
