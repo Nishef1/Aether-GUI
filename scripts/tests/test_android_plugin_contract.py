@@ -17,6 +17,11 @@ PLUGIN_MANIFEST = (
     ROOT
     / "src-tauri/plugins/aether-vpn/android/src/main/AndroidManifest.xml"
 )
+HEV_BRIDGE = (
+    ROOT
+    / "src-tauri/plugins/aether-vpn/android/src/main/java/HevTun2Socks.kt"
+)
+HEV_BUILD_SCRIPT = ROOT / "scripts/ci/build-hev-android.sh"
 WORKFLOW = ROOT / ".github/workflows/build-android-arm64.yml"
 
 
@@ -50,6 +55,21 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("android.permission.BIND_VPN_SERVICE", manifest)
         self.assertIn('<action android:name="android.net.VpnService" />', manifest)
         self.assertIn('android:exported="false"', manifest)
+
+    def test_pinned_tun2socks_jni_signatures_match(self) -> None:
+        bridge = HEV_BRIDGE.read_text(encoding="utf-8")
+        self.assertIn("external fun TProxyStartService(configPath: String, tunFd: Int)", bridge)
+        self.assertIn("external fun TProxyStopService()", bridge)
+        self.assertIn("external fun TProxyGetStats(): LongArray", bridge)
+        self.assertIn('System.loadLibrary("hev-socks5-tunnel")', bridge)
+
+    def test_tun2socks_native_registration_targets_bridge_class(self) -> None:
+        build_script = HEV_BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(
+            "-DPKGNAME=com/cluvexstudio/aethergui/vpn -DCLSNAME=HevTun2Socks",
+            build_script,
+        )
+        self.assertIn("APP_ABI := arm64-v8a", build_script)
 
     def test_workflow_has_real_kotlin_compile_preflight(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
