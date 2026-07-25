@@ -88,7 +88,7 @@ jobs:
         with:
           workspaces: |
             src-tauri -> target
-            vendor/aether -> target
+            vendor/aether/aether -> target
           cache-on-failure: true
 
       - name: Install cargo-ndk 4.1.2
@@ -105,7 +105,7 @@ jobs:
             --manifest-path vendor/aether/aether/Cargo.toml \
             --bin aether
 
-          core="vendor/aether/target/aarch64-linux-android/release/aether"
+          core="vendor/aether/aether/target/aarch64-linux-android/release/aether"
           test -x "$core"
           file "$core"
 
@@ -175,7 +175,7 @@ jobs:
           destination="src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a"
           mkdir -p "$destination"
           cp \
-            vendor/aether/target/aarch64-linux-android/release/aether \
+            vendor/aether/aether/target/aarch64-linux-android/release/aether \
             "$destination/libaether_exec.so"
           cp \
             third-party/hev-socks5-tunnel/libs/arm64-v8a/libhev-socks5-tunnel.so \
