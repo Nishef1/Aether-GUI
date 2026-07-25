@@ -8,7 +8,7 @@
 
     <application>
         <service
-            android:name=".AetherVpnService"
+            android:name="com.cluvexstudio.aethergui.vpn.AetherVpnService"
             android:exported="false"
             android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE">
