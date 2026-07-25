@@ -37,6 +37,11 @@ pub(crate) fn relaunch_as_admin() -> bool {
     let mut exe_wide: Vec<u16> = exe.as_os_str().encode_wide().collect();
     exe_wide.push(0);
     let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+
+    // The elevated process is the intentional replacement instance. Release the
+    // guard immediately before ShellExecute and reacquire it if UAC is cancelled
+    // or process creation fails.
+    single_instance::release_for_handoff();
     let result = unsafe {
         ShellExecuteW(
             std::ptr::null_mut(),
@@ -47,7 +52,11 @@ pub(crate) fn relaunch_as_admin() -> bool {
             SW_SHOWNORMAL,
         )
     };
-    result as isize > 32
+    let launched = result as isize > 32;
+    if !launched {
+        let _ = single_instance::acquire();
+    }
+    launched
 }
 
 #[cfg(unix)]
@@ -163,6 +172,8 @@ fn main() {
             commands::sync_tray_state,
             commands::get_is_elevated,
             commands::elevate,
+            commands::prepare_app_relaunch,
+            commands::restore_instance_guard,
             commands::get_tun_status,
             commands::get_traffic,
             commands::get_runtime_telemetry,
