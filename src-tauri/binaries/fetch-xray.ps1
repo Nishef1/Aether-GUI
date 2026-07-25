@@ -11,6 +11,9 @@ $Headers = @{
     "User-Agent" = "Aether-GUI-Core-Manager"
     "Accept" = "application/vnd.github+json"
 }
+if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+    $Headers["Authorization"] = "Bearer $($env:GITHUB_TOKEN)"
+}
 $AssetName = "Xray-windows-64.zip"
 $WintunVersion = "0.14.1"
 $WintunSha256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
