@@ -2,6 +2,7 @@ use crate::diagnostics;
 use crate::error::AetherError;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{OnceLock, RwLock};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -144,12 +145,18 @@ pub struct ConnectionProfile {
     pub masque_noize: MasqueNoize,
     #[serde(default = "default_wg_noize")]
     pub wg_noize: WgNoize,
+    /// Resolver used by the system TUN engines. Only IP literals are accepted so
+    /// selecting DNS never requires an unprotected bootstrap lookup.
+    #[serde(default = "default_dns_server")]
+    pub dns_server: String,
     /// Aether-GUI intentionally keeps the unauthenticated SOCKS listener on a
     /// loopback address. The port is user-configurable, but LAN exposure is
     /// rejected in the backend as well as hidden from the UI.
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
 }
+
+static ACTIVE_DNS_SERVER: OnceLock<RwLock<String>> = OnceLock::new();
 
 fn default_true() -> bool {
     true
@@ -163,8 +170,39 @@ fn default_wg_noize() -> WgNoize {
     WgNoize::Balanced
 }
 
+fn default_dns_server() -> String {
+    "1.1.1.1".into()
+}
+
 fn default_bind_address() -> String {
     "127.0.0.1:1819".into()
+}
+
+fn active_dns_cell() -> &'static RwLock<String> {
+    ACTIVE_DNS_SERVER.get_or_init(|| RwLock::new(default_dns_server()))
+}
+
+fn set_active_dns_server(value: &str) {
+    if let Ok(mut active) = active_dns_cell().write() {
+        *active = value.to_string();
+    }
+}
+
+pub fn active_dns_server() -> String {
+    active_dns_cell()
+        .read()
+        .map(|active| active.clone())
+        .unwrap_or_else(|_| default_dns_server())
+}
+
+pub fn sanitize_dns_server(value: &str) -> String {
+    let Ok(ip) = value.trim().parse::<IpAddr>() else {
+        return default_dns_server();
+    };
+    if ip.is_unspecified() || ip.is_multicast() {
+        return default_dns_server();
+    }
+    ip.to_string()
 }
 
 pub fn sanitize_bind_address(value: &str) -> String {
@@ -190,6 +228,8 @@ fn help_supports(help: Option<&str>, flag: &str) -> bool {
 
 impl ConnectionProfile {
     pub fn sanitized(mut self) -> Self {
+        self.dns_server = sanitize_dns_server(&self.dns_server);
+        set_active_dns_server(&self.dns_server);
         self.bind_address = sanitize_bind_address(&self.bind_address);
         self.tun_enabled = self.connection_mode.uses_tun();
         self
@@ -274,6 +314,7 @@ impl Default for ConnectionProfile {
             masque_http2: false,
             masque_noize: MasqueNoize::Firewall,
             wg_noize: WgNoize::Balanced,
+            dns_server: default_dns_server(),
             bind_address: default_bind_address(),
         }
     }
@@ -290,7 +331,7 @@ fn store_error(context: &str, error: impl std::fmt::Display) -> AetherError {
 pub fn load(app: &tauri::AppHandle) -> ConnectionProfile {
     use tauri_plugin_store::StoreExt;
     let Ok(store) = app.store(STORE_FILE) else {
-        return ConnectionProfile::default();
+        return ConnectionProfile::default().sanitized();
     };
     store
         .get(STORE_KEY)
@@ -401,11 +442,20 @@ mod tests {
     }
 
     #[test]
-    fn missing_connection_mode_defaults_to_proxy_and_xray() {
+    fn dns_server_defaults_to_cloudflare_and_rejects_invalid_values() {
+        assert_eq!(sanitize_dns_server("8.8.8.8"), "8.8.8.8");
+        assert_eq!(sanitize_dns_server("2001:4860:4860::8888"), "2001:4860:4860::8888");
+        assert_eq!(sanitize_dns_server("not-a-resolver"), "1.1.1.1");
+        assert_eq!(sanitize_dns_server("0.0.0.0"), "1.1.1.1");
+    }
+
+    #[test]
+    fn missing_connection_mode_defaults_to_proxy_xray_and_cloudflare_dns() {
         let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4","quick_reconnect":true,"masque_http2":false,"bind_address":"127.0.0.1:1919"}"#;
         let p: ConnectionProfile = serde_json::from_str(json).unwrap();
         assert_eq!(p.connection_mode, ConnectionMode::Proxy);
         assert_eq!(p.tun_engine, TunEngine::Xray);
+        assert_eq!(p.dns_server, "1.1.1.1");
         assert!(!p.uses_tun());
     }
 
