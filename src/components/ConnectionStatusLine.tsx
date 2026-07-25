@@ -3,7 +3,6 @@ import { Gauge, Globe2 } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 import { useConnectionStore } from "@/state/connectionStore"
 import { useTelemetryStore } from "@/state/telemetryStore"
-import { useWindowFocused } from "@/state/windowFocus"
 
 const TEXT_TRANSITION = {
   initial: { y: 4, opacity: 0 },
@@ -67,26 +66,13 @@ function countryName(code: string): string {
   }
 }
 
-function ScanProgressBar({
-  percent,
-  focused,
-}: {
-  percent: number | null
-  focused: boolean
-}) {
+function ScanProgressBar({ percent }: { percent: number | null }) {
   return (
     <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
       {percent == null ? (
-        <motion.div
-          className="h-full w-1/3 rounded-full bg-status-connecting"
-          animate={
-            focused ? { x: ["-100%", "220%"] } : { x: "50%", opacity: 0.6 }
-          }
-          transition={
-            focused
-              ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" }
-              : { duration: 0.3 }
-          }
+        <div
+          data-runtime-animation="active"
+          className="anim-scan-route h-full w-1/3 rounded-full bg-status-connecting"
         />
       ) : (
         <motion.div
@@ -104,7 +90,6 @@ export function ConnectionStatusLine() {
   const scanBudgetSecs = useConnectionStore((state) => state.scanBudgetSecs)
   const preparingCores = useConnectionStore((state) => state.preparingCores)
   const telemetry = useTelemetryStore((state) => state.snapshot)
-  const focused = useWindowFocused()
   const tunEnabled = useConnectionStore(
     (state) => state.profile.connection_mode !== "proxy"
   )
@@ -219,7 +204,7 @@ export function ConnectionStatusLine() {
         </motion.span>
       </AnimatePresence>
       {status.state === "Connecting" && (
-        <ScanProgressBar percent={scanPercent} focused={focused} />
+        <ScanProgressBar percent={scanPercent} />
       )}
       {connectionReady && !telemetry.egress_probe_complete && (
         <span className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
