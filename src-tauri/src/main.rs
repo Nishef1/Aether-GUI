@@ -125,10 +125,11 @@ fn main() {
 
             aether::orphan::reap_orphan(&data_dir);
             singbox::reap_orphan(app.handle());
-            let state = app.state::<AppState>();
-            telemetry::spawn_watcher(app.handle().clone(), state.manager.clone());
+            let manager = app.state::<AppState>().manager.clone();
+            telemetry::spawn_watcher(app.handle().clone(), manager.clone());
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
+            tray::spawn_state_watcher(app.handle().clone(), manager);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
