@@ -15,11 +15,11 @@ internal object AndroidTransportPolicy {
 
     /**
      * Android uses a clean WireGuard first pass. The endpoint scanner already
-     * performs authenticated handshake and data-plane validation; emitting junk
-     * after that handshake has caused real devices to keep the UDP association
-     * alive while dropping DNS/TCP carried by the reused session. The requested
-     * profile remains visible in logs and can return as a second-pass strategy
-     * after the clean path is proven on-device.
+     * performs an authenticated handshake and a direct raw-IP data check, but
+     * the reported device then failed when that session was reused by SOCKS.
+     * Post-handshake junk is a plausible differentiator, not yet a proven root
+     * cause, so the stable first pass disables it and the new SOCKS egress gate
+     * supplies stage-specific evidence before Connected is published.
      */
     fun effectiveWireGuardNoize(requested: String): String = "off"
 
