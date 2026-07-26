@@ -26,32 +26,36 @@ SERVICE_FIXTURE = textwrap.dedent(
             masqueHttp2: Boolean,
             wgNoize: String,
         ) {
-            val executable = java.io.File("a")
-            val ipVersion = "v4"
-            val bindAddress = "127.0.0.1:1819"
-            val quickReconnect = true
-            val masqueNoize = "firewall"
-            val process = ProcessBuilder("true").start()
-            val token = 1L
-            val command = buildCoreCommand(
-                executable = executable,
-                protocol = protocol,
-                scanMode = scanMode,
-                ipVersion = ipVersion,
-                bindAddress = bindAddress,
-                quickReconnect = quickReconnect,
-                masqueNoize = masqueNoize,
-                wgNoize = wgNoize,
-            )
-            val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
-            processBuilder.environment().apply {
-                put("AETHER_CONFIG", File(filesDir, "aether.toml").absolutePath)
-                put("AETHER_MASQUE_HTTP2", if (masqueHttp2) "1" else "0")
-                put("AETHER_LOG_LEVEL", "info")
-                put("RUST_BACKTRACE", "1")
-            }
-            if (!waitForSocks(token, bindAddress, process, CORE_START_TIMEOUT_MS)) {
-                error("timeout")
+            try {
+                val executable = java.io.File("a")
+                val ipVersion = "v4"
+                val bindAddress = "127.0.0.1:1819"
+                val quickReconnect = true
+                val masqueNoize = "firewall"
+                val process = ProcessBuilder("true").start()
+                val token = 1L
+                val command = buildCoreCommand(
+                    executable = executable,
+                    protocol = protocol,
+                    scanMode = scanMode,
+                    ipVersion = ipVersion,
+                    bindAddress = bindAddress,
+                    quickReconnect = quickReconnect,
+                    masqueNoize = masqueNoize,
+                    wgNoize = wgNoize,
+                )
+                val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
+                processBuilder.environment().apply {
+                    put("AETHER_CONFIG", File(filesDir, "aether.toml").absolutePath)
+                    put("AETHER_MASQUE_HTTP2", if (masqueHttp2) "1" else "0")
+                    put("AETHER_LOG_LEVEL", "info")
+                    put("RUST_BACKTRACE", "1")
+                }
+                if (!waitForSocks(token, bindAddress, process, CORE_START_TIMEOUT_MS)) {
+                    error("timeout")
+                }
+            } finally {
+                Unit
             }
         }
 
