@@ -1,9 +1,7 @@
 package com.cluvexstudio.aethergui.vpn
 
-import android.os.SystemClock
 import java.io.EOFException
 import java.io.InputStream
-import java.net.HttpURLConnection
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -32,6 +30,7 @@ internal data class EgressProbeResult(
 internal object AndroidEgressProbe {
     private const val CONNECT_TIMEOUT_MS = 6_000
     private const val READ_TIMEOUT_MS = 8_000
+    private const val LITERAL_TCP_LABEL = "cloudflare-literal-tcp"
 
     private data class Provider(
         val label: String,
@@ -62,17 +61,6 @@ internal object AndroidEgressProbe {
         ),
     )
 
-    /** Literal fallback proves SOCKS TCP independently from remote DNS. */
-    private val literalProvider = Provider(
-        label = "cloudflare-literal-http",
-        host = "1.1.1.1",
-        port = 80,
-        path = "/cdn-cgi/trace",
-        tls = false,
-        useDomainAddress = false,
-        hostHeader = "one.one.one.one",
-    )
-
     fun probe(bindAddress: String): EgressProbeResult {
         val (proxyHost, proxyPort) = splitHostPort(bindAddress)
         val failures = mutableListOf<String>()
@@ -83,15 +71,23 @@ internal object AndroidEgressProbe {
             failures += "${provider.label}: ${result.exceptionOrNull()?.message ?: "unknown error"}"
         }
 
-        val literal = runCatching { probeProvider(proxyHost, proxyPort, literalProvider) }
+        val literal = runCatching {
+            socks5Connect(
+                proxyHost = proxyHost,
+                proxyPort = proxyPort,
+                targetHost = "1.1.1.1",
+                targetPort = 80,
+                useDomain = false,
+            ).use { Unit }
+        }
         if (literal.isSuccess) {
             error(
-                "SOCKS TCP works through ${literalProvider.label}, but remote DNS/domain " +
+                "SOCKS TCP works through $LITERAL_TCP_LABEL, but remote DNS/domain " +
                     "egress failed (${failures.joinToString(" | ")})"
             )
         }
 
-        failures += "${literalProvider.label}: ${literal.exceptionOrNull()?.message ?: "unknown error"}"
+        failures += "$LITERAL_TCP_LABEL: ${literal.exceptionOrNull()?.message ?: "unknown error"}"
         error("SOCKS end-to-end egress failed (${failures.joinToString(" | ")})")
     }
 
@@ -100,7 +96,7 @@ internal object AndroidEgressProbe {
         proxyPort: Int,
         provider: Provider,
     ): EgressProbeResult {
-        val startedAt = SystemClock.elapsedRealtime()
+        val startedAt = System.nanoTime()
         val raw = socks5Connect(
             proxyHost = proxyHost,
             proxyPort = proxyPort,
@@ -135,7 +131,7 @@ internal object AndroidEgressProbe {
             return EgressProbeResult(
                 publicIp = ip,
                 countryCode = country,
-                latencyMs = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(1L),
+                latencyMs = elapsedMillis(startedAt),
                 provider = provider.label,
             )
         }
@@ -228,6 +224,9 @@ internal object AndroidEgressProbe {
         return result
     }
 
+    private fun elapsedMillis(startedAt: Long): Long =
+        ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(1L)
+
     private fun parsePublicIp(response: String): String? {
         val trace = Regex("(?m)^ip=([^\\r\\n]+)$").find(response)?.groupValues?.getOrNull(1)?.trim()
         val json = Regex("\\\"query\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"")
@@ -236,7 +235,8 @@ internal object AndroidEgressProbe {
             ?.getOrNull(1)
             ?.trim()
         return listOfNotNull(trace, json).firstOrNull { value ->
-            runCatching { InetAddress.getByName(value) }.getOrNull()?.hostAddress == value
+            (value.contains('.') || value.contains(':')) &&
+                runCatching { InetAddress.getByName(value) }.isSuccess
         }
     }
 
