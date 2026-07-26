@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
+  issues:
+    types:
+      - opened
 
 permissions:
   contents: write
@@ -15,6 +18,9 @@ concurrency:
 
 jobs:
   apply:
+    if: >-
+      github.event_name != 'issues' ||
+      github.event.issue.title == '[ci] Android 0.5.5 one-shot'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -22,14 +28,6 @@ jobs:
           ref: main
           fetch-depth: 0
           submodules: recursive
-
-      - name: Stop if this one-shot already dispatched
-        run: |
-          set -euo pipefail
-          if [[ -f .github/android-055-build.json ]]; then
-            echo "Android 0.5.5 build was already dispatched"
-            exit 0
-          fi
 
       - name: Apply and verify runtime hardening
         run: |
