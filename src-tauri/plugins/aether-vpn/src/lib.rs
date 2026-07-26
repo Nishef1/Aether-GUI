@@ -163,8 +163,7 @@ impl<R: Runtime, T: Manager<R>> AetherVpnExt<R> for T {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("aether-vpn")
         .setup(|app, api| {
-            let handle =
-                api.register_android_plugin(PLUGIN_IDENTIFIER, "HardenedAetherVpnPlugin")?;
+            let handle = api.register_android_plugin(PLUGIN_IDENTIFIER, "FinalAetherVpnPlugin")?;
             app.manage(AetherVpn(handle));
             Ok(())
         })
