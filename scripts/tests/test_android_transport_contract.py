@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SERVICE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
 POLICY = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidTransportPolicy.kt"
 UDP_PROBE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidUdpCapabilityProbe.kt"
+EGRESS_PROBE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressProbe.kt"
 POLICY_TEST = ROOT / "src-tauri/plugins/aether-vpn/android/src/test/java/AndroidTransportPolicyTest.kt"
 CORE_MAIN = ROOT / "vendor/aether/aether/src/main.rs"
 CORE_PROBER = ROOT / "vendor/aether/aether/src/prober.rs"
@@ -53,6 +54,32 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("DatagramSocket", probe)
         self.assertIn('listOf("1.1.1.1", "8.8.8.8")', probe)
 
+    def test_wireguard_and_gool_use_a_clean_first_dataplane(self) -> None:
+        service = SERVICE.read_text(encoding="utf-8")
+        policy = POLICY.read_text(encoding="utf-8")
+        tests = POLICY_TEST.read_text(encoding="utf-8")
+        self.assertIn("AndroidTransportPolicy.effectiveWireGuardNoize(wgNoize)", service)
+        self.assertIn("wgNoize = effectiveWgNoize", service)
+        self.assertIn('fun effectiveWireGuardNoize(requested: String): String = "off"', policy)
+        self.assertIn("androidWireGuardStartsWithCleanDataplane", tests)
+
+    def test_connected_is_gated_on_real_socks_dns_tcp_and_http(self) -> None:
+        service = SERVICE.read_text(encoding="utf-8")
+        probe = EGRESS_PROBE.read_text(encoding="utf-8")
+        verify_index = service.index("val initialProbe = AndroidEgressProbe.probe(bindAddress)")
+        connected_index = service.index("val connectedAt = System.currentTimeMillis()")
+        tunnel_index = service.index("tunnel = createSystemTunnel(")
+        self.assertLess(verify_index, connected_index)
+        self.assertLess(verify_index, tunnel_index)
+        self.assertIn('state = "Verifying"', service)
+        self.assertIn("SOCKS egress verified via", service)
+        self.assertIn("private fun socks5Connect", probe)
+        self.assertIn("cloudflare-domain-tls", probe)
+        self.assertIn("ip-api-domain-http", probe)
+        self.assertIn("cloudflare-literal-http", probe)
+        self.assertIn("remote DNS/domain egress failed", probe)
+        self.assertIn("getDefaultHostnameVerifier", probe)
+
     def test_runtime_health_flags_cover_all_three_protocols(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
@@ -61,17 +88,10 @@ class AndroidTransportContractTest(unittest.TestCase):
             service,
         )
         for flag in (
-            "--validate-secs",
-            "--health-interval",
-            "--health-timeout",
-            "--health-failures",
-            "--reconnect-secs",
-            "--keepalive",
-            "--wg-validate-secs",
-            "--wg-health-interval",
-            "--wg-stale-secs",
-            "--wg-startup-secs",
-            "--wg-reconnect-secs",
+            "--validate-secs", "--health-interval", "--health-timeout",
+            "--health-failures", "--reconnect-secs", "--keepalive",
+            "--wg-validate-secs", "--wg-health-interval", "--wg-stale-secs",
+            "--wg-startup-secs", "--wg-reconnect-secs",
         ):
             self.assertIn(f'"{flag}"', policy)
 
