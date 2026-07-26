@@ -24,7 +24,9 @@ class AndroidDisconnectContractTest(unittest.TestCase):
         self.assertNotIn("PTHREAD_CREATE_DETACHED", source)
         self.assertNotIn("pthread_cond_timedwait", source)
         self.assertNotIn("STOP_WAIT_MS", source)
-        self.assertLess(source.index("pthread_join(thread, NULL)"), source.index("thread_joinable = false"))
+        join = source.index("pthread_join(thread, NULL)")
+        release = source.index("thread_joinable = false", join)
+        self.assertLess(join, release)
 
     def test_kotlin_releases_ownership_only_after_join_succeeds(self) -> None:
         source = KOTLIN.read_text(encoding="utf-8")
