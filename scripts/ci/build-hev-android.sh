@@ -65,7 +65,7 @@ EOF
   exit 4
 }
 
-toolchain_dir=$(find "$NDK_HOME/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+toolchain_dir=$(find "$NDK_HOME/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print -quit)
 [[ -n "$toolchain_dir" ]] || {
   echo "Android NDK LLVM toolchain was not found under $NDK_HOME" >&2
   exit 5
