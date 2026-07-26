@@ -23,10 +23,13 @@ plugin_source="$workspace/src-tauri/plugins/aether-vpn/android/src/main/java/Fin
   exit 3
 }
 
-# In the real repository, catch known Kotlin/JDK API mismatches before invoking
-# Cargo or Gradle. The behavioral unit test for this script intentionally uses a
-# reduced temporary workspace without plugin sources, so it skips this block.
+# In the real repository, apply the deterministic runtime wiring first, then
+# verify the resulting MASQUE/WireGuard/Gool source before invoking Cargo or
+# Gradle. The behavioral test for this script uses a reduced temporary workspace
+# without plugin sources, so it intentionally skips this block.
 if [[ -f "$plugin_source" ]]; then
+  python3 "$script_dir/apply-android-wireguard-policy.py"
+  python3 "$script_dir/../tests/test_android_transport_contract.py"
   python3 "$script_dir/../tests/test_android_kotlin_compile_contract.py" "$workspace"
 fi
 
@@ -113,9 +116,10 @@ grep -Fq 'implementation(project(":tauri-plugin-aether-vpn"))' "$gradle_dependen
 
 chmod +x "$gradlew"
 
-# Compile the custom plugin and run its pure-JVM lifecycle tests before the
-# complete APK assembly. This catches AndroidX/Tauri API drift and regressions
-# in connection cancellation/session invalidation while feedback is still fast.
+# Compile the custom plugin and run its pure-JVM lifecycle/transport tests before
+# complete APK assembly. This catches AndroidX/Tauri API drift, cancellation
+# regressions, native teardown races, and transport policy drift while feedback
+# is still fast.
 "$gradlew" \
   -p "$android_dir" \
   :tauri-plugin-aether-vpn:compileDebugKotlin \
