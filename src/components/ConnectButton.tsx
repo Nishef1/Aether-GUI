@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, type Variants } from "motion/react"
 import { AlertTriangle, Check, Loader2, Power } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { isAndroid } from "@/lib/platform"
 import { useConnectionStore } from "@/state/connectionStore"
 import { useWindowFocused } from "@/state/windowFocus"
 import type { ConnectionStatus } from "@/types/connection"
@@ -95,14 +96,18 @@ export function ConnectButton() {
 
   return (
     <motion.button
+      layout
       type="button"
       aria-label={ARIA_LABEL[phase]}
       onClick={handleClick}
-      disabled={status.state === "Disconnecting" || preparingCores}
-      whileTap={{ scale: 0.97 }}
+      disabled={
+        status.state === "Disconnecting" || (!isAndroid && preparingCores)
+      }
+      whileTap={{ scale: 0.965 }}
       animate={phase === "error" ? "error" : "rest"}
       variants={SHAKE_VARIANTS}
-      className="relative flex size-40 items-center justify-center rounded-full text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none"
+      transition={{ layout: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
+      className="relative flex size-40 shrink-0 items-center justify-center rounded-full text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none"
     >
       <span
         aria-hidden
@@ -113,7 +118,7 @@ export function ConnectButton() {
         )}
         style={{
           boxShadow: RING_SHADOW[phase],
-          transition: "box-shadow 0.15s ease",
+          transition: "box-shadow 0.2s ease, background-color 0.2s ease",
           willChange: "transform, opacity",
           ...idlePlayState,
         }}
@@ -146,23 +151,25 @@ export function ConnectButton() {
                   ? "var(--color-status-connected)"
                   : "var(--color-status-connecting)",
             }}
-            initial={{ scale: 0.9, opacity: 0.55 }}
-            animate={{ scale: phase === "connected" ? 2 : 1.7, opacity: 0 }}
+            initial={{ scale: 0.92, opacity: 0.48 }}
+            animate={{ scale: phase === "connected" ? 1.7 : 1.5, opacity: 0 }}
             transition={{
-              duration: phase === "connected" ? 0.9 : 0.7,
+              duration: phase === "connected" ? 1.2 : 0.85,
               ease: "easeOut",
+              repeat: phase === "connected" ? Infinity : 0,
+              repeatDelay: 1.6,
             }}
           />
         )}
       </AnimatePresence>
 
-      <AnimatePresence mode="wait">
+      <AnimatePresence mode="wait" initial={false}>
         <motion.span
           key={phase}
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.8 }}
-          transition={{ duration: 0.1, ease: [0.4, 0, 0.2, 1] }}
+          initial={{ opacity: 0, scale: 0.75, rotate: -8 }}
+          animate={{ opacity: 1, scale: 1, rotate: 0 }}
+          exit={{ opacity: 0, scale: 0.75, rotate: 8 }}
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
           className="relative flex items-center justify-center"
         >
           <Icon
