@@ -14,6 +14,16 @@ internal object AndroidTransportPolicy {
             protocol.equals("gool", ignoreCase = true)
 
     /**
+     * Android uses a clean WireGuard first pass. The endpoint scanner already
+     * performs authenticated handshake and data-plane validation; emitting junk
+     * after that handshake has caused real devices to keep the UDP association
+     * alive while dropping DNS/TCP carried by the reused session. The requested
+     * profile remains visible in logs and can return as a second-pass strategy
+     * after the clean path is proven on-device.
+     */
+    fun effectiveWireGuardNoize(requested: String): String = "off"
+
+    /**
      * Upper bound for the core to expose SOCKS. These values exceed each core
      * scanner budget plus account provisioning, finalist confirmation, and
      * end-to-end data-plane validation. Cancellation remains immediate.
