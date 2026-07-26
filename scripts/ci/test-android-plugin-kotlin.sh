@@ -4,12 +4,14 @@ set -euo pipefail
 
 : "${ANDROID_MIN_API:?ANDROID_MIN_API is required}"
 
-workspace=${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+workspace=${GITHUB_WORKSPACE:-$(cd "$script_dir/../.." && pwd)}
 tauri_dir="$workspace/src-tauri"
 android_dir="$tauri_dir/gen/android"
 gradlew="$android_dir/gradlew"
 gradle_settings="$android_dir/tauri.settings.gradle"
 gradle_dependencies="$android_dir/app/tauri.build.gradle.kts"
+plugin_source="$workspace/src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
 
 [[ -f "$android_dir/settings.gradle" || -f "$android_dir/settings.gradle.kts" ]] || {
   echo "Generated Android Gradle project was not found at $android_dir" >&2
@@ -20,6 +22,13 @@ gradle_dependencies="$android_dir/app/tauri.build.gradle.kts"
   echo "Gradle wrapper was not found at $gradlew" >&2
   exit 3
 }
+
+# In the real repository, catch known Kotlin/JDK API mismatches before invoking
+# Cargo or Gradle. The behavioral unit test for this script intentionally uses a
+# reduced temporary workspace without plugin sources, so it skips this block.
+if [[ -f "$plugin_source" ]]; then
+  python3 "$script_dir/../tests/test_android_kotlin_compile_contract.py" "$workspace"
+fi
 
 app_package=$(
   python3 - "$tauri_dir/tauri.conf.json" <<'PY'
