@@ -1,0 +1,42 @@
+name: Dispatch Android transport retry once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/android-build-dispatch"
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Dispatch and record Android workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git pull --rebase origin main
+          gh workflow run build-android-arm64.yml --repo "${GITHUB_REPOSITORY}" --ref main
+          sleep 12
+          gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow build-android-arm64.yml \
+            --limit 1 \
+            --json databaseId,url,status,conclusion,headSha,createdAt \
+            > .github/android-build-run.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/android-build-run.json
+          git commit -m "ci(android): record transport retry build"
+          git pull --rebase origin main
+          git push origin HEAD:main
