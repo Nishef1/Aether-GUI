@@ -26,5 +26,7 @@ internal class ServiceSessionGate {
 
     fun isActive(token: Long): Boolean = !cancelled && generation.get() == token
 
+    fun isCurrent(token: Long): Boolean = generation.get() == token
+
     fun isCancelled(): Boolean = cancelled
 }
