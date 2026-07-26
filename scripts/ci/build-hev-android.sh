@@ -44,6 +44,14 @@ while IFS= read -r -d '' makefile; do
 done < <(find "$source_dir" -name '*.mk' -print0)
 find "$source_dir" -name 'hev-jni.c' -delete
 
+# The pinned upstream stop function waits forever for async initialization and
+# aborts the whole process when its event write races teardown. Make the stop
+# request pending/idempotent before compiling the third-party source.
+python3 "$workspace/scripts/ci/patch-hev-idempotent-stop.py" "$source_dir"
+
+grep -Fq 'WRITE_ONCE (stop_requested, 1);' "$source_dir/src/hev-socks5-tunnel.c"
+! grep -Fq 'assert (res > 0 && "socks5 tunnel write event")' "$source_dir/src/hev-socks5-tunnel.c"
+
 cat > "$source_dir/Application.mk" <<EOF
 APP_OPTIM := release
 APP_PLATFORM := android-${ANDROID_MIN_API}
