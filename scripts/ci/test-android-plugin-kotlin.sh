@@ -24,13 +24,14 @@ plugin_source="$workspace/src-tauri/plugins/aether-vpn/android/src/main/java/Fin
 }
 
 # In the real repository, prove the patcher itself is idempotent, apply the
-# deterministic runtime wiring, then verify the resulting MASQUE/WireGuard/Gool
-# source before invoking Cargo or Gradle. The behavioral test for this script
+# deterministic runtime wiring, then verify transport and crash-safe teardown
+# contracts before invoking Cargo or Gradle. The behavioral test for this script
 # uses a reduced temporary workspace without plugin sources and skips this block.
 if [[ -f "$plugin_source" ]]; then
   python3 "$script_dir/../tests/test_android_transport_patcher.py"
   python3 "$script_dir/apply-android-wireguard-policy.py"
   python3 "$script_dir/../tests/test_android_transport_contract.py"
+  python3 "$script_dir/../tests/test_android_disconnect_contract.py"
   python3 "$script_dir/../tests/test_android_kotlin_compile_contract.py" "$workspace"
 fi
 
