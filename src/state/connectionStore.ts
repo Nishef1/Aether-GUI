@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import { isAndroid } from "@/lib/platform"
 import { useCoreStore } from "@/state/coreStore"
 import type {
   ConnectionMode,
@@ -13,15 +14,25 @@ import type {
   WgNoize,
 } from "@/types/connection"
 
-const MAX_LOG_LINES = 200
-const MAX_PENDING_LOG_LINES = 400
-const LOG_FLUSH_INTERVAL_MS = 250
+const MAX_LOG_LINES = 400
+const MAX_PENDING_LOG_LINES = 800
+const LOG_FLUSH_INTERVAL_MS = 180
+const ANDROID_RUNTIME_POLL_MS = 450
 
-// Tauri commands are asynchronous, so rapid consecutive changes (for example
-// selecting a protocol and then an IP version) must be written in order. Keep
-// the last confirmed profile on disk instead of letting slower requests win.
 let profileSaveQueue: Promise<void> = Promise.resolve()
 let profileSaveRevision = 0
+let connectionOperationRevision = 0
+
+interface AndroidNativeLogEntry {
+  id: number
+  timestamp: number
+  line: string
+}
+
+interface AndroidNativeLogBatch {
+  entries: AndroidNativeLogEntry[]
+  last_id: number
+}
 
 function saveDefaultProfile(profile: ConnectionProfile): Promise<void> {
   const request = profileSaveQueue.then(() =>
@@ -37,6 +48,10 @@ function syncTrayState(state: ConnectionStatus["state"]): void {
   void invoke("sync_tray_state", { state }).catch(() => {
     // Tray visuals are supplementary and must never affect connectivity.
   })
+}
+
+function sameStatus(left: ConnectionStatus, right: ConnectionStatus): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 interface ConnectionState {
@@ -64,6 +79,7 @@ interface ConnectionState {
   setWgNoize: (wg_noize: WgNoize) => void
   setDnsServer: (dns_server: string) => void
   setBindAddress: (bind_address: string) => void
+  setWebrtcLeakProtection: (enabled: boolean) => void
   retryAfterSidecarError: () => void
 }
 
@@ -111,6 +127,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       wg_noize: "balanced",
       dns_server: "1.1.1.1",
       bind_address: "127.0.0.1:1819",
+      webrtc_leak_protection: true,
     },
     profileSaveError: null,
     logs: [],
@@ -122,23 +139,25 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     preparingCores: false,
 
     connect: async () => {
+      const operation = ++connectionOperationRevision
       set({
         traffic: { received_bytes: 0, sent_bytes: 0 },
         trafficBaseline: null,
         trafficSessionStarted: true,
-        preparingCores: true,
+        preparingCores: !isAndroid,
+        status: { state: "Launching" },
       })
       try {
-        // Never let an older asynchronous settings write land after connect() has
-        // stored its pending elevation profile. Waiting for the ordered save queue
-        // keeps the UAC handoff deterministic even after rapid mode/option changes.
         await profileSaveQueue
+        if (!isAndroid) {
+          await useCoreStore.getState().loadAll()
+        }
+        if (operation !== connectionOperationRevision) return
 
-        // Startup starts this local readiness check in parallel. If Connect wins
-        // the race, share the same promise before launching a core.
-        await useCoreStore.getState().loadAll()
+        set({ preparingCores: false })
         await invoke("connect", { profileOverride: get().profile })
       } catch (e) {
+        if (operation !== connectionOperationRevision) return
         const message = String(e)
         const lower = message.toLowerCase()
 
@@ -169,11 +188,15 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
           syncTrayState("Error")
         }
       } finally {
-        set({ preparingCores: false })
+        if (operation === connectionOperationRevision) {
+          set({ preparingCores: false })
+        }
       }
     },
 
     disconnect: async () => {
+      ++connectionOperationRevision
+      set({ preparingCores: false, status: { state: "Disconnecting" } })
       try {
         await invoke("disconnect")
       } catch (error) {
@@ -189,15 +212,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     setIpVersion: (ip_version) => updateProfileQuietly({ ip_version }),
     setConnectionMode: async (connection_mode) => {
       if (get().profile.connection_mode === connection_mode) return
-
       try {
-        // Selecting a mode is a pure settings operation. Privilege elevation has
-        // exactly one owner: connect(). This keeps dev and production behavior the
-        // same and guarantees that UAC always has an exact pending connect profile.
         await updateProfile({ connection_mode })
       } catch {
-        // updateProfile exposes the persistence failure without mislabeling it as
-        // a connection failure or changing the tray state.
+        // Inline profile error already recorded.
       }
     },
     setTunEngine: (tun_engine) => updateProfileQuietly({ tun_engine }),
@@ -229,17 +247,17 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     setWgNoize: (wg_noize) => updateProfileQuietly({ wg_noize }),
     setDnsServer: (dns_server) => updateProfileQuietly({ dns_server }),
     setBindAddress: (bind_address) => updateProfileQuietly({ bind_address }),
+    setWebrtcLeakProtection: (webrtc_leak_protection) =>
+      updateProfileQuietly({ webrtc_leak_protection }),
     retryAfterSidecarError: () => set({ sidecarError: null }),
   }
 })
 
-function appendRuntimeLog(line: string): void {
+function appendRuntimeLog(line: string, timestamp = Date.now()): void {
   useConnectionStore.setState((state) => {
     if (state.logs.at(-1)?.line === line) return state
     return {
-      logs: [...state.logs, { line, timestamp: Date.now() }].slice(
-        -MAX_LOG_LINES
-      ),
+      logs: [...state.logs, { line, timestamp }].slice(-MAX_LOG_LINES),
     }
   })
 }
@@ -256,6 +274,9 @@ let disposeConnectionRuntime: (() => void) | null = null
 async function initializeConnectionRuntime(): Promise<void> {
   let pendingLogs: LogLine[] = []
   let flushTimer: ReturnType<typeof setTimeout> | null = null
+  let androidPollTimer: ReturnType<typeof setInterval> | null = null
+  let androidPollInFlight = false
+  let lastAndroidLogId = 0
   let statusEventReceived = false
   const unlisteners: Array<() => void> = []
 
@@ -276,29 +297,66 @@ async function initializeConnectionRuntime(): Promise<void> {
     }))
   }
 
+  const queueLogs = (logs: LogLine[]) => {
+    if (logs.length === 0) return
+    pendingLogs.push(...logs)
+    if (pendingLogs.length > MAX_PENDING_LOG_LINES * 2) {
+      pendingLogs = pendingLogs.slice(-MAX_PENDING_LOG_LINES)
+    }
+    flushTimer ??= setTimeout(flushLogs, LOG_FLUSH_INTERVAL_MS)
+  }
+
+  const applyStatus = (status: ConnectionStatus) => {
+    const current = useConnectionStore.getState().status
+    if (!sameStatus(current, status)) {
+      useConnectionStore.setState({
+        status,
+        ...(status.state === "Launching" ? { scanBudgetSecs: null } : {}),
+      })
+      if (status.state === "Error") {
+        appendRuntimeLog(`[error:${status.phase}] ${status.message}`)
+      }
+      syncTrayState(status.state)
+    }
+  }
+
+  const pollAndroidRuntime = async () => {
+    if (!isAndroid || androidPollInFlight) return
+    androidPollInFlight = true
+    try {
+      const [status, nativeLogs] = await Promise.all([
+        invoke<ConnectionStatus>("get_status"),
+        invoke<AndroidNativeLogBatch>("get_android_logs", {
+          afterId: lastAndroidLogId,
+        }),
+      ])
+      applyStatus(status)
+      if (nativeLogs.entries.length > 0) {
+        lastAndroidLogId = Math.max(lastAndroidLogId, nativeLogs.last_id)
+        queueLogs(
+          nativeLogs.entries.map((entry) => ({
+            line: `[native] ${entry.line}`,
+            timestamp: entry.timestamp,
+          }))
+        )
+      }
+    } catch (error) {
+      appendRuntimeLog(`[error:android-runtime-poll] ${String(error)}`)
+    } finally {
+      androidPollInFlight = false
+    }
+  }
+
   try {
     unlisteners.push(
       await listen<ConnectionStatus>("aether://status", (event) => {
         statusEventReceived = true
-        useConnectionStore.setState({
-          status: event.payload,
-          ...(event.payload.state === "Launching" ? { scanBudgetSecs: null } : {}),
-        })
-        if (event.payload.state === "Error") {
-          appendRuntimeLog(
-            `[error:${event.payload.phase}] ${event.payload.message}`
-          )
-        }
-        syncTrayState(event.payload.state)
+        applyStatus(event.payload)
       })
     )
     unlisteners.push(
       await listen<LogLine>("aether://log", (event) => {
-        pendingLogs.push(event.payload)
-        if (pendingLogs.length > MAX_PENDING_LOG_LINES * 2) {
-          pendingLogs = pendingLogs.slice(-MAX_PENDING_LOG_LINES)
-        }
-        flushTimer ??= setTimeout(flushLogs, LOG_FLUSH_INTERVAL_MS)
+        queueLogs([event.payload])
       })
     )
   } catch (error) {
@@ -308,9 +366,18 @@ async function initializeConnectionRuntime(): Promise<void> {
     throw error
   }
 
+  if (isAndroid) {
+    await pollAndroidRuntime()
+    androidPollTimer = setInterval(
+      () => void pollAndroidRuntime(),
+      ANDROID_RUNTIME_POLL_MS
+    )
+  }
+
   disposeConnectionRuntime = () => {
     unlisteners.forEach((unlisten) => unlisten())
     if (flushTimer !== null) clearTimeout(flushTimer)
+    if (androidPollTimer !== null) clearInterval(androidPollTimer)
     pendingLogs = []
   }
 
@@ -332,7 +399,10 @@ async function initializeConnectionRuntime(): Promise<void> {
     ),
   ])
 
-  const activeProfile = pendingElevationProfile ?? profile
+  const activeProfile = {
+    ...useConnectionStore.getState().profile,
+    ...(pendingElevationProfile ?? profile),
+  }
   useConnectionStore.setState({
     ...(!statusEventReceived ? { status } : {}),
     ...(pendingElevationProfile || initialProfileRevision === profileSaveRevision
@@ -344,20 +414,14 @@ async function initializeConnectionRuntime(): Promise<void> {
   }
   if (!statusEventReceived) syncTrayState(status.state)
 
-  // A pending profile is a one-shot handoff created immediately before UAC.
-  // Only the elevated process can consume it, so resuming here cannot turn a
-  // normal app launch into an unexpected auto-connect.
-  if (pendingElevationProfile && useConnectionStore.getState().status.state === "Idle") {
+  if (
+    pendingElevationProfile &&
+    useConnectionStore.getState().status.state === "Idle"
+  ) {
     queueMicrotask(() => void useConnectionStore.getState().connect())
   }
 }
 
-/**
- * Initializes the app-lifetime Tauri subscriptions exactly once. React
- * StrictMode intentionally remounts effects in development; tying native event
- * listeners to that component lifecycle can briefly duplicate subscriptions and
- * duplicate log/status events. The WebView owns this runtime until it exits.
- */
 export async function initConnectionListeners(): Promise<() => void> {
   connectionRuntimeInit ??= initializeConnectionRuntime().catch((error) => {
     connectionRuntimeInit = null
