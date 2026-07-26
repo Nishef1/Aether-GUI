@@ -7,9 +7,9 @@
  *
  * The bundled hev JNI layer is intentionally excluded from the Android build.
  * We bind only hev's stable public C API and run its blocking event loop on a
- * detached native pthread. Running hev's stack-switching task system directly
- * on an ART-managed Java thread can corrupt ART's stack assumptions and crash
- * the process during traffic or teardown.
+ * native pthread. The thread is JOINABLE: Java must not close the VPN descriptor
+ * while hev is still reading it, and a timed-out detached teardown can corrupt
+ * a later session or crash the process during Disconnect.
  */
 
 #include <android/log.h>
@@ -21,63 +21,71 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 
 extern int hev_socks5_tunnel_main(const char *config_path, int tun_fd);
 extern void hev_socks5_tunnel_quit(void);
 extern void hev_socks5_tunnel_stats(size_t *tx_packets, size_t *tx_bytes,
-                                    size_t *rx_packets, size_t *rx_bytes);
+                                     size_t *rx_packets, size_t *rx_bytes);
 
 #define TAG "aethertun"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
-#define STOP_WAIT_MS 3000L
 
-static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t state_changed = PTHREAD_COND_INITIALIZER;
-static bool running = false;
+typedef enum {
+    TUN_STATE_STOPPED = 0,
+    TUN_STATE_STARTING,
+    TUN_STATE_RUNNING,
+    TUN_STATE_STOPPING,
+} TunnelState;
 
 typedef struct {
     char *config_path;
     int tun_fd;
 } StartArgs;
 
-static void add_milliseconds(struct timespec *value, long milliseconds)
+static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t state_changed = PTHREAD_COND_INITIALIZER;
+static TunnelState state = TUN_STATE_STOPPED;
+static pthread_t tunnel_thread_handle;
+static bool thread_joinable = false;
+static bool join_in_progress = false;
+static bool quit_requested = false;
+
+static void *tunnel_thread(void *opaque)
 {
-    value->tv_sec += milliseconds / 1000L;
-    value->tv_nsec += (milliseconds % 1000L) * 1000000L;
-    if (value->tv_nsec >= 1000000000L) {
-        value->tv_sec += 1;
-        value->tv_nsec -= 1000000000L;
-    }
+    StartArgs *args = (StartArgs *)opaque;
+
+    pthread_mutex_lock(&state_lock);
+    if (state == TUN_STATE_STARTING)
+        state = TUN_STATE_RUNNING;
+    pthread_cond_broadcast(&state_changed);
+    pthread_mutex_unlock(&state_lock);
+
+    LOGI("native tunnel thread started (fd=%d)", args->tun_fd);
+    const int result = hev_socks5_tunnel_main(args->config_path, args->tun_fd);
+    LOGI("native tunnel loop exited with code %d", result);
+
+    /* The bridge owns this duplicate. hev treats external descriptors as
+     * caller-owned and never closes them. */
+    close(args->tun_fd);
+    free(args->config_path);
+    free(args);
+
+    pthread_mutex_lock(&state_lock);
+    state = TUN_STATE_STOPPED;
+    pthread_cond_broadcast(&state_changed);
+    pthread_mutex_unlock(&state_lock);
+    return NULL;
 }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
     (void)vm;
     (void)reserved;
-    LOGI("stable Aether TUN bridge loaded");
+    LOGI("stable joinable Aether TUN bridge loaded");
     return JNI_VERSION_1_6;
-}
-
-static void *tunnel_thread(void *opaque)
-{
-    StartArgs *args = (StartArgs *)opaque;
-    const int result = hev_socks5_tunnel_main(args->config_path, args->tun_fd);
-
-    close(args->tun_fd);
-    free(args->config_path);
-    free(args);
-
-    pthread_mutex_lock(&state_lock);
-    running = false;
-    pthread_cond_broadcast(&state_changed);
-    pthread_mutex_unlock(&state_lock);
-
-    LOGI("native tunnel thread exited with code %d", result);
-    return NULL;
 }
 
 JNIEXPORT jboolean JNICALL
@@ -87,12 +95,13 @@ Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeStart(
     (void)instance;
 
     pthread_mutex_lock(&state_lock);
-    if (running) {
+    if (thread_joinable || state != TUN_STATE_STOPPED) {
         pthread_mutex_unlock(&state_lock);
-        LOGW("start rejected because a native tunnel is already running");
+        LOGW("start rejected because the previous native tunnel is not fully joined");
         return JNI_FALSE;
     }
-    running = true;
+    state = TUN_STATE_STARTING;
+    quit_requested = false;
     pthread_mutex_unlock(&state_lock);
 
     const char *path = (*env)->GetStringUTFChars(env, config_path, NULL);
@@ -112,8 +121,6 @@ Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeStart(
         goto fail;
     }
 
-    /* Own a duplicate so Java can close its ParcelFileDescriptor only after
-     * the native loop has acknowledged quit without racing the same fd. */
     args->tun_fd = dup((int)tun_fd);
     if (args->tun_fd < 0) {
         LOGE("dup(tun_fd) failed: errno=%d", errno);
@@ -122,12 +129,8 @@ Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeStart(
         goto fail;
     }
 
-    pthread_attr_t attributes;
     pthread_t thread;
-    pthread_attr_init(&attributes);
-    pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
-    const int rc = pthread_create(&thread, &attributes, tunnel_thread, args);
-    pthread_attr_destroy(&attributes);
+    const int rc = pthread_create(&thread, NULL, tunnel_thread, args);
     if (rc != 0) {
         LOGE("pthread_create failed: %d", rc);
         close(args->tun_fd);
@@ -136,12 +139,17 @@ Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeStart(
         goto fail;
     }
 
-    LOGI("native tunnel thread started");
+    pthread_mutex_lock(&state_lock);
+    tunnel_thread_handle = thread;
+    thread_joinable = true;
+    pthread_cond_broadcast(&state_changed);
+    pthread_mutex_unlock(&state_lock);
     return JNI_TRUE;
 
 fail:
     pthread_mutex_lock(&state_lock);
-    running = false;
+    state = TUN_STATE_STOPPED;
+    quit_requested = false;
     pthread_cond_broadcast(&state_changed);
     pthread_mutex_unlock(&state_lock);
     return JNI_FALSE;
@@ -154,30 +162,49 @@ Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeStop(
     (void)env;
     (void)instance;
 
+    pthread_t thread;
+    bool should_request_quit = false;
+
     pthread_mutex_lock(&state_lock);
-    const bool was_running = running;
-    pthread_mutex_unlock(&state_lock);
-    if (!was_running)
+    while (join_in_progress)
+        pthread_cond_wait(&state_changed, &state_lock);
+
+    if (!thread_joinable) {
+        state = TUN_STATE_STOPPED;
+        pthread_mutex_unlock(&state_lock);
         return JNI_TRUE;
-
-    hev_socks5_tunnel_quit();
-
-    struct timespec deadline;
-    clock_gettime(CLOCK_REALTIME, &deadline);
-    add_milliseconds(&deadline, STOP_WAIT_MS);
-
-    pthread_mutex_lock(&state_lock);
-    while (running) {
-        const int rc = pthread_cond_timedwait(&state_changed, &state_lock, &deadline);
-        if (rc == ETIMEDOUT)
-            break;
     }
-    const bool stopped = !running;
+
+    join_in_progress = true;
+    thread = tunnel_thread_handle;
+    if (state != TUN_STATE_STOPPED && !quit_requested) {
+        state = TUN_STATE_STOPPING;
+        quit_requested = true;
+        should_request_quit = true;
+    }
     pthread_mutex_unlock(&state_lock);
 
-    if (!stopped)
-        LOGE("native tunnel did not stop within %ld ms", STOP_WAIT_MS);
-    return stopped ? JNI_TRUE : JNI_FALSE;
+    if (should_request_quit) {
+        LOGI("requesting native tunnel stop");
+        hev_socks5_tunnel_quit();
+    }
+
+    const int join_result = pthread_join(thread, NULL);
+
+    pthread_mutex_lock(&state_lock);
+    thread_joinable = false;
+    join_in_progress = false;
+    quit_requested = false;
+    state = TUN_STATE_STOPPED;
+    pthread_cond_broadcast(&state_changed);
+    pthread_mutex_unlock(&state_lock);
+
+    if (join_result != 0) {
+        LOGE("pthread_join failed: %d", join_result);
+        return JNI_FALSE;
+    }
+    LOGI("native tunnel thread joined");
+    return JNI_TRUE;
 }
 
 JNIEXPORT jlongArray JNICALL
@@ -187,7 +214,7 @@ Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeStats(
     (void)instance;
 
     pthread_mutex_lock(&state_lock);
-    const bool active = running;
+    const bool active = state == TUN_STATE_RUNNING || state == TUN_STATE_STOPPING;
     pthread_mutex_unlock(&state_lock);
     if (!active)
         return NULL;
