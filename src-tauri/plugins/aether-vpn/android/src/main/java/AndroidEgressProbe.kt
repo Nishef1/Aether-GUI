@@ -7,6 +7,7 @@ import java.net.Proxy
 import java.net.Socket
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 internal data class EgressProbeResult(
     val publicIp: String,
@@ -34,8 +35,8 @@ internal object AndroidEgressProbe {
         rawSocket.soTimeout = READ_TIMEOUT_MS
 
         val sslSocket = try {
-            SSLContext.getDefault().socketFactory
-                .createSocket(rawSocket, HOST, PORT, true) as SSLSocket
+            val sslFactory = SSLContext.getDefault().socketFactory as SSLSocketFactory
+            sslFactory.createSocket(rawSocket, HOST, PORT, true) as SSLSocket
         } catch (error: Throwable) {
             runCatching { rawSocket.close() }
             throw error
