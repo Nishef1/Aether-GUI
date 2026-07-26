@@ -21,6 +21,7 @@ import { MasqueTransportToggle } from "@/components/MasqueTransportToggle"
 import { NoizeProfileToggle } from "@/components/NoizeProfileToggle"
 import { BindAddressField } from "@/components/BindAddressField"
 import { TunEngineToggle } from "@/components/TunEngineToggle"
+import { isAndroid } from "@/lib/platform"
 import { useConnectionStore } from "@/state/connectionStore"
 
 const DEFAULT_DNS = "1.1.1.1"
@@ -73,6 +74,38 @@ function FieldRow({
         )}
       </div>
       {children}
+    </div>
+  )
+}
+
+function ToggleRow({
+  label,
+  description,
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  label: string
+  description: string
+  checked: boolean
+  disabled: boolean
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 rounded-lg border border-white/6 bg-black/10 px-3 py-2.5">
+      <div className="min-w-0">
+        <p className="text-xs text-foreground">{label}</p>
+        <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+          {description}
+        </p>
+      </div>
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+        aria-label={label}
+        className="mt-0.5 shrink-0"
+      />
     </div>
   )
 }
@@ -180,15 +213,21 @@ export function AdvancedPanel() {
   const quickReconnect = useConnectionStore(
     (state) => state.profile.quick_reconnect
   )
+  const webrtcLeakProtection = useConnectionStore(
+    (state) => state.profile.webrtc_leak_protection
+  )
   const profileSaveError = useConnectionStore((state) => state.profileSaveError)
   const setQuickReconnect = useConnectionStore(
     (state) => state.setQuickReconnect
+  )
+  const setWebrtcLeakProtection = useConnectionStore(
+    (state) => state.setWebrtcLeakProtection
   )
   const [open, setOpen] = useState(false)
   const locked = status.state !== "Idle" && status.state !== "Error"
 
   return (
-    <div className="w-full max-w-sm">
+    <div className="w-full max-w-sm shrink-0">
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-surface-2/80 px-3 py-2.5 text-left outline-none transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out hover:-translate-y-px hover:border-primary/35 hover:bg-surface-3/90 hover:shadow-[0_8px_24px_rgba(0,0,0,0.18)] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:border-primary/30 data-[state=open]:bg-primary/8 data-[state=open]:shadow-[inset_0_1px_0_rgba(242,113,28,0.18)] motion-reduce:transform-none motion-reduce:transition-none">
           <span className="flex min-w-0 items-center gap-3">
@@ -200,7 +239,7 @@ export function AdvancedPanel() {
                 Advanced settings
               </span>
               <span className="mt-0.5 block truncate text-[10px] leading-tight text-muted-foreground">
-                Protocol, routing, and reconnect options
+                Protocol, routing, privacy, and reconnect options
               </span>
             </span>
           </span>
@@ -247,20 +286,23 @@ export function AdvancedPanel() {
 
               {mode !== "proxy" && (
                 <>
-                  <FieldRow
-                    label="System TUN engine"
-                    tooltip="sing-box is recommended on Windows because strict routing and DNS hijacking provide consistent system DNS enforcement. Xray remains available for compatibility but cannot transparently replace browser DoH, DoT, or DoQ."
-                  >
-                    <TunEngineToggle />
-                  </FieldRow>
-                  {tunEngine === "xray" && (
-                    <p
-                      className="rounded-lg border border-warning/25 bg-warning/8 px-2.5 py-2 text-[10px] leading-relaxed text-warning"
-                      role="status"
-                    >
-                      Xray protects plaintext DNS, but browser Secure DNS can keep its own provider.
-                      Use sing-box when resolver consistency is required.
-                    </p>
+                  {!isAndroid && (
+                    <>
+                      <FieldRow
+                        label="System TUN engine"
+                        tooltip="sing-box is recommended on Windows because strict routing and DNS hijacking provide consistent system DNS enforcement."
+                      >
+                        <TunEngineToggle />
+                      </FieldRow>
+                      {tunEngine === "xray" && (
+                        <p
+                          className="rounded-lg border border-warning/25 bg-warning/8 px-2.5 py-2 text-[10px] leading-relaxed text-warning"
+                          role="status"
+                        >
+                          Xray protects plaintext DNS, but browser Secure DNS can keep its own provider.
+                        </p>
+                      )}
+                    </>
                   )}
                   <FieldRow
                     label="DNS resolver"
@@ -268,6 +310,15 @@ export function AdvancedPanel() {
                   >
                     <DnsServerField />
                   </FieldRow>
+                  {isAndroid && (
+                    <ToggleRow
+                      label="WebRTC leak protection"
+                      description="Carries STUN/WebRTC UDP through the SOCKS TCP relay. This prevents direct UDP egress but can increase call and gaming latency."
+                      checked={webrtcLeakProtection}
+                      disabled={locked}
+                      onCheckedChange={setWebrtcLeakProtection}
+                    />
+                  )}
                 </>
               )}
 
@@ -280,27 +331,13 @@ export function AdvancedPanel() {
                 </FieldRow>
               )}
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  Quick reconnect
-                  <Tooltip>
-                    <TooltipTrigger aria-label="About Quick reconnect">
-                      <Info size={12} />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      Remembers the last gateway that worked and re-tests it first on the next
-                      connect, skipping the full scan when it still works. Turn off to always scan
-                      fresh.
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <Switch
-                  checked={quickReconnect}
-                  onCheckedChange={setQuickReconnect}
-                  disabled={locked}
-                  aria-label="Quick reconnect"
-                />
-              </div>
+              <ToggleRow
+                label="Quick reconnect"
+                description="Tries the last working gateway first. Disable it to force a fresh route scan on every connection."
+                checked={quickReconnect}
+                disabled={locked}
+                onCheckedChange={setQuickReconnect}
+              />
 
               {profileSaveError && (
                 <p className="text-[10px] leading-relaxed text-destructive" role="status">
