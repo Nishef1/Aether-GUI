@@ -39,6 +39,8 @@ export interface ConnectionProfile {
   dns_server: string
   /** Loopback-only SOCKS5 address. The port is configurable. */
   bind_address: string
+  /** Encapsulates UDP through the SOCKS TCP control path to prevent direct STUN/WebRTC egress. */
+  webrtc_leak_protection: boolean
 }
 
 export interface TrafficStats {
