@@ -1,6 +1,6 @@
 [package]
 name = "aether-gui"
-version = "0.5.4"
+version = "0.5.5"
 description = "One-click GUI for the Aether censorship-circumvention tunnel"
 edition = "2021"
 
@@ -28,4 +28,7 @@ portable-pty = "0.8"
 tauri-plugin-aether-vpn = { path = "plugins/aether-vpn" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Security", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+] }
