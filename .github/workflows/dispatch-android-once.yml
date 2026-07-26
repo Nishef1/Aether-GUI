@@ -1,4 +1,4 @@
-name: Dispatch Android 0.5.4 once
+name: Apply transport hardening and dispatch Android once
 
 on:
   push:
@@ -17,22 +17,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
+
+      - name: Apply MASQUE WireGuard and Gool hardening
+        run: |
+          set -euo pipefail
+          git pull --rebase origin main
+          python3 scripts/ci/apply-android-wireguard-policy.py
+          python3 scripts/tests/test_android_transport_contract.py
+          python3 scripts/tests/test_android_plugin_contract.py
+
+      - name: Commit runtime wiring
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt \
+            scripts/ci/test-android-plugin-kotlin.sh
+          if ! git diff --cached --quiet; then
+            git commit -m "fix(android): harden MASQUE WireGuard and Gool runtime"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
       - name: Dispatch and record Android workflow
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh workflow run build-android-arm64.yml --repo "${GITHUB_REPOSITORY}" --ref main
-          sleep 10
+          sleep 12
           gh run list \
             --repo "${GITHUB_REPOSITORY}" \
             --workflow build-android-arm64.yml \
             --limit 1 \
             --json databaseId,url,status,conclusion,headSha,createdAt \
             > .github/android-build-run.json
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .github/android-build-run.json
-          git commit -m "ci(android): record dispatched 0.5.4 run"
+          git commit -m "ci(android): record transport hardening build"
+          git pull --rebase origin main
           git push origin HEAD:main
