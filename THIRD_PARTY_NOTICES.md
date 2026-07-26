@@ -24,3 +24,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## QW-AI-Code/Aether Android implementation
+
+The crash-safe Android TUN bridge architecture in `scripts/native/aethertun-jni.c`
+was informed by and adapted from the Android implementation in
+`QW-AI-Code/Aether`, licensed under GNU AGPL version 3 or later. The adapted
+bridge remains available under this repository's GNU AGPL version 3 license.
