@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/android-055-apply"
+      - ".github/workflows/apply-android-055-once.yml"
 
 permissions:
   contents: write
