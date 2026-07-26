@@ -67,7 +67,20 @@ internal object AndroidVpnRuntime {
     fun snapshot(): FinalServiceSnapshot = status.get()
 
     fun updateSnapshot(snapshot: FinalServiceSnapshot) {
-        status.set(snapshot)
+        status.updateAndGet { current ->
+            // A delayed Service.onDestroy() must not erase a startup error or a
+            // newer Launching session. Explicit stop always publishes
+            // Disconnecting before it is allowed to transition to Idle.
+            if (
+                snapshot.state == "Idle" &&
+                current.state != "Disconnecting" &&
+                current.state != "Idle"
+            ) {
+                current
+            } else {
+                snapshot
+            }
+        }
     }
 
     fun idleSnapshot() = FinalServiceSnapshot("Idle")
