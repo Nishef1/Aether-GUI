@@ -7,7 +7,7 @@ import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
-internal data class FinalServiceSnapshot(
+data class FinalServiceSnapshot(
     val state: String,
     val message: String? = null,
     val socksAddr: String? = null,
@@ -23,18 +23,18 @@ internal data class FinalServiceSnapshot(
     }
 }
 
-internal data class FinalNativeTraffic(
+data class FinalNativeTraffic(
     val receivedBytes: Long = 0L,
     val sentBytes: Long = 0L,
 )
 
-internal data class FinalNativeLogEntry(
+data class FinalNativeLogEntry(
     val id: Long,
     val timestamp: Long,
     val line: String,
 )
 
-internal data class FinalRuntimeTelemetry(
+data class FinalRuntimeTelemetry(
     val receivedBytes: Long = 0L,
     val sentBytes: Long = 0L,
     val publicIp: String? = null,
@@ -109,7 +109,11 @@ internal object AndroidVpnRuntime {
     }
 
     fun recentLogTail(limit: Int): String = synchronized(logLines) {
-        logLines.takeLast(limit).joinToString(" | ") { it.line }
+        if (limit <= 0) {
+            ""
+        } else {
+            logLines.toList().takeLast(limit).joinToString(" | ") { entry -> entry.line }
+        }
     }
 
     fun setActiveTunBridge(bridge: HevTun2Socks) {
