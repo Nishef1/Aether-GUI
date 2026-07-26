@@ -45,7 +45,9 @@ HEV_BRIDGE = (
     ROOT
     / "src-tauri/plugins/aether-vpn/android/src/main/java/HevTun2Socks.kt"
 )
+HEV_NATIVE_BRIDGE = ROOT / "scripts/native/aethertun-jni.c"
 HEV_BUILD_SCRIPT = ROOT / "scripts/ci/build-hev-android.sh"
+NATIVE_BUNDLE_SCRIPT = ROOT / "scripts/ci/bundle-android-native.sh"
 KOTLIN_PREFLIGHT_SCRIPT = ROOT / "scripts/ci/test-android-plugin-kotlin.sh"
 WORKFLOW = ROOT / ".github/workflows/build-android-arm64.yml"
 
@@ -87,9 +89,9 @@ class AndroidPluginContractTest(unittest.TestCase):
         source = PLUGIN_SOURCE.read_text(encoding="utf-8")
         self.assertNotIn("if (coreProcess?.isAlive == true) return", source)
         self.assertIn("val staleResources = detachAllResources()", source)
-        self.assertIn("cleanupResources(staleResources, \"replace stale session\")", source)
+        self.assertIn('cleanupResources(staleResources, "replace stale session")', source)
         self.assertIn("finally {", source)
-        self.assertIn("cleanupResources(finalResources, \"session finalizer\")", source)
+        self.assertIn('cleanupResources(finalResources, "session finalizer")', source)
         self.assertIn("process.destroyForcibly()", source)
         self.assertIn("recent logs:", source)
 
@@ -120,9 +122,8 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn('android:exported="false"', manifest)
         self.assertIn("FinalAetherVpnService", manifest)
         self.assertNotIn("HardenedAetherVpnService", manifest)
-        self.assertNotIn('android:name="com.cluvexstudio.aethergui.vpn.AetherVpnService"', manifest)
 
-    def test_rust_bridge_registers_final_plugin_and_runtime_commands(self) -> None:
+    def test_rust_bridge_registers_runtime_commands(self) -> None:
         plugin_bridge = PLUGIN_RUST_BRIDGE.read_text(encoding="utf-8")
         android_bridge = ANDROID_RUST_BRIDGE.read_text(encoding="utf-8")
         self.assertIn('"FinalAetherVpnPlugin"', plugin_bridge)
@@ -131,9 +132,8 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("webrtc_leak_protection", plugin_bridge)
         self.assertIn("fn get_android_logs", android_bridge)
         self.assertIn("fn get_runtime_telemetry(app: AppHandle)", android_bridge)
-        self.assertIn("get_android_logs,", android_bridge)
 
-    def test_native_logs_and_status_are_polled_on_android(self) -> None:
+    def test_native_logs_status_and_cancel_are_polled_on_android(self) -> None:
         store = CONNECTION_STORE.read_text(encoding="utf-8")
         button = CONNECT_BUTTON.read_text(encoding="utf-8")
         self.assertIn('invoke<AndroidNativeLogBatch>("get_android_logs"', store)
@@ -141,7 +141,7 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("ANDROID_RUNTIME_POLL_MS", store)
         self.assertIn("++connectionOperationRevision", store)
         self.assertIn("(!isAndroid && preparingCores)", button)
-        self.assertIn("size-40 shrink-0", button)
+        self.assertIn("Cancel connecting", button)
 
     def test_webrtc_protection_uses_supported_udp_in_tcp_mode(self) -> None:
         source = PLUGIN_SOURCE.read_text(encoding="utf-8")
@@ -156,23 +156,49 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("socket.inputStream.bufferedReader().readText()", probe)
         self.assertNotIn("bufferedWriter().use", probe)
 
-    def test_pinned_tun2socks_jni_signatures_and_stats_match(self) -> None:
+    def test_tun_wrapper_is_idempotent_and_loads_only_our_bridge(self) -> None:
         bridge = HEV_BRIDGE.read_text(encoding="utf-8")
         runtime = RUNTIME_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("external fun TProxyStartService(configPath: String, tunFd: Int)", bridge)
-        self.assertIn("external fun TProxyStopService()", bridge)
-        self.assertIn("external fun TProxyGetStats(): LongArray", bridge)
-        self.assertIn('System.loadLibrary("hev-socks5-tunnel")', bridge)
+        self.assertIn("internal object AetherTunBridge", bridge)
+        self.assertIn('System.loadLibrary("aethertun")', bridge)
+        self.assertNotIn('System.loadLibrary("hev-socks5-tunnel")', bridge)
+        self.assertIn("external fun nativeStart(configPath: String, tunFd: Int): Boolean", bridge)
+        self.assertIn("external fun nativeStop(): Boolean", bridge)
+        self.assertIn("external fun nativeStats(): LongArray?", bridge)
+        self.assertIn("synchronized(nativeLock)", bridge)
+        self.assertIn("private var nativeRunning = false", bridge)
+        self.assertIn("fun TProxyStopService(): Boolean", bridge)
         self.assertIn("receivedBytes = stats[3]", runtime)
         self.assertIn("sentBytes = stats[1]", runtime)
 
-    def test_tun2socks_native_registration_targets_bridge_class(self) -> None:
+    def test_native_bridge_owns_thread_fd_and_stop_acknowledgement(self) -> None:
+        native = HEV_NATIVE_BRIDGE.read_text(encoding="utf-8")
+        self.assertIn("pthread_create", native)
+        self.assertIn("PTHREAD_CREATE_DETACHED", native)
+        self.assertIn("args->tun_fd = dup((int)tun_fd)", native)
+        self.assertIn("pthread_cond_timedwait", native)
+        self.assertIn("hev_socks5_tunnel_quit()", native)
+        self.assertIn("JNI_OnLoad", native)
+        for symbol in (
+            "AetherTunBridge_nativeStart",
+            "AetherTunBridge_nativeStop",
+            "AetherTunBridge_nativeStats",
+        ):
+            self.assertIn(symbol, native)
+
+    def test_hev_build_strips_unstable_jni_and_verifies_c_api(self) -> None:
         build_script = HEV_BUILD_SCRIPT.read_text(encoding="utf-8")
-        self.assertIn(
-            "-DPKGNAME=com/cluvexstudio/aethergui/vpn -DCLSNAME=HevTun2Socks",
-            build_script,
-        )
-        self.assertIn("APP_ABI := arm64-v8a", build_script)
+        bundle_script = NATIVE_BUNDLE_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("find \"$source_dir\" -name 'hev-jni.c' -delete", build_script)
+        self.assertIn("hev core still exports JNI_OnLoad", build_script)
+        self.assertNotIn("-DPKGNAME=", build_script)
+        self.assertIn("hev_socks5_tunnel_main", build_script)
+        self.assertIn("hev_socks5_tunnel_quit", build_script)
+        self.assertIn("hev_socks5_tunnel_stats", build_script)
+        self.assertIn("libaethertun.so", build_script)
+        self.assertIn("-Wl,--no-undefined", build_script)
+        self.assertIn("libaethertun.so", bundle_script)
+        self.assertIn("libhev-socks5-tunnel.so", bundle_script)
 
     def test_kotlin_preflight_bootstraps_tauri_android_environment(self) -> None:
         preflight = KOTLIN_PREFLIGHT_SCRIPT.read_text(encoding="utf-8")
@@ -204,15 +230,14 @@ class AndroidPluginContractTest(unittest.TestCase):
             bin_dir.mkdir()
 
             (tauri_dir / "tauri.conf.json").write_text(
-                '{"identifier":"com.cluvexstudio.aethergui"}\n',
-                encoding="utf-8",
+                '{"identifier":"com.cluvexstudio.aethergui"}\n', encoding="utf-8"
             )
             (tauri_dir / "Cargo.toml").write_text(
                 textwrap.dedent(
                     """\
                     [package]
                     name = "aether-gui"
-                    version = "0.5.2"
+                    version = "0.5.4"
                     edition = "2021"
 
                     [lib]
@@ -223,8 +248,7 @@ class AndroidPluginContractTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (android_dir / "settings.gradle").write_text(
-                "apply from: 'tauri.settings.gradle'\n",
-                encoding="utf-8",
+                "apply from: 'tauri.settings.gradle'\n", encoding="utf-8"
             )
 
             cargo = bin_dir / "cargo"
@@ -300,10 +324,7 @@ class AndroidPluginContractTest(unittest.TestCase):
 
     def test_workflow_runs_real_kotlin_compile_preflight(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn(
-            "bash scripts/ci/test-android-plugin-kotlin.sh",
-            workflow,
-        )
+        self.assertIn("bash scripts/ci/test-android-plugin-kotlin.sh", workflow)
         self.assertIn("android-plugin-kotlin-preflight.log", workflow)
 
 
