@@ -1,4 +1,4 @@
-name: Apply Android WireGuard policy once
+name: Apply Android transport policy once
 
 on:
   push:
@@ -15,19 +15,21 @@ jobs:
   apply:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out main
+      - name: Check out latest main
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
-      - name: Apply and verify WireGuard hardening
+      - name: Apply and verify Android transport hardening
         run: |
           set -euo pipefail
+          git pull --rebase origin main
           python3 scripts/ci/apply-android-wireguard-policy.py
-          python3 scripts/tests/test_android_wireguard_contract.py
+          python3 scripts/tests/test_android_transport_contract.py
           python3 scripts/tests/test_android_plugin_contract.py
 
-      - name: Commit policy wiring
+      - name: Commit transport wiring
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -35,8 +37,13 @@ jobs:
           git add \
             src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt \
             scripts/ci/test-android-plugin-kotlin.sh
-          git commit -m "fix(android): harden WireGuard startup and MTU"
-          git push origin HEAD:main
+          if git diff --cached --quiet; then
+            echo "Transport wiring already applied"
+          else
+            git commit -m "fix(android): harden MASQUE WireGuard and Gool runtime"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
 
       - name: Dispatch Android build and record it
         env:
@@ -44,13 +51,14 @@ jobs:
         run: |
           set -euo pipefail
           gh workflow run build-android-arm64.yml --repo "${GITHUB_REPOSITORY}" --ref main
-          sleep 10
+          sleep 12
           gh run list \
             --repo "${GITHUB_REPOSITORY}" \
             --workflow build-android-arm64.yml \
             --limit 1 \
             --json databaseId,url,status,conclusion,headSha,createdAt \
-            > .github/android-wireguard-build.json
-          git add .github/android-wireguard-build.json
-          git commit -m "ci(android): record WireGuard hardening build"
+            > .github/android-transport-build.json
+          git add .github/android-transport-build.json
+          git commit -m "ci(android): record transport hardening build"
+          git pull --rebase origin main
           git push origin HEAD:main
