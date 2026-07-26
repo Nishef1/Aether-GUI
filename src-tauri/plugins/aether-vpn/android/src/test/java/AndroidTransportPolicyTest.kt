@@ -34,6 +34,13 @@ class AndroidTransportPolicyTest {
     }
 
     @Test
+    fun androidWireGuardStartsWithCleanDataplane() {
+        assertEquals("off", AndroidTransportPolicy.effectiveWireGuardNoize("balanced"))
+        assertEquals("off", AndroidTransportPolicy.effectiveWireGuardNoize("aggressive"))
+        assertEquals("off", AndroidTransportPolicy.effectiveWireGuardNoize("off"))
+    }
+
+    @Test
     fun masqueAutoSelectsH2WhenUdpIsUnavailable() {
         assertTrue(AndroidTransportPolicy.useMasqueHttp2(forceHttp2 = true, udpAvailable = true))
         assertTrue(AndroidTransportPolicy.useMasqueHttp2(forceHttp2 = false, udpAvailable = false))
