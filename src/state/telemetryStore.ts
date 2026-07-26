@@ -2,7 +2,10 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { create } from "zustand"
+import { isAndroid } from "@/lib/platform"
 import type { ConnectionStatus, RuntimeTelemetry } from "@/types/connection"
+
+const ANDROID_TELEMETRY_POLL_MS = 1000
 
 const EMPTY_TELEMETRY: RuntimeTelemetry = {
   received_bytes: 0,
@@ -29,11 +32,7 @@ function applyTelemetry(snapshot: RuntimeTelemetry): void {
 }
 
 function refreshAfterFocus(focused: boolean): void {
-  if (focused) {
-    // WebView timers and event dispatch can be throttled while minimized. Pull
-    // the native snapshot immediately when the window becomes active again.
-    void useTelemetryStore.getState().refresh()
-  }
+  if (focused) void useTelemetryStore.getState().refresh()
 }
 
 export const useTelemetryStore = create<TelemetryStore>(() => ({
@@ -53,6 +52,7 @@ let disposeRuntime: (() => void) | null = null
 
 async function initializeTelemetryRuntime(): Promise<void> {
   const unlisteners: Array<() => void> = []
+  let androidTimer: ReturnType<typeof setInterval> | null = null
   try {
     unlisteners.push(
       await listen<RuntimeTelemetry>("aether://telemetry", (event) => {
@@ -65,10 +65,9 @@ async function initializeTelemetryRuntime(): Promise<void> {
           event.payload.state !== "Connected" &&
           event.payload.state !== "Tunneling"
         ) {
-          // The native watcher resets shortly after a new connection reaches its
-          // ready state. Clearing earlier prevents the previous session's exit IP,
-          // country, latency, or byte totals from flashing during reconnect/startup.
           useTelemetryStore.getState().reset()
+        } else if (isAndroid) {
+          void useTelemetryStore.getState().refresh()
         }
       })
     )
@@ -77,9 +76,6 @@ async function initializeTelemetryRuntime(): Promise<void> {
         refreshAfterFocus(event.payload)
       })
     )
-    // The Rust foreground-window watcher is authoritative on Windows. Tauri's
-    // native window event is retained as a fast secondary signal and as the
-    // primary focus source on Linux/macOS, where the Win32 watcher is absent.
     unlisteners.push(
       await getCurrentWindow().onFocusChanged(({ payload }) => {
         refreshAfterFocus(payload)
@@ -90,8 +86,16 @@ async function initializeTelemetryRuntime(): Promise<void> {
     throw error
   }
 
+  if (isAndroid) {
+    androidTimer = setInterval(
+      () => void useTelemetryStore.getState().refresh(),
+      ANDROID_TELEMETRY_POLL_MS
+    )
+  }
+
   disposeRuntime = () => {
     unlisteners.forEach((unlisten) => unlisten())
+    if (androidTimer !== null) clearInterval(androidTimer)
   }
 
   await useTelemetryStore.getState().refresh()
