@@ -55,26 +55,17 @@ PY
 kotlin_out_dir="$android_dir/app/src/main/java/${app_package//./\/}/generated"
 mkdir -p "$kotlin_out_dir"
 
-# Mirror the environment prepared by Tauri CLI's Android get_config(). These
-# values are required by tauri/wry build scripts before Gradle can compile the
-# generated Kotlin bridge and plugin modules.
 export TAURI_ANDROID_PROJECT_PATH="$android_dir"
 export TAURI_ANDROID_PACKAGE_UNESCAPED="$app_package"
 export WRY_ANDROID_PACKAGE="$app_package"
 export WRY_ANDROID_LIBRARY="$app_library"
 export WRY_ANDROID_KOTLIN_FILES_OUT_DIR="$kotlin_out_dir"
 
-# setup-android can expose a newer default NDK through ANDROID_NDK_ROOT. Keep
-# cargo-ndk and the native build steps pinned to the workflow's selected NDK.
 if [[ -n "${NDK_HOME:-}" ]]; then
   export ANDROID_NDK_HOME="$NDK_HOME"
   export ANDROID_NDK_ROOT="$NDK_HOME"
 fi
 
-# `tauri android init` creates the static Gradle project, but the dynamic
-# tauri.settings.gradle and app/tauri.build.gradle.kts files are emitted by the
-# application's Rust build script. A target-aware cargo check runs those build
-# scripts without producing another full Android library binary.
 (
   cd "$tauri_dir"
   cargo ndk \
@@ -113,11 +104,13 @@ grep -Fq 'implementation(project(":tauri-plugin-aether-vpn"))' "$gradle_dependen
 
 chmod +x "$gradlew"
 
-# Compile only the custom plugin first. This catches missing AndroidX/Tauri APIs
-# before the complete APK assembly and produces a focused Kotlin stack trace.
+# Compile the custom plugin and run its pure-JVM lifecycle tests before the
+# complete APK assembly. This catches AndroidX/Tauri API drift and regressions
+# in connection cancellation/session invalidation while feedback is still fast.
 "$gradlew" \
   -p "$android_dir" \
   :tauri-plugin-aether-vpn:compileDebugKotlin \
+  :tauri-plugin-aether-vpn:testDebugUnitTest \
   --no-daemon \
   --stacktrace \
   --warning-mode all
