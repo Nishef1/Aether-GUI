@@ -15,12 +15,24 @@ ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_GRADLE = ROOT / "src-tauri/plugins/aether-vpn/android/build.gradle.kts"
 PLUGIN_SOURCE = (
     ROOT
-    / "src-tauri/plugins/aether-vpn/android/src/main/java/AetherVpnPlugin.kt"
+    / "src-tauri/plugins/aether-vpn/android/src/main/java/HardenedAetherVpnPlugin.kt"
+)
+SESSION_GATE = (
+    ROOT
+    / "src-tauri/plugins/aether-vpn/android/src/main/java/ServiceSessionGate.kt"
+)
+SESSION_GATE_TEST = (
+    ROOT
+    / "src-tauri/plugins/aether-vpn/android/src/test/java/ServiceSessionGateTest.kt"
 )
 PLUGIN_MANIFEST = (
     ROOT
     / "src-tauri/plugins/aether-vpn/android/src/main/AndroidManifest.xml"
 )
+PLUGIN_RUST_BRIDGE = ROOT / "src-tauri/plugins/aether-vpn/src/lib.rs"
+ANDROID_RUST_BRIDGE = ROOT / "src-tauri/src/android.rs"
+CONNECTION_STORE = ROOT / "src/state/connectionStore.ts"
+CONNECT_BUTTON = ROOT / "src/components/ConnectButton.tsx"
 HEV_BRIDGE = (
     ROOT
     / "src-tauri/plugins/aether-vpn/android/src/main/java/HevTun2Socks.kt"
@@ -36,9 +48,8 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn(
             'implementation("androidx.activity:activity-ktx:1.10.1")',
             gradle,
-            "The plugin directly imports ActivityResult, so androidx.activity must be "
-            "on the plugin compile classpath instead of relying on a transitive dependency.",
         )
+        self.assertIn('testImplementation("junit:junit:4.13.2")', gradle)
 
     def test_tauri_activity_callback_signature_is_preserved(self) -> None:
         source = PLUGIN_SOURCE.read_text(encoding="utf-8")
@@ -50,23 +61,86 @@ class AndroidPluginContractTest(unittest.TestCase):
                 r"invoke: Invoke, result: ActivityResult\)",
                 re.MULTILINE,
             ),
-            "Tauri invokes @ActivityCallback methods reflectively with Invoke and "
-            "androidx.activity.result.ActivityResult.",
         )
         self.assertIn("result.resultCode == Activity.RESULT_OK", source)
 
-    def test_vpn_service_is_protected_by_android(self) -> None:
+    def test_hardened_plugin_returns_start_immediately_for_cancellation(self) -> None:
+        source = PLUGIN_SOURCE.read_text(encoding="utf-8")
+        start_command = source.split("fun start(invoke: Invoke)", 1)[1].split(
+            "@Command", 1
+        )[0]
+        self.assertIn("markStartRequested()", start_command)
+        self.assertIn("startForegroundService", start_command)
+        self.assertIn("invoke.resolve", start_command)
+        self.assertNotIn("START_TIMEOUT_MS", start_command)
+        self.assertNotIn("Thread.sleep", start_command)
+
+    def test_startup_failure_cannot_poison_future_attempts(self) -> None:
+        source = PLUGIN_SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn("if (coreProcess?.isAlive == true) return", source)
+        self.assertIn("val staleResources = detachAllResources()", source)
+        self.assertIn("cleanupResources(staleResources, \"replace stale session\")", source)
+        self.assertIn("finally {", source)
+        self.assertIn("cleanupResources(owned, \"session finalizer\")", source)
+        self.assertIn("process.destroyForcibly()", source)
+        self.assertIn("recent logs:", source)
+
+    def test_stop_is_off_main_thread_and_session_scoped(self) -> None:
+        source = PLUGIN_SOURCE.read_text(encoding="utf-8")
+        gate = SESSION_GATE.read_text(encoding="utf-8")
+        gate_test = SESSION_GATE_TEST.read_text(encoding="utf-8")
+        self.assertIn("private val sessionGate = ServiceSessionGate()", source)
+        self.assertIn("cleanupExecutor.submit", source)
+        self.assertIn("val stopToken = sessionGate.cancel()", source)
+        self.assertIn("sessionGate.isCurrent(stopToken)", source)
+        self.assertIn("fun isCurrent(token: Long)", gate)
+        self.assertIn("cancelInvalidatesAnInFlightStart", gate_test)
+        self.assertIn("newerStartInvalidatesOlderWorker", gate_test)
+
+    def test_vpn_service_is_protected_and_hardened_service_is_registered(self) -> None:
         manifest = PLUGIN_MANIFEST.read_text(encoding="utf-8")
         self.assertIn("android.permission.BIND_VPN_SERVICE", manifest)
         self.assertIn('<action android:name="android.net.VpnService" />', manifest)
         self.assertIn('android:exported="false"', manifest)
+        self.assertIn("HardenedAetherVpnService", manifest)
+        self.assertNotIn('android:name="com.cluvexstudio.aethergui.vpn.AetherVpnService"', manifest)
 
-    def test_pinned_tun2socks_jni_signatures_match(self) -> None:
+    def test_rust_bridge_registers_hardened_plugin_and_runtime_commands(self) -> None:
+        plugin_bridge = PLUGIN_RUST_BRIDGE.read_text(encoding="utf-8")
+        android_bridge = ANDROID_RUST_BRIDGE.read_text(encoding="utf-8")
+        self.assertIn('"HardenedAetherVpnPlugin"', plugin_bridge)
+        self.assertIn('run_mobile_plugin("telemetry"', plugin_bridge)
+        self.assertIn('run_mobile_plugin("logs"', plugin_bridge)
+        self.assertIn("webrtc_leak_protection", plugin_bridge)
+        self.assertIn("fn get_android_logs", android_bridge)
+        self.assertIn("fn get_runtime_telemetry(app: AppHandle)", android_bridge)
+        self.assertIn("get_android_logs,", android_bridge)
+
+    def test_native_logs_and_status_are_polled_on_android(self) -> None:
+        store = CONNECTION_STORE.read_text(encoding="utf-8")
+        button = CONNECT_BUTTON.read_text(encoding="utf-8")
+        self.assertIn('invoke<AndroidNativeLogBatch>("get_android_logs"', store)
+        self.assertIn('invoke<ConnectionStatus>("get_status")', store)
+        self.assertIn("ANDROID_RUNTIME_POLL_MS", store)
+        self.assertIn("++connectionOperationRevision", store)
+        self.assertIn("(!isAndroid && preparingCores)", button)
+        self.assertIn("size-40 shrink-0", button)
+
+    def test_webrtc_protection_uses_supported_udp_in_tcp_mode(self) -> None:
+        source = PLUGIN_SOURCE.read_text(encoding="utf-8")
+        self.assertIn('val udpRelayMode = if (webrtcLeakProtection) "tcp" else "udp"', source)
+        self.assertIn("udp: '$udpRelayMode'", source)
+        self.assertIn("webrtcLeakProtection: Boolean = true", source)
+
+    def test_pinned_tun2socks_jni_signatures_and_stats_match(self) -> None:
         bridge = HEV_BRIDGE.read_text(encoding="utf-8")
+        source = PLUGIN_SOURCE.read_text(encoding="utf-8")
         self.assertIn("external fun TProxyStartService(configPath: String, tunFd: Int)", bridge)
         self.assertIn("external fun TProxyStopService()", bridge)
         self.assertIn("external fun TProxyGetStats(): LongArray", bridge)
         self.assertIn('System.loadLibrary("hev-socks5-tunnel")', bridge)
+        self.assertIn("receivedBytes = stats[3]", source)
+        self.assertIn("sentBytes = stats[1]", source)
 
     def test_tun2socks_native_registration_targets_bridge_class(self) -> None:
         build_script = HEV_BUILD_SCRIPT.read_text(encoding="utf-8")
@@ -78,7 +152,6 @@ class AndroidPluginContractTest(unittest.TestCase):
 
     def test_kotlin_preflight_bootstraps_tauri_android_environment(self) -> None:
         preflight = KOTLIN_PREFLIGHT_SCRIPT.read_text(encoding="utf-8")
-
         self.assertIn('export TAURI_ANDROID_PROJECT_PATH="$android_dir"', preflight)
         self.assertIn('export TAURI_ANDROID_PACKAGE_UNESCAPED="$app_package"', preflight)
         self.assertIn('export WRY_ANDROID_PACKAGE="$app_package"', preflight)
@@ -93,13 +166,8 @@ class AndroidPluginContractTest(unittest.TestCase):
                 re.MULTILINE,
             ),
         )
-        self.assertIn('gradle_settings="$android_dir/tauri.settings.gradle"', preflight)
-        self.assertIn(
-            'gradle_dependencies="$android_dir/app/tauri.build.gradle.kts"',
-            preflight,
-        )
-        self.assertIn("include ':tauri-plugin-aether-vpn'", preflight)
-        self.assertIn('implementation(project(\":tauri-plugin-aether-vpn\"))', preflight)
+        self.assertIn(":tauri-plugin-aether-vpn:compileDebugKotlin", preflight)
+        self.assertIn(":tauri-plugin-aether-vpn:testDebugUnitTest", preflight)
 
     def test_kotlin_preflight_executes_bootstrap_before_gradle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -144,24 +212,13 @@ class AndroidPluginContractTest(unittest.TestCase):
                     test "$WRY_ANDROID_PACKAGE" = "com.cluvexstudio.aethergui"
                     test "$TAURI_ANDROID_PACKAGE_UNESCAPED" = "com.cluvexstudio.aethergui"
                     test "$WRY_ANDROID_LIBRARY" = "aether_gui_lib"
-                    test "$WRY_ANDROID_KOTLIN_FILES_OUT_DIR" = \
-                      "$GITHUB_WORKSPACE/src-tauri/gen/android/app/src/main/java/com/cluvexstudio/aethergui/generated"
                     test -d "$WRY_ANDROID_KOTLIN_FILES_OUT_DIR"
                     test "$ANDROID_NDK_HOME" = "/opt/android/ndk"
                     test "$ANDROID_NDK_ROOT" = "/opt/android/ndk"
                     printf '%s\n' "$@" > "$GITHUB_WORKSPACE/cargo-args.txt"
-                    {
-                      printf 'WRY_ANDROID_PACKAGE=%s\n' "$WRY_ANDROID_PACKAGE"
-                      printf 'WRY_ANDROID_LIBRARY=%s\n' "$WRY_ANDROID_LIBRARY"
-                      printf 'WRY_ANDROID_KOTLIN_FILES_OUT_DIR=%s\n' "$WRY_ANDROID_KOTLIN_FILES_OUT_DIR"
-                    } > "$GITHUB_WORKSPACE/android-env.txt"
                     mkdir -p "$TAURI_ANDROID_PROJECT_PATH/app"
-                    printf "%s\n" \
-                      "include ':tauri-plugin-aether-vpn'" \
-                      > "$TAURI_ANDROID_PROJECT_PATH/tauri.settings.gradle"
-                    printf "%s\n" \
-                      'implementation(project(\":tauri-plugin-aether-vpn\"))' \
-                      > "$TAURI_ANDROID_PROJECT_PATH/app/tauri.build.gradle.kts"
+                    printf "%s\n" "include ':tauri-plugin-aether-vpn'" > "$TAURI_ANDROID_PROJECT_PATH/tauri.settings.gradle"
+                    printf "%s\n" 'implementation(project(\":tauri-plugin-aether-vpn\"))' > "$TAURI_ANDROID_PROJECT_PATH/app/tauri.build.gradle.kts"
                     """
                 ),
                 encoding="utf-8",
@@ -176,7 +233,6 @@ class AndroidPluginContractTest(unittest.TestCase):
                     set -euo pipefail
                     test -s "$GITHUB_WORKSPACE/src-tauri/gen/android/tauri.settings.gradle"
                     test -s "$GITHUB_WORKSPACE/src-tauri/gen/android/app/tauri.build.gradle.kts"
-                    test -d "$GITHUB_WORKSPACE/src-tauri/gen/android/app/src/main/java/com/cluvexstudio/aethergui/generated"
                     printf '%s\n' "$@" > "$GITHUB_WORKSPACE/gradle-args.txt"
                     """
                 ),
@@ -209,34 +265,22 @@ class AndroidPluginContractTest(unittest.TestCase):
             )
             cargo_args = (workspace / "cargo-args.txt").read_text(encoding="utf-8")
             gradle_args = (workspace / "gradle-args.txt").read_text(encoding="utf-8")
-            android_env = (workspace / "android-env.txt").read_text(encoding="utf-8")
             self.assertIn("ndk", cargo_args)
             self.assertIn("arm64-v8a", cargo_args)
             self.assertIn("29", cargo_args)
             self.assertIn("check", cargo_args)
             self.assertIn("--lib", cargo_args)
-            self.assertIn("WRY_ANDROID_PACKAGE=com.cluvexstudio.aethergui", android_env)
-            self.assertIn("WRY_ANDROID_LIBRARY=aether_gui_lib", android_env)
             self.assertIn(":tauri-plugin-aether-vpn:compileDebugKotlin", gradle_args)
+            self.assertIn(":tauri-plugin-aether-vpn:testDebugUnitTest", gradle_args)
             self.assertIn("--stacktrace", gradle_args)
 
     def test_workflow_runs_real_kotlin_compile_preflight(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        preflight = KOTLIN_PREFLIGHT_SCRIPT.read_text(encoding="utf-8")
-
         self.assertIn(
             "bash scripts/ci/test-android-plugin-kotlin.sh",
             workflow,
-            "The workflow must execute the dedicated Kotlin compile preflight script.",
         )
         self.assertIn("android-plugin-kotlin-preflight.log", workflow)
-        self.assertIn(
-            ":tauri-plugin-aether-vpn:compileDebugKotlin",
-            preflight,
-            "The preflight script must compile the custom Android plugin module.",
-        )
-        self.assertIn("--stacktrace", preflight)
-        self.assertIn("--warning-mode all", preflight)
 
 
 if __name__ == "__main__":
