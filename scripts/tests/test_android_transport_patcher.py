@@ -54,6 +54,9 @@ SERVICE_FIXTURE = textwrap.dedent(
                 if (!waitForSocks(token, bindAddress, process, CORE_START_TIMEOUT_MS)) {
                     error("timeout")
                 }
+
+                ensureActive(token)
+                val connectedAt = System.currentTimeMillis()
             } finally {
                 Unit
             }
@@ -124,6 +127,10 @@ class AndroidTransportPatcherTest(unittest.TestCase):
             self.assertEqual(first_hash, second_hash)
             result = second_bytes.decode("utf-8")
             self.assertEqual(result.count("val udpAvailable = if (AndroidTransportPolicy"), 1)
+            self.assertEqual(result.count("val effectiveWgNoize = if (AndroidTransportPolicy"), 1)
+            self.assertEqual(result.count("val initialProbe = AndroidEgressProbe.probe"), 1)
+            self.assertIn("SOCKS egress verified via ${initialProbe.provider}", result)
+            self.assertIn("wgNoize = effectiveWgNoize", result)
             self.assertIn('remove("AETHER_MASQUE_HTTP2")', result)
             self.assertNotIn('if (masqueHttp2) "1" else "0"', result)
             self.assertIn("AndroidTransportPolicy.startupTimeoutMs", result)
