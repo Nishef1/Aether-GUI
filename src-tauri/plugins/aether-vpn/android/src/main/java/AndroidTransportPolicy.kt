@@ -5,7 +5,9 @@ internal object AndroidTransportPolicy {
     /** Matches the Aether core's outer TUNNEL_MTU; Gool keeps its inner MTU at 1200. */
     const val TUN_MTU = 1280
 
-    fun isMasque(protocol: String): Boolean = protocol.equals("masque", ignoreCase = true)
+    fun isMasque(protocol: String): Boolean =
+        protocol.equals("masque", ignoreCase = true) ||
+            protocol.equals("auto", ignoreCase = true)
 
     fun isWireGuardFamily(protocol: String): Boolean =
         protocol.equals("wireguard", ignoreCase = true) ||
@@ -33,7 +35,7 @@ internal object AndroidTransportPolicy {
                 "ironclad" -> 390_000L
                 else -> 180_000L
             }
-            protocol.equals("masque", ignoreCase = true) -> when (mode) {
+            isMasque(protocol) -> when (mode) {
                 "turbo" -> 75_000L
                 "stealth" -> 210_000L
                 "thorough" -> 180_000L
