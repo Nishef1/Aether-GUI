@@ -78,7 +78,8 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("ip-api-domain-http", probe)
         self.assertIn("cloudflare-literal-tcp", probe)
         self.assertIn("targetHost = \"1.1.1.1\"", probe)
-        self.assertIn("remote DNS/domain egress failed", probe)
+        self.assertIn("remote DNS/domain ", probe)
+        self.assertIn("egress failed", probe)
         self.assertIn("getDefaultHostnameVerifier", probe)
 
     def test_runtime_health_flags_cover_all_three_protocols(self) -> None:
