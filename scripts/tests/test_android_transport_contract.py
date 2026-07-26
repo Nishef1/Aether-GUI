@@ -76,7 +76,8 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("private fun socks5Connect", probe)
         self.assertIn("cloudflare-domain-tls", probe)
         self.assertIn("ip-api-domain-http", probe)
-        self.assertIn("cloudflare-literal-http", probe)
+        self.assertIn("cloudflare-literal-tcp", probe)
+        self.assertIn("targetHost = \"1.1.1.1\"", probe)
         self.assertIn("remote DNS/domain egress failed", probe)
         self.assertIn("getDefaultHostnameVerifier", probe)
 
