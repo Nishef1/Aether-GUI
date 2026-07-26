@@ -2,6 +2,11 @@ name: Build Android ARM64 APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/android-build-dispatch"
 
 concurrency:
   group: android-arm64-manual
