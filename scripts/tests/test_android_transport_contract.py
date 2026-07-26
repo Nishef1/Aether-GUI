@@ -46,7 +46,7 @@ class AndroidTransportContractTest(unittest.TestCase):
         probe = UDP_PROBE.read_text(encoding="utf-8")
         self.assertIn("AndroidUdpCapabilityProbe.hasUsableUdp()", service)
         self.assertIn("AndroidTransportPolicy.useMasqueHttp2", service)
-        self.assertIn('environment.remove("AETHER_MASQUE_HTTP2")', service)
+        self.assertIn('remove("AETHER_MASQUE_HTTP2")', service)
         self.assertIn('put("AETHER_MASQUE_HTTP2", "1")', service)
         self.assertNotIn('put("AETHER_MASQUE_HTTP2", if (masqueHttp2) "1" else "0")', service)
         self.assertIn("forceHttp2 || !udpAvailable", policy)
