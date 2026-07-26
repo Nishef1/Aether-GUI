@@ -13,11 +13,21 @@ RUNTIME = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidVpnR
 
 
 class AndroidKotlinCompileContractTest(unittest.TestCase):
-    def test_exit_probe_uses_typed_ssl_socket_factory(self) -> None:
+    def test_exit_probe_uses_explicit_ssl_socket_factory_type(self) -> None:
         source = PROBE.read_text(encoding="utf-8")
-        self.assertIn("SSLContext.getDefault().socketFactory", source)
-        self.assertIn(".createSocket(rawSocket, HOST, PORT, true)", source)
-        self.assertNotIn("SSLSocketFactory.getDefault()", source)
+        self.assertIn("import javax.net.ssl.SSLSocketFactory", source)
+        self.assertIn(
+            "SSLContext.getDefault().socketFactory as SSLSocketFactory",
+            source,
+        )
+        self.assertIn(
+            "sslFactory.createSocket(rawSocket, HOST, PORT, true)",
+            source,
+        )
+        self.assertNotIn(
+            "SSLContext.getDefault().socketFactory\n                .createSocket",
+            source,
+        )
         self.assertIn("runCatching { rawSocket.close() }", source)
 
     def test_java_array_deque_is_converted_before_take_last(self) -> None:
