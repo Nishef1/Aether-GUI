@@ -1,12 +1,6 @@
 package com.cluvexstudio.aethergui.vpn
 
-/**
- * JNI entry points owned by Aether-GUI.
- *
- * libaethertun links against hev-socks5-tunnel's stable public C API. It also
- * creates the native pthread that runs hev's blocking event loop, so the loop
- * never performs stack switching on an ART-managed Java thread.
- */
+/** JNI entry points owned by Aether-GUI. */
 internal object AetherTunBridge {
     @Volatile
     var loadFailure: Throwable? = null
@@ -25,11 +19,12 @@ internal object AetherTunBridge {
 }
 
 /**
- * Idempotent lifecycle facade around the process-global native tunnel.
+ * Idempotent lifecycle facade around hev's process-global native tunnel.
  *
- * The upstream native core is process-global, even if Kotlin creates multiple
- * wrapper instances. All calls are therefore serialized through one lock and a
- * session can be stopped only by the instance that successfully started it.
+ * Ownership is released only after nativeStop has joined the pthread. The old
+ * code cleared ownsSession before nativeStop and, on a timeout, permanently left
+ * a running thread with no owner; Java then closed the TUN descriptor underneath
+ * it and Disconnect could abort the entire app.
  */
 class HevTun2Socks {
     @Volatile
@@ -56,20 +51,20 @@ class HevTun2Socks {
         }
     }
 
-    /**
-     * Requests quit and waits in the native bridge until the tunnel pthread has
-     * actually exited. Safe to call repeatedly from stop/finally/onDestroy.
-     */
+    /** Requests quit once and waits off the main thread until pthread_join ends. */
     fun TProxyStopService(): Boolean = synchronized(nativeLock) {
         if (!ownsSession) return@synchronized !nativeRunning
-        ownsSession = false
         if (!nativeRunning || !AetherTunBridge.available) {
+            ownsSession = false
             nativeRunning = false
             return@synchronized true
         }
 
         val stopped = runCatching { AetherTunBridge.nativeStop() }.getOrDefault(false)
-        if (stopped) nativeRunning = false
+        if (stopped) {
+            ownsSession = false
+            nativeRunning = false
+        }
         stopped
     }
 
@@ -80,11 +75,8 @@ class HevTun2Socks {
 
         val stats = runCatching { AetherTunBridge.nativeStats() }.getOrNull()
         if (stats == null) {
-            // The native event loop may exit independently after a fatal config,
-            // fd, or network error. Reconcile process-global state so a future
-            // connection is not rejected as a stale running tunnel.
-            nativeRunning = false
-            ownsSession = false
+            // A naturally exited native loop still has a joinable pthread. Keep
+            // ownership so cleanup can reap it instead of orphaning the session.
             LongArray(0)
         } else {
             stats
