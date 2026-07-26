@@ -2,11 +2,11 @@ name: Apply Android 0.5.5 runtime once
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/5 * * * *"
-  issues:
+  workflow_run:
+    workflows:
+      - Build Android ARM64 APK
     types:
-      - opened
+      - completed
 
 permissions:
   contents: write
@@ -19,8 +19,8 @@ concurrency:
 jobs:
   apply:
     if: >-
-      github.event_name != 'issues' ||
-      github.event.issue.title == '[ci] Android 0.5.5 one-shot'
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.id == 30214677233
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
