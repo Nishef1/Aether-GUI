@@ -149,12 +149,22 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("udp: '$udpRelayMode'", source)
         self.assertIn("webrtcLeakProtection: Boolean = true", source)
 
-    def test_exit_probe_does_not_close_socket_before_reading(self) -> None:
+    def test_exit_probe_keeps_socket_open_through_write_and_read(self) -> None:
         probe = EGRESS_PROBE.read_text(encoding="utf-8")
-        self.assertIn("val writer = socket.outputStream.bufferedWriter()", probe)
-        self.assertIn("writer.flush()", probe)
-        self.assertIn("socket.inputStream.bufferedReader().readText()", probe)
-        self.assertNotIn("bufferedWriter().use", probe)
+        use_index = probe.index("socket.use {")
+        writer_index = probe.index(
+            "val writer = it.outputStream.bufferedWriter(Charsets.US_ASCII)",
+            use_index,
+        )
+        flush_index = probe.index("writer.flush()", writer_index)
+        reader_index = probe.index(
+            "it.inputStream.bufferedReader(Charsets.UTF_8).readText()",
+            flush_index,
+        )
+        self.assertLess(use_index, writer_index)
+        self.assertLess(writer_index, flush_index)
+        self.assertLess(flush_index, reader_index)
+        self.assertNotIn("bufferedWriter(Charsets.US_ASCII).use", probe)
 
     def test_tun_wrapper_is_idempotent_and_loads_only_our_bridge(self) -> None:
         bridge = HEV_BRIDGE.read_text(encoding="utf-8")
@@ -171,13 +181,20 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("receivedBytes = stats[3]", runtime)
         self.assertIn("sentBytes = stats[1]", runtime)
 
-    def test_native_bridge_owns_thread_fd_and_stop_acknowledgement(self) -> None:
+    def test_native_bridge_owns_fd_and_joins_before_stop_acknowledgement(self) -> None:
         native = HEV_NATIVE_BRIDGE.read_text(encoding="utf-8")
         self.assertIn("pthread_create", native)
-        self.assertIn("PTHREAD_CREATE_DETACHED", native)
         self.assertIn("args->tun_fd = dup((int)tun_fd)", native)
-        self.assertIn("pthread_cond_timedwait", native)
+        self.assertIn("close(args->tun_fd)", native)
+        self.assertIn("static bool thread_joinable = false", native)
+        self.assertIn("static bool join_in_progress = false", native)
+        self.assertIn("TUN_STATE_STOPPING", native)
         self.assertIn("hev_socks5_tunnel_quit()", native)
+        join_index = native.index("pthread_join(thread, NULL)")
+        release_index = native.index("thread_joinable = false", join_index)
+        self.assertLess(join_index, release_index)
+        self.assertNotIn("PTHREAD_CREATE_DETACHED", native)
+        self.assertNotIn("pthread_cond_timedwait", native)
         self.assertIn("JNI_OnLoad", native)
         for symbol in (
             "AetherTunBridge_nativeStart",
@@ -237,7 +254,7 @@ class AndroidPluginContractTest(unittest.TestCase):
                     """\
                     [package]
                     name = "aether-gui"
-                    version = "0.5.4"
+                    version = "0.5.5"
                     edition = "2021"
 
                     [lib]
