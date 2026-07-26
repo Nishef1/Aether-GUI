@@ -15,7 +15,15 @@ ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_GRADLE = ROOT / "src-tauri/plugins/aether-vpn/android/build.gradle.kts"
 PLUGIN_SOURCE = (
     ROOT
-    / "src-tauri/plugins/aether-vpn/android/src/main/java/HardenedAetherVpnPlugin.kt"
+    / "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
+)
+RUNTIME_SOURCE = (
+    ROOT
+    / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidVpnRuntime.kt"
+)
+EGRESS_PROBE = (
+    ROOT
+    / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressProbe.kt"
 )
 SESSION_GATE = (
     ROOT
@@ -64,7 +72,7 @@ class AndroidPluginContractTest(unittest.TestCase):
         )
         self.assertIn("result.resultCode == Activity.RESULT_OK", source)
 
-    def test_hardened_plugin_returns_start_immediately_for_cancellation(self) -> None:
+    def test_plugin_returns_start_immediately_for_cancellation(self) -> None:
         source = PLUGIN_SOURCE.read_text(encoding="utf-8")
         start_command = source.split("fun start(invoke: Invoke)", 1)[1].split(
             "@Command", 1
@@ -81,9 +89,17 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("val staleResources = detachAllResources()", source)
         self.assertIn("cleanupResources(staleResources, \"replace stale session\")", source)
         self.assertIn("finally {", source)
-        self.assertIn("cleanupResources(owned, \"session finalizer\")", source)
+        self.assertIn("cleanupResources(finalResources, \"session finalizer\")", source)
         self.assertIn("process.destroyForcibly()", source)
         self.assertIn("recent logs:", source)
+
+    def test_unattached_native_resources_are_cleaned(self) -> None:
+        source = PLUGIN_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("cancel before core attach", source)
+        self.assertIn("cancel before TUN attach", source)
+        self.assertIn("if (!processAttached) process", source)
+        self.assertIn("if (!tunnelAttached) tunnel?.descriptor", source)
+        self.assertIn("if (!tunnelAttached) tunnel?.bridge", source)
 
     def test_stop_is_off_main_thread_and_session_scoped(self) -> None:
         source = PLUGIN_SOURCE.read_text(encoding="utf-8")
@@ -97,18 +113,19 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("cancelInvalidatesAnInFlightStart", gate_test)
         self.assertIn("newerStartInvalidatesOlderWorker", gate_test)
 
-    def test_vpn_service_is_protected_and_hardened_service_is_registered(self) -> None:
+    def test_vpn_service_is_protected_and_final_service_is_registered(self) -> None:
         manifest = PLUGIN_MANIFEST.read_text(encoding="utf-8")
         self.assertIn("android.permission.BIND_VPN_SERVICE", manifest)
         self.assertIn('<action android:name="android.net.VpnService" />', manifest)
         self.assertIn('android:exported="false"', manifest)
-        self.assertIn("HardenedAetherVpnService", manifest)
+        self.assertIn("FinalAetherVpnService", manifest)
+        self.assertNotIn("HardenedAetherVpnService", manifest)
         self.assertNotIn('android:name="com.cluvexstudio.aethergui.vpn.AetherVpnService"', manifest)
 
-    def test_rust_bridge_registers_hardened_plugin_and_runtime_commands(self) -> None:
+    def test_rust_bridge_registers_final_plugin_and_runtime_commands(self) -> None:
         plugin_bridge = PLUGIN_RUST_BRIDGE.read_text(encoding="utf-8")
         android_bridge = ANDROID_RUST_BRIDGE.read_text(encoding="utf-8")
-        self.assertIn('"HardenedAetherVpnPlugin"', plugin_bridge)
+        self.assertIn('"FinalAetherVpnPlugin"', plugin_bridge)
         self.assertIn('run_mobile_plugin("telemetry"', plugin_bridge)
         self.assertIn('run_mobile_plugin("logs"', plugin_bridge)
         self.assertIn("webrtc_leak_protection", plugin_bridge)
@@ -132,15 +149,22 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("udp: '$udpRelayMode'", source)
         self.assertIn("webrtcLeakProtection: Boolean = true", source)
 
+    def test_exit_probe_does_not_close_socket_before_reading(self) -> None:
+        probe = EGRESS_PROBE.read_text(encoding="utf-8")
+        self.assertIn("val writer = socket.outputStream.bufferedWriter()", probe)
+        self.assertIn("writer.flush()", probe)
+        self.assertIn("socket.inputStream.bufferedReader().readText()", probe)
+        self.assertNotIn("bufferedWriter().use", probe)
+
     def test_pinned_tun2socks_jni_signatures_and_stats_match(self) -> None:
         bridge = HEV_BRIDGE.read_text(encoding="utf-8")
-        source = PLUGIN_SOURCE.read_text(encoding="utf-8")
+        runtime = RUNTIME_SOURCE.read_text(encoding="utf-8")
         self.assertIn("external fun TProxyStartService(configPath: String, tunFd: Int)", bridge)
         self.assertIn("external fun TProxyStopService()", bridge)
         self.assertIn("external fun TProxyGetStats(): LongArray", bridge)
         self.assertIn('System.loadLibrary("hev-socks5-tunnel")', bridge)
-        self.assertIn("receivedBytes = stats[3]", source)
-        self.assertIn("sentBytes = stats[1]", source)
+        self.assertIn("receivedBytes = stats[3]", runtime)
+        self.assertIn("sentBytes = stats[1]", runtime)
 
     def test_tun2socks_native_registration_targets_bridge_class(self) -> None:
         build_script = HEV_BUILD_SCRIPT.read_text(encoding="utf-8")
