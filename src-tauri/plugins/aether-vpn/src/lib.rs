@@ -23,9 +23,6 @@ fn serialize_mobile_protocol<S>(
 where
     S: Serializer,
 {
-    // Desktop answers Aether's protocol prompt with menu choice 1 for both
-    // Auto and MASQUE. Android has no PTY, so normalize Auto before invoking
-    // the Kotlin host and always pass an explicit --masque flag to the core.
     serializer.serialize_str(if protocol == "auto" { "masque" } else { protocol })
 }
 
@@ -44,6 +41,7 @@ pub struct VpnProfile {
     pub wg_noize: String,
     pub dns_server: String,
     pub bind_address: String,
+    pub webrtc_leak_protection: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -61,6 +59,39 @@ pub struct VpnStatus {
 pub struct TrafficStats {
     pub received_bytes: u64,
     pub sent_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeTelemetry {
+    pub received_bytes: u64,
+    pub sent_bytes: u64,
+    pub public_ip: Option<String>,
+    pub country_code: Option<String>,
+    pub latency_ms: Option<u64>,
+    pub sampled_at_ms: u64,
+    pub egress_probe_complete: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeLogEntry {
+    pub id: u64,
+    pub timestamp: u64,
+    pub line: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeLogBatch {
+    pub entries: Vec<NativeLogEntry>,
+    pub last_id: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeLogRequest {
+    after_id: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -100,6 +131,18 @@ impl<R: Runtime> AetherVpn<R> {
         self.0.run_mobile_plugin("traffic", ()).map_err(Into::into)
     }
 
+    pub fn telemetry(&self) -> Result<RuntimeTelemetry> {
+        self.0
+            .run_mobile_plugin("telemetry", ())
+            .map_err(Into::into)
+    }
+
+    pub fn logs(&self, after_id: u64) -> Result<NativeLogBatch> {
+        self.0
+            .run_mobile_plugin("logs", NativeLogRequest { after_id })
+            .map_err(Into::into)
+    }
+
     pub fn diagnostics(&self) -> Result<DiagnosticsResult> {
         self.0
             .run_mobile_plugin("diagnostics", ())
@@ -120,7 +163,8 @@ impl<R: Runtime, T: Manager<R>> AetherVpnExt<R> for T {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("aether-vpn")
         .setup(|app, api| {
-            let handle = api.register_android_plugin(PLUGIN_IDENTIFIER, "AetherVpnPlugin")?;
+            let handle =
+                api.register_android_plugin(PLUGIN_IDENTIFIER, "HardenedAetherVpnPlugin")?;
             app.manage(AetherVpn(handle));
             Ok(())
         })
