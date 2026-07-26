@@ -24,7 +24,7 @@ service = SERVICE.read_text(encoding="utf-8")
 # Compute the real MASQUE transport before the process is launched. False in the
 # UI means Auto; it must not be serialized as AETHER_MASQUE_HTTP2=0 because the
 # core treats the mere presence of that variable as an explicit choice.
-if "val useMasqueHttp2 = AndroidTransportPolicy.useMasqueHttp2" not in service:
+if "val udpAvailable = if (AndroidTransportPolicy.isMasque(protocol)" not in service:
     service = replace_required(
         service,
         """            val command = buildCoreCommand(\n""",
