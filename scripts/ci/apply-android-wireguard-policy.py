@@ -29,18 +29,28 @@ if "val udpAvailable = if (AndroidTransportPolicy.isMasque(protocol)" not in ser
     service = replace_required(
         service,
         """            val command = buildCoreCommand(\n""",
-        """            val udpAvailable = if (AndroidTransportPolicy.isMasque(protocol) && !masqueHttp2) {\n                AndroidUdpCapabilityProbe.hasUsableUdp()\n            } else {\n                true\n            }\n            val useMasqueHttp2 = AndroidTransportPolicy.isMasque(protocol) &&\n                AndroidTransportPolicy.useMasqueHttp2(masqueHttp2, udpAvailable)\n            if (AndroidTransportPolicy.isMasque(protocol)) {\n                log(\n                    \"MASQUE transport selected: \" +\n                        if (useMasqueHttp2) {\n                            \"HTTP/2 (TCP); forceH2=$masqueHttp2; udpAvailable=$udpAvailable\"\n                        } else {\n                            \"HTTP/3 (QUIC); udpAvailable=$udpAvailable\"\n                        }\n                )\n            }\n\n            val command = buildCoreCommand(\n""",
-        "MASQUE transport selection",
+        """            val udpAvailable = if (AndroidTransportPolicy.isMasque(protocol) && !masqueHttp2) {\n                AndroidUdpCapabilityProbe.hasUsableUdp()\n            } else {\n                true\n            }\n            val useMasqueHttp2 = AndroidTransportPolicy.isMasque(protocol) &&\n                AndroidTransportPolicy.useMasqueHttp2(masqueHttp2, udpAvailable)\n            if (AndroidTransportPolicy.isMasque(protocol)) {\n                log(\n                    \"MASQUE transport selected: \" +\n                        if (useMasqueHttp2) {\n                            \"HTTP/2 (TCP); forceH2=$masqueHttp2; udpAvailable=$udpAvailable\"\n                        } else {\n                            \"HTTP/3 (QUIC); udpAvailable=$udpAvailable\"\n                        }\n                )\n            }\n            val effectiveWgNoize = if (AndroidTransportPolicy.isWireGuardFamily(protocol)) {\n                AndroidTransportPolicy.effectiveWireGuardNoize(wgNoize)\n            } else {\n                wgNoize\n            }\n            if (effectiveWgNoize != wgNoize) {\n                log(\"Android stable dataplane pass: WireGuard noize $wgNoize -> $effectiveWgNoize\")\n            }\n\n            val command = buildCoreCommand(\n""",
+        "MASQUE transport and WireGuard stable-pass selection",
     )
-
-call_marker = """                wgNoize = wgNoize,\n            )\n"""
-if "useMasqueHttp2 = useMasqueHttp2" not in service:
+elif "val effectiveWgNoize = if (AndroidTransportPolicy.isWireGuardFamily(protocol))" not in service:
     service = replace_required(
         service,
-        call_marker,
-        """                wgNoize = wgNoize,\n                useMasqueHttp2 = useMasqueHttp2,\n            )\n""",
-        "resolved MASQUE transport command argument",
+        """\n            val command = buildCoreCommand(\n""",
+        """\n            val effectiveWgNoize = if (AndroidTransportPolicy.isWireGuardFamily(protocol)) {\n                AndroidTransportPolicy.effectiveWireGuardNoize(wgNoize)\n            } else {\n                wgNoize\n            }\n            if (effectiveWgNoize != wgNoize) {\n                log(\"Android stable dataplane pass: WireGuard noize $wgNoize -> $effectiveWgNoize\")\n            }\n\n            val command = buildCoreCommand(\n""",
+        "WireGuard stable-pass selection",
     )
+
+# Pass the resolved settings into CLI argument construction.
+call_marker = """                wgNoize = wgNoize,\n            )\n"""
+call_marker_transport = """                wgNoize = wgNoize,\n                useMasqueHttp2 = useMasqueHttp2,\n            )\n"""
+resolved_call = """                wgNoize = effectiveWgNoize,\n                useMasqueHttp2 = useMasqueHttp2,\n            )\n"""
+if resolved_call not in service:
+    if call_marker_transport in service:
+        service = service.replace(call_marker_transport, resolved_call, 1)
+    elif call_marker in service:
+        service = service.replace(call_marker, resolved_call, 1)
+    else:
+        raise SystemExit("resolved transport command arguments were not found")
 
 signature_marker = """        wgNoize: String,\n    ): List<String> {\n"""
 if "useMasqueHttp2: Boolean" not in service:
@@ -68,6 +78,18 @@ elif old_policy_timeout in service:
 elif new_timeout not in service:
     raise SystemExit("transport startup timeout wiring was not found")
 
+# A listening local port is not a connected VPN. Verify remote DNS + TCP + HTTP
+# through the exact SOCKS endpoint before creating TUN or publishing Connected.
+verification_marker = """            ensureActive(token)\n            val connectedAt = System.currentTimeMillis()\n"""
+verification_block = """            ensureActive(token)\n            updateSnapshotIfActive(\n                token,\n                FinalServiceSnapshot(\n                    state = \"Verifying\",\n                    socksAddr = bindAddress,\n                )\n            )\n            updateNotification(\"Verifying tunnel egress…\")\n            val initialProbe = AndroidEgressProbe.probe(bindAddress)\n            ensureActive(token)\n            AndroidVpnRuntime.publishProbe(\n                initialProbe.publicIp,\n                initialProbe.countryCode,\n                initialProbe.latencyMs,\n            )\n            log(\n                \"SOCKS egress verified via ${initialProbe.provider}: ${initialProbe.publicIp}\" +\n                    (initialProbe.countryCode?.let { \" · $it\" } ?: \"\") +\n                    \" · ${initialProbe.latencyMs} ms\"\n            )\n            val connectedAt = System.currentTimeMillis()\n"""
+if "SOCKS egress verified via ${initialProbe.provider}" not in service:
+    service = replace_required(
+        service,
+        verification_marker,
+        verification_block,
+        "pre-TUN SOCKS egress verification",
+    )
+
 plain_return = """        command += listOf(\n            \"--noize\",\n            if (protocol == \"wireguard\" || protocol == \"gool\") wgNoize else masqueNoize,\n            \"--bind\",\n            bindAddress,\n            \"--log-level\",\n            \"info\",\n        )\n        return command\n"""
 old_policy_return = """        command += listOf(\n            \"--noize\",\n            if (protocol == \"wireguard\" || protocol == \"gool\") wgNoize else masqueNoize,\n            \"--bind\",\n            bindAddress,\n            \"--log-level\",\n            \"info\",\n        )\n        AndroidWireGuardPolicy.appendCoreArgs(command, protocol)\n        return command\n"""
 new_policy_return = """        command += listOf(\n            \"--noize\",\n            if (protocol == \"wireguard\" || protocol == \"gool\") wgNoize else masqueNoize,\n            \"--bind\",\n            bindAddress,\n            \"--log-level\",\n            \"info\",\n        )\n        AndroidTransportPolicy.appendCoreArgs(command, protocol, useMasqueHttp2)\n        return command\n"""
@@ -94,4 +116,4 @@ if "CORE_START_TIMEOUT_MS" in service:
     raise SystemExit("fixed Android core startup timeout still exists")
 
 SERVICE.write_text(service, encoding="utf-8")
-print("Android MASQUE/WireGuard/Gool transport policy applied successfully")
+print("Android transport policy, stable WG pass, and egress gate applied successfully")
