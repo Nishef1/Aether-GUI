@@ -10,44 +10,107 @@ SERVICE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAether
 PREFLIGHT = ROOT / "scripts/ci/test-android-plugin-kotlin.sh"
 
 
-def replace_once(text: str, old: str, new: str, label: str) -> str:
-    count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"{label}: expected exactly one match, found {count}")
+def replace_required(text: str, old: str, new: str, label: str) -> str:
+    if old not in text:
+        raise SystemExit(f"{label}: expected source block was not found")
     return text.replace(old, new, 1)
 
 
+def replace_if_present(text: str, old: str, new: str) -> str:
+    return text.replace(old, new, 1) if old in text else text
+
+
 service = SERVICE.read_text(encoding="utf-8")
-service = replace_once(
-    service,
-    """            if (!waitForSocks(token, bindAddress, process, CORE_START_TIMEOUT_MS)) {\n""",
-    """            val startupTimeoutMs = AndroidWireGuardPolicy.startupTimeoutMs(protocol, scanMode)\n            log(\"Waiting up to ${startupTimeoutMs / 1000}s for $protocol SOCKS readiness\")\n            if (!waitForSocks(token, bindAddress, process, startupTimeoutMs)) {\n""",
-    "WireGuard startup timeout wiring",
-)
-service = replace_once(
-    service,
-    """        command += listOf(\n            \"--noize\",\n            if (protocol == \"wireguard\" || protocol == \"gool\") wgNoize else masqueNoize,\n            \"--bind\",\n            bindAddress,\n            \"--log-level\",\n            \"info\",\n        )\n        return command\n""",
-    """        command += listOf(\n            \"--noize\",\n            if (protocol == \"wireguard\" || protocol == \"gool\") wgNoize else masqueNoize,\n            \"--bind\",\n            bindAddress,\n            \"--log-level\",\n            \"info\",\n        )\n        AndroidWireGuardPolicy.appendCoreArgs(command, protocol)\n        return command\n""",
-    "WireGuard runtime argument wiring",
-)
-service = replace_once(
+
+# Compute the real MASQUE transport before the process is launched. False in the
+# UI means Auto; it must not be serialized as AETHER_MASQUE_HTTP2=0 because the
+# core treats the mere presence of that variable as an explicit choice.
+if "val useMasqueHttp2 = AndroidTransportPolicy.useMasqueHttp2" not in service:
+    service = replace_required(
+        service,
+        """            val command = buildCoreCommand(\n""",
+        """            val udpAvailable = if (AndroidTransportPolicy.isMasque(protocol) && !masqueHttp2) {\n                AndroidUdpCapabilityProbe.hasUsableUdp()\n            } else {\n                true\n            }\n            val useMasqueHttp2 = AndroidTransportPolicy.isMasque(protocol) &&\n                AndroidTransportPolicy.useMasqueHttp2(masqueHttp2, udpAvailable)\n            if (AndroidTransportPolicy.isMasque(protocol)) {\n                log(\n                    \"MASQUE transport selected: \" +\n                        if (useMasqueHttp2) {\n                            \"HTTP/2 (TCP); forceH2=$masqueHttp2; udpAvailable=$udpAvailable\"\n                        } else {\n                            \"HTTP/3 (QUIC); udpAvailable=$udpAvailable\"\n                        }\n                )\n            }\n\n            val command = buildCoreCommand(\n""",
+        "MASQUE transport selection",
+    )
+
+# Pass the resolved transport into CLI argument construction.
+call_marker = """                wgNoize = wgNoize,\n            )\n"""
+if "useMasqueHttp2 = useMasqueHttp2" not in service:
+    service = replace_required(
+        service,
+        call_marker,
+        """                wgNoize = wgNoize,\n                useMasqueHttp2 = useMasqueHttp2,\n            )\n""",
+        "resolved MASQUE transport command argument",
+    )
+
+signature_marker = """        wgNoize: String,\n    ): List<String> {\n"""
+if "useMasqueHttp2: Boolean" not in service:
+    service = replace_required(
+        service,
+        signature_marker,
+        """        wgNoize: String,\n        useMasqueHttp2: Boolean,\n    ): List<String> {\n""",
+        "buildCoreCommand transport parameter",
+    )
+
+# Do not force H3 with a literal zero. Only set the env var when H2 was chosen.
+old_env = """            val processBuilder = ProcessBuilder(command).redirectErrorStream(true)\n            processBuilder.environment().apply {\n                put(\"AETHER_CONFIG\", File(filesDir, \"aether.toml\").absolutePath)\n                put(\"AETHER_MASQUE_HTTP2\", if (masqueHttp2) \"1\" else \"0\")\n                put(\"AETHER_LOG_LEVEL\", \"info\")\n                put(\"RUST_BACKTRACE\", \"1\")\n            }\n"""
+new_env = """            val processBuilder = ProcessBuilder(command).redirectErrorStream(true)\n            processBuilder.environment().apply {\n                put(\"AETHER_CONFIG\", File(filesDir, \"aether.toml\").absolutePath)\n                remove(\"AETHER_MASQUE_HTTP2\")\n                if (AndroidTransportPolicy.isMasque(protocol) && useMasqueHttp2) {\n                    put(\"AETHER_MASQUE_HTTP2\", \"1\")\n                }\n                put(\"AETHER_LOG_LEVEL\", \"info\")\n                put(\"RUST_BACKTRACE\", \"1\")\n            }\n"""
+if old_env in service:
+    service = service.replace(old_env, new_env, 1)
+elif 'remove("AETHER_MASQUE_HTTP2")' not in service:
+    raise SystemExit("MASQUE environment wiring: neither old nor new block was found")
+
+# Replace the fixed deadline, or upgrade the older WireGuard-only policy.
+fixed_timeout = """            if (!waitForSocks(token, bindAddress, process, CORE_START_TIMEOUT_MS)) {\n"""
+old_policy_timeout = """            val startupTimeoutMs = AndroidWireGuardPolicy.startupTimeoutMs(protocol, scanMode)\n            log(\"Waiting up to ${startupTimeoutMs / 1000}s for $protocol SOCKS readiness\")\n            if (!waitForSocks(token, bindAddress, process, startupTimeoutMs)) {\n"""
+new_timeout = """            val startupTimeoutMs = AndroidTransportPolicy.startupTimeoutMs(protocol, scanMode)\n            log(\"Waiting up to ${startupTimeoutMs / 1000}s for $protocol SOCKS readiness\")\n            if (!waitForSocks(token, bindAddress, process, startupTimeoutMs)) {\n"""
+if fixed_timeout in service:
+    service = service.replace(fixed_timeout, new_timeout, 1)
+elif old_policy_timeout in service:
+    service = service.replace(old_policy_timeout, new_timeout, 1)
+elif new_timeout not in service:
+    raise SystemExit("transport startup timeout wiring was not found")
+
+# Add explicit health/reconnect flags for all three transports.
+plain_return = """        command += listOf(\n            \"--noize\",\n            if (protocol == \"wireguard\" || protocol == \"gool\") wgNoize else masqueNoize,\n            \"--bind\",\n            bindAddress,\n            \"--log-level\",\n            \"info\",\n        )\n        return command\n"""
+old_policy_return = """        command += listOf(\n            \"--noize\",\n            if (protocol == \"wireguard\" || protocol == \"gool\") wgNoize else masqueNoize,\n            \"--bind\",\n            bindAddress,\n            \"--log-level\",\n            \"info\",\n        )\n        AndroidWireGuardPolicy.appendCoreArgs(command, protocol)\n        return command\n"""
+new_policy_return = """        command += listOf(\n            \"--noize\",\n            if (protocol == \"wireguard\" || protocol == \"gool\") wgNoize else masqueNoize,\n            \"--bind\",\n            bindAddress,\n            \"--log-level\",\n            \"info\",\n        )\n        AndroidTransportPolicy.appendCoreArgs(command, protocol, useMasqueHttp2)\n        return command\n"""
+if plain_return in service:
+    service = service.replace(plain_return, new_policy_return, 1)
+elif old_policy_return in service:
+    service = service.replace(old_policy_return, new_policy_return, 1)
+elif new_policy_return not in service:
+    raise SystemExit("transport runtime argument wiring was not found")
+
+# Align the Android/hev outer TUN with the core's 1280-byte MTU.
+service = replace_if_present(
     service,
     """        private const val CORE_START_TIMEOUT_MS = 50_000L\n        private const val TUN_MTU = 8500\n""",
-    """        private const val TUN_MTU = AndroidWireGuardPolicy.TUN_MTU\n""",
-    "WireGuard MTU alignment",
+    """        private const val TUN_MTU = AndroidTransportPolicy.TUN_MTU\n""",
 )
+service = replace_if_present(
+    service,
+    """        private const val TUN_MTU = AndroidWireGuardPolicy.TUN_MTU\n""",
+    """        private const val TUN_MTU = AndroidTransportPolicy.TUN_MTU\n""",
+)
+if "private const val TUN_MTU = AndroidTransportPolicy.TUN_MTU" not in service:
+    raise SystemExit("Android transport MTU alignment was not applied")
+if "CORE_START_TIMEOUT_MS" in service:
+    raise SystemExit("fixed Android core startup timeout still exists")
+
 SERVICE.write_text(service, encoding="utf-8")
 
 preflight = PREFLIGHT.read_text(encoding="utf-8")
+preflight = preflight.replace(
+    '  python3 "$script_dir/../tests/test_android_wireguard_contract.py"\n',
+    "",
+)
 needle = '  python3 "$script_dir/../tests/test_android_kotlin_compile_contract.py" "$workspace"\n'
 if needle not in preflight:
     raise SystemExit("Kotlin compile contract invocation not found")
-if "test_android_wireguard_contract.py" not in preflight:
-    preflight = preflight.replace(
-        needle,
-        needle + '  python3 "$script_dir/../tests/test_android_wireguard_contract.py"\n',
-        1,
-    )
+transport_test = '  python3 "$script_dir/../tests/test_android_transport_contract.py"\n'
+if transport_test not in preflight:
+    preflight = preflight.replace(needle, needle + transport_test, 1)
 PREFLIGHT.write_text(preflight, encoding="utf-8")
 
-print("Android WireGuard policy applied successfully")
+print("Android MASQUE/WireGuard/Gool transport policy applied successfully")
