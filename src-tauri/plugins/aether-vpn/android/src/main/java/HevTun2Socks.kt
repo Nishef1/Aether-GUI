@@ -75,11 +75,19 @@ class HevTun2Socks {
 
     fun TProxyGetStats(): LongArray = synchronized(nativeLock) {
         if (!nativeRunning || !AetherTunBridge.available) {
+            return@synchronized LongArray(0)
+        }
+
+        val stats = runCatching { AetherTunBridge.nativeStats() }.getOrNull()
+        if (stats == null) {
+            // The native event loop may exit independently after a fatal config,
+            // fd, or network error. Reconcile process-global state so a future
+            // connection is not rejected as a stale running tunnel.
+            nativeRunning = false
+            ownsSession = false
             LongArray(0)
         } else {
-            runCatching { AetherTunBridge.nativeStats() }
-                .getOrNull()
-                ?: LongArray(0)
+            stats
         }
     }
 
