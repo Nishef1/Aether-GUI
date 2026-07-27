@@ -16,10 +16,11 @@ PATCHERS = (
     ROOT / "scripts/ci/patch-aether-wg-fresh-session.py",
     ROOT / "scripts/ci/patch-aether-wg-real-egress.py",
     ROOT / "scripts/ci/patch-aether-wg-runtime-resolver.py",
-    ROOT / "scripts/ci/patch-aether-wg-runtime-egress.py",
-    ROOT / "scripts/ci/patch-aether-wg-runtime-supervision.py",
+    ROOT / "scripts/ci/remove-aether-wg-core-readiness-gate.py",
 )
 CORE_SOURCE = ROOT / "vendor/aether/aether/src"
+SERVICE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
+POLICY = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidTransportPolicy.kt"
 
 
 class WireGuardRuntimeReadinessTest(unittest.TestCase):
@@ -50,7 +51,7 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
             stderr="".join(stderr),
         )
 
-    def test_pipeline_is_idempotent_and_runtime_matches_validation(self) -> None:
+    def test_pipeline_is_idempotent_and_removes_duplicate_core_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = root / "vendor/aether/aether/src"
@@ -86,63 +87,46 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
             wireguard = (target / "wireguard.rs").read_text(encoding="utf-8")
             socks = (target / "socks.rs").read_text(encoding="utf-8")
 
-            resolver = socks.split("pub(crate) async fn dns_resolve", 1)[1].split(
-                "\n}\n", 1
-            )[0]
-            self.assertIn("runtime DNS uses validated independent resolvers", resolver)
-            self.assertIn("Ipv4Addr::new(8, 8, 8, 8)", resolver)
-            self.assertIn("Ipv4Addr::new(9, 9, 9, 9)", resolver)
-            self.assertIn("Ipv4Addr::new(1, 1, 1, 1)", resolver)
-            self.assertLess(
-                resolver.index("Ipv4Addr::new(8, 8, 8, 8)"),
-                resolver.index("Ipv4Addr::new(1, 1, 1, 1)"),
-            )
-            self.assertIn("sender.close().await", resolver)
-            self.assertIn("servers.contains(&response.0)", resolver)
-
-            self.assertIn("const DATAPLANE_DNS_SERVERS", wireguard)
-            self.assertNotIn(
-                "const DATAPLANE_DNS: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1)",
-                wireguard,
-            )
-
-            simple = main.split("async fn run_wireguard_tunnel", 1)[1].split(
-                "\n}\n", 1
-            )[0]
+            simple = main.split("async fn run_wireguard_tunnel", 1)[1].split("\n}\n", 1)[0]
             nested = main.split("async fn establish_wg", 1)[1].split("\n}\n", 1)[0]
             for block in (simple, nested):
-                self.assertIn("runtime readiness task supervision", block)
-                self.assertIn("tokio::select!", block)
-                self.assertIn("WireGuard tunnel during readiness", block)
-                self.assertIn("verify_wg_runtime_egress", block)
+                self.assertIn("Android owns final SOCKS egress readiness", block)
+                self.assertNotIn("verify_wg_runtime_egress", block)
+                self.assertNotIn("runtime readiness task supervision", block)
+            self.assertNotIn("async fn verify_wg_runtime_egress", main)
 
-            # run_wireguard_tunnel returns Result<()>, but establish_wg returns
-            # Result<RunningWireGuard>. The nested branch must convert the task's
-            # Result<()> into an AetherError instead of returning it directly.
-            self.assertNotIn(
-                'return flatten_runtime_task("WireGuard tunnel during readiness", result);',
-                nested,
-            )
-            self.assertIn("let error = match flatten_runtime_task(", nested)
-            self.assertIn("return Err(error);", nested)
+            self.assertIn("const DATAPLANE_DNS_SERVERS", wireguard)
+            self.assertIn("runtime DNS uses validated independent resolvers", socks)
 
-            gool = main.split("async fn run_warp_in_warp", 1)[1].split("\n}\n", 1)[0]
-            self.assertIn("spawn_udp_forwarder(&outer.stack, peer)", gool)
-            self.assertNotIn("trying independent inner WARP endpoint", gool)
+    def test_android_honors_noize_and_gates_connected_on_socks_egress(self) -> None:
+        service = SERVICE.read_text(encoding="utf-8")
+        policy = POLICY.read_text(encoding="utf-8")
 
-    def test_android_finalizer_orders_runtime_patches_before_rebuild(self) -> None:
+        self.assertIn("when (requested.trim().lowercase())", policy)
+        self.assertIn('"balanced" -> "balanced"', policy)
+        self.assertNotIn('fun effectiveWireGuardNoize(requested: String): String = "off"', policy)
+
+        probe_index = service.index("val initialProbe = AndroidEgressProbe.probe(bindAddress)")
+        connected_index = service.index("val connectedAt = System.currentTimeMillis()")
+        tunnel_index = service.index("tunnel = createSystemTunnel(")
+        self.assertLess(probe_index, connected_index)
+        self.assertLess(probe_index, tunnel_index)
+        self.assertIn("wgNoize = effectiveWgNoize", service)
+
+    def test_android_finalizer_cleans_old_gate_before_rebuild(self) -> None:
         finalizer = (ROOT / "scripts/prepare-android-native-final.ps1").read_text(
             encoding="utf-8"
         )
         ordered = [
             "patch-aether-wg-real-egress.py",
             "patch-aether-wg-runtime-resolver.py",
-            "patch-aether-wg-runtime-egress.py",
-            "patch-aether-wg-runtime-supervision.py",
+            "remove-aether-wg-core-readiness-gate.py",
             "Rebuilding final patched Aether core",
         ]
         positions = [finalizer.index(value) for value in ordered]
         self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("patch-aether-wg-runtime-egress.py", finalizer)
+        self.assertNotIn("patch-aether-wg-runtime-supervision.py", finalizer)
 
 
 if __name__ == "__main__":
