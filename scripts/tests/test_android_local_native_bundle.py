@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BASE_PREPARE_SCRIPT = ROOT / "scripts/prepare-android-native.ps1"
 FINAL_PREPARE_SCRIPT = ROOT / "scripts/prepare-android-native-final.ps1"
 DEV_SCRIPT = ROOT / "scripts/android-dev.ps1"
+BUILD_SCRIPT = ROOT / "scripts/build-android-arm64.ps1"
 PACKAGE_JSON = ROOT / "package.json"
 PACKAGING_PATCHER = ROOT / "scripts/ci/patch-android-packaging.py"
 
@@ -21,8 +22,8 @@ PACKAGING_PATCHER = ROOT / "scripts/ci/patch-android-packaging.py"
 class AndroidLocalNativeBundleTest(unittest.TestCase):
     def test_android_dev_prepares_final_payload_before_tauri_launch(self) -> None:
         source = DEV_SCRIPT.read_text(encoding="utf-8")
-        prepare_index = source.index('prepare-android-native-final.ps1')
-        launch_index = source.index('pnpm tauri android dev')
+        prepare_index = source.index("prepare-android-native-final.ps1")
+        launch_index = source.index("pnpm tauri android dev")
         self.assertLess(prepare_index, launch_index)
 
         for native_name in (
@@ -32,16 +33,21 @@ class AndroidLocalNativeBundleTest(unittest.TestCase):
         ):
             self.assertIn(native_name, source)
 
-    def test_apk_build_runs_native_preparation_first(self) -> None:
+    def test_apk_build_uses_transactional_wrapper(self) -> None:
         package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
         scripts = package["scripts"]
         self.assertIn("prepare:android:arm64", scripts)
         self.assertIn("prepare-android-native-final.ps1", scripts["prepare:android:arm64"])
-        self.assertTrue(
-            scripts["build:android:arm64"].startswith(
-                "pnpm prepare:android:arm64 &&"
-            )
-        )
+        self.assertIn("build-android-arm64.ps1", scripts["build:android:arm64"])
+
+        build = BUILD_SCRIPT.read_text(encoding="utf-8")
+        prepare_index = build.index("prepare-android-native-final.ps1")
+        patch_index = build.index("patch-android-mobile-efficiency.py")
+        launch_index = build.index("pnpm tauri android build")
+        restore_index = build.index("WriteAllBytes($serviceSource, $serviceBackup)")
+        self.assertLess(prepare_index, launch_index)
+        self.assertLess(patch_index, launch_index)
+        self.assertGreater(restore_index, launch_index)
 
     def test_base_preparer_builds_and_copies_all_runtime_components(self) -> None:
         source = BASE_PREPARE_SCRIPT.read_text(encoding="utf-8")
@@ -66,12 +72,14 @@ class AndroidLocalNativeBundleTest(unittest.TestCase):
             "patch-aether-wg-real-egress.py",
             "patch-aether-wg-runtime-resolver.py",
             "remove-aether-wg-core-readiness-gate.py",
+            "patch-aether-mobile-network-policy.py",
             "Rebuilding final patched Aether core",
         )
         positions = [source.index(token) for token in ordered]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("patch-aether-wg-runtime-egress.py", source)
         self.assertNotIn("patch-aether-wg-runtime-supervision.py", source)
+        self.assertNotIn("patch-android-mobile-efficiency.py", source)
 
     def test_packaging_patcher_accepts_windows_crlf(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
