@@ -24,7 +24,7 @@
     "core:aether:local": "pnpm core:aether",
     "core:aether:bundle:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bundle-embedded-aether.ps1",
     "prepare:cores:windows": "pnpm core:aether:bundle:windows && powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri/binaries/fetch-singbox.ps1 -Version v1.13.14 && powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri/binaries/fetch-xray.ps1 -Version v26.6.1",
-    "prepare:cores:unix": "bash src-tauri/binaries/fetch-aether.sh --version v1.4.0 && bash src-tauri/binaries/fetch-singbox.sh --version v1.13.14 && bash src-tauri/binaries/fetch-xray.ps1 -Version v26.6.1",
+    "prepare:cores:unix": "bash src-tauri/binaries/fetch-aether.sh --version v1.4.0 && bash src-tauri/binaries/fetch-singbox.sh --version v1.13.14 && bash src-tauri/binaries/fetch-xray.sh --version v26.6.1",
     "verify:version": "node scripts/verify-version.mjs",
     "verify:bundled-cores:windows": "node scripts/verify-bundled-cores.mjs",
     "build:windows:exe": "pnpm prepare:cores:windows && pnpm verify:bundled-cores:windows && tauri build --no-bundle",
