@@ -801,7 +801,14 @@ class FinalAetherVpnService : VpnService() {
                 var remaining = EGRESS_PROBE_INTERVAL_MS
                 while (remaining > 0 && sessionGate.isActive(token)) {
                     val sleep = minOf(remaining, 1_000L)
-                    Thread.sleep(sleep)
+                    try {
+                        Thread.sleep(sleep)
+                    } catch (_: InterruptedException) {
+                        // onDestroy shuts this executor down with interrupt. This
+                        // is normal teardown, not an uncaught worker failure.
+                        Thread.currentThread().interrupt()
+                        return@execute
+                    }
                     remaining -= sleep
                 }
             }

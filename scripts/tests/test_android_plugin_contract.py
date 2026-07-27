@@ -115,6 +115,13 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("cancelInvalidatesAnInFlightStart", gate_test)
         self.assertIn("newerStartInvalidatesOlderWorker", gate_test)
 
+    def test_egress_probe_worker_exits_cleanly_when_android_interrupts_it(self) -> None:
+        source = PLUGIN_SOURCE.read_text(encoding="utf-8")
+        probe_loop = source.split("private fun startEgressProbeLoop", 1)[1]
+        self.assertIn("catch (_: InterruptedException)", probe_loop)
+        self.assertIn("Thread.currentThread().interrupt()", probe_loop)
+        self.assertIn("return@execute", probe_loop)
+
     def test_vpn_service_is_protected_and_final_service_is_registered(self) -> None:
         manifest = PLUGIN_MANIFEST.read_text(encoding="utf-8")
         self.assertIn("android.permission.BIND_VPN_SERVICE", manifest)
