@@ -41,10 +41,20 @@ if (
     exit 0
 }
 
-Write-Host "Generating adaptive Android launcher icons from src-tauri/icons/icon.png..." -ForegroundColor Cyan
-& pnpm tauri icon $manifest
-if ($LASTEXITCODE -ne 0) {
-    throw "Tauri Android icon generation failed with exit code $LASTEXITCODE."
+# Tauri writes mobile icons directly into the generated Android Studio project.
+# Send its unrelated desktop outputs to a temporary directory so Android icon
+# generation never overwrites the separately approved Windows icon set.
+$temporaryOutput = Join-Path ([System.IO.Path]::GetTempPath()) ("aether-android-icons-" + [guid]::NewGuid().ToString("N"))
+try {
+    New-Item -ItemType Directory -Force -Path $temporaryOutput | Out-Null
+    Write-Host "Generating adaptive Android launcher icons from the Aether artwork..." -ForegroundColor Cyan
+    & pnpm tauri icon --output $temporaryOutput $manifest
+    if ($LASTEXITCODE -ne 0) {
+        throw "Tauri Android icon generation failed with exit code $LASTEXITCODE."
+    }
+}
+finally {
+    Remove-Item $temporaryOutput -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 foreach ($generated in @($launcher, $adaptive)) {
@@ -55,4 +65,4 @@ foreach ($generated in @($launcher, $adaptive)) {
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stamp) | Out-Null
 [System.IO.File]::WriteAllText($stamp, $fingerprint, [System.Text.UTF8Encoding]::new($false))
-Write-Host "Android adaptive, round, legacy, and themed icons are ready." -ForegroundColor Green
+Write-Host "Android adaptive, round, legacy, and themed icons are ready; Windows icons were left unchanged." -ForegroundColor Green
