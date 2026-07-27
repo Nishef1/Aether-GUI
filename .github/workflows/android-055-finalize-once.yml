@@ -1,0 +1,109 @@
+name: Finalize and build Android 0.5.5 once
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: android-055-finalize-once
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Validate every Android gate and persist runtime wiring
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+
+          bash -n scripts/ci/test-android-plugin-kotlin.sh
+          python3 scripts/tests/test_android_plugin_contract.py
+          python3 scripts/tests/test_android_transport_patcher.py
+          python3 scripts/ci/apply-android-wireguard-policy.py
+          python3 scripts/tests/test_android_transport_contract.py
+          python3 scripts/tests/test_android_disconnect_contract.py
+          python3 scripts/tests/test_android_kotlin_compile_contract.py
+
+          git add \
+            src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt
+          if ! git diff --cached --quiet; then
+            git commit -m "fix(android): persist validated transport runtime wiring"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Dispatch ARM64 build and record its URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          build_sha=$(git rev-parse HEAD)
+          started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          gh workflow run build-android-arm64.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main
+
+          run_json=""
+          for _ in $(seq 1 12); do
+            sleep 5
+            candidates=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow build-android-arm64.yml \
+              --event workflow_dispatch \
+              --limit 20 \
+              --json databaseId,url,status,conclusion,headSha,createdAt)
+            run_json=$(python3 - "$build_sha" "$started_at" "$candidates" <<'PY'
+import json
+import sys
+
+sha, started_at, payload = sys.argv[1:]
+runs = json.loads(payload)
+for run in runs:
+    if run.get("headSha") == sha and run.get("createdAt", "") >= started_at:
+        print(json.dumps(run, separators=(",", ":")))
+        break
+PY
+)
+            if [[ -n "$run_json" ]]; then
+              break
+            fi
+          done
+
+          if [[ -z "$run_json" ]]; then
+            echo "Dispatched workflow run was not discoverable" >&2
+            exit 1
+          fi
+
+          printf '%s\n' "$run_json" > .github/android-055-build.json
+          echo "$run_json"
+
+      - name: Remove this one-shot workflow
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          git rm -f .github/workflows/android-055-finalize-once.yml
+          if [[ -f .github/android-055-build.json ]]; then
+            git add .github/android-055-build.json
+          fi
+          git commit -m "ci(android): record build and remove one-shot finalizer"
+          git pull --rebase origin main
+          git push origin HEAD:main
