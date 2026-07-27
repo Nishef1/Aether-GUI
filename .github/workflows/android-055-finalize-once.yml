@@ -4,10 +4,16 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
 
 permissions:
   contents: write
   actions: write
+  pull-requests: write
 
 concurrency:
   group: android-055-finalize-once
@@ -15,6 +21,9 @@ concurrency:
 
 jobs:
   finalize:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.head_ref == 'ci/android-055-finalize-once'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out latest main
@@ -93,12 +102,22 @@ PY
           printf '%s\n' "$run_json" > .github/android-055-build.json
           echo "$run_json"
 
-      - name: Remove this one-shot workflow
+      - name: Remove temporary trigger resources
         if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            gh pr close "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment "One-shot Android build trigger completed; cleaning up."
+            git push origin --delete "$PR_HEAD" || true
+          fi
+
           git pull --rebase origin main
           git rm -f .github/workflows/android-055-finalize-once.yml
           if [[ -f .github/android-055-build.json ]]; then
