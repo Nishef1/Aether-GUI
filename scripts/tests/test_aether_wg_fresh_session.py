@@ -13,12 +13,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SESSION_PATCHER = ROOT / "scripts/ci/patch-aether-wg-fresh-session.py"
 EGRESS_PATCHER = ROOT / "scripts/ci/patch-aether-wg-real-egress.py"
+RUNTIME_PATCHER = ROOT / "scripts/ci/patch-aether-wg-runtime-egress.py"
 CORE_MAIN = ROOT / "vendor/aether/aether/src/main.rs"
 CORE_WIREGUARD = ROOT / "vendor/aether/aether/src/wireguard.rs"
 ESTABLISHED_MARKER = "validated session retained for runtime handoff"
 FRESH_SESSION_MARKER = "validated with disposable probe session; starting fresh runtime session"
 FRESH_READY_MARKER = "fresh WireGuard runtime data-plane ready"
 REAL_EGRESS_MARKER = "independent resolver egress"
+RUNTIME_READY_MARKER = "retained WireGuard runtime egress ready"
 CANONICAL_GOOL_MARKER = "tunneled through outer warp via"
 
 
@@ -27,7 +29,7 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
         outputs: list[str] = []
         errors: list[str] = []
         returncode = 0
-        for patcher in (SESSION_PATCHER, EGRESS_PATCHER):
+        for patcher in (SESSION_PATCHER, EGRESS_PATCHER, RUNTIME_PATCHER):
             result = subprocess.run(
                 ["python3", str(patcher), str(root)],
                 cwd=ROOT,
@@ -41,7 +43,7 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
                 returncode = result.returncode
                 break
         return subprocess.CompletedProcess(
-            args=[str(SESSION_PATCHER), str(EGRESS_PATCHER)],
+            args=[str(SESSION_PATCHER), str(EGRESS_PATCHER), str(RUNTIME_PATCHER)],
             returncode=returncode,
             stdout="".join(outputs),
             stderr="".join(errors),
@@ -96,6 +98,13 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
 
             self.assertIn("validate_timeout: Duration", nested)
             self.assertIn("validate_timeout,", nested)
+            self.assertIn(RUNTIME_READY_MARKER, main_source)
+            self.assertIn('verify_wg_runtime_egress(&stack, "wireguard")', simple)
+            self.assertIn("verify_wg_runtime_egress(&stack, label)", nested)
+            self.assertLess(
+                simple.index('verify_wg_runtime_egress(&stack, "wireguard")'),
+                simple.index("socks::serve"),
+            )
 
             self.assertNotIn("fn gool_inner_candidates", main_source)
             self.assertNotIn("trying independent inner WARP endpoint", main_source)
@@ -123,9 +132,14 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
         self.assertIn("prepare-android-native-final.ps1", android_dev)
         self.assertIn("prepare-android-native.ps1", finalizer)
         self.assertIn("patch-aether-wg-real-egress.py", finalizer)
+        self.assertIn("patch-aether-wg-runtime-egress.py", finalizer)
         self.assertLess(
             finalizer.index("prepare-android-native.ps1"),
             finalizer.index("patch-aether-wg-real-egress.py"),
+        )
+        self.assertLess(
+            finalizer.index("patch-aether-wg-real-egress.py"),
+            finalizer.index("patch-aether-wg-runtime-egress.py"),
         )
         self.assertIn("Rebuilding final patched Aether core", finalizer)
 
