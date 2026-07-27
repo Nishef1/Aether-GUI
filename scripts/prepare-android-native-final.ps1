@@ -55,6 +55,7 @@ function Resolve-Python {
 
 $python = Resolve-Python
 $patches = @(
+    (Join-Path $repoRoot "scripts\ci\patch-android-mobile-efficiency.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-resolver.py"),
     (Join-Path $repoRoot "scripts\ci\remove-aether-wg-core-readiness-gate.py"),
@@ -65,12 +66,12 @@ $patches = @(
 )
 foreach ($patch in $patches) {
     if (-not (Test-Path $patch)) {
-        throw "Final WireGuard patch is missing: $patch"
+        throw "Final Android patch is missing: $patch"
     }
 
     & $python.Command @($python.Prefix + @($patch, $repoRoot))
     if ($LASTEXITCODE -ne 0) {
-        throw "Final WireGuard patch failed with exit code $LASTEXITCODE`: $patch"
+        throw "Final Android patch failed with exit code $LASTEXITCODE`: $patch"
     }
 }
 
