@@ -82,14 +82,17 @@ internal object AndroidTransportPolicy {
                 )
                 if (useMasqueHttp2) command += "--fragment"
             }
-            isWireGuardFamily(protocol) -> command += listOf(
-                "--keepalive", "5",
-                "--wg-validate-secs", "12",
-                "--wg-health-interval", "15",
-                "--wg-stale-secs", "60",
-                "--wg-startup-secs", "45",
-                "--wg-reconnect-secs", "2",
-            )
+            isWireGuardFamily(protocol) -> {
+                val validateSeconds = if (protocol.equals("gool", ignoreCase = true)) "25" else "12"
+                command += listOf(
+                    "--keepalive", "5",
+                    "--wg-validate-secs", validateSeconds,
+                    "--wg-health-interval", "15",
+                    "--wg-stale-secs", "60",
+                    "--wg-startup-secs", "45",
+                    "--wg-reconnect-secs", "2",
+                )
+            }
         }
     }
 }
