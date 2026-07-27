@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, Trash2 } from "lucide-react";
+import { Check, Copy, ScrollText, Trash2 } from "lucide-react";
+import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
 
 function compactConsecutiveLogs(lines: string[]): string {
@@ -78,7 +79,7 @@ export function LiveLogViewer() {
             type="button"
             disabled={!output}
             onClick={() => void copyLogs()}
-            className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[10px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[10px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
             aria-label="Copy live logs"
           >
             {copied ? (
@@ -92,7 +93,7 @@ export function LiveLogViewer() {
             type="button"
             disabled={logs.length === 0}
             onClick={clearLogs}
-            className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[10px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[10px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
             aria-label="Clear live logs"
           >
             <Trash2 className="size-3" aria-hidden="true" />
@@ -111,14 +112,22 @@ export function LiveLogViewer() {
             current === nextAutoScroll ? current : nextAutoScroll
           );
         }}
-        className="h-56 overflow-y-auto rounded-lg bg-black/20 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground ring-1 ring-white/10"
+        className={`overflow-y-auto rounded-xl bg-black/20 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground ring-1 ring-white/10 ${
+          isAndroid ? "h-[34svh] min-h-56 max-h-80" : "h-56"
+        }`}
       >
         {output ? (
           <pre className="m-0 whitespace-pre-wrap break-words font-inherit text-inherit">
             {output}
           </pre>
         ) : (
-          <p className="text-status-idle">No output yet.</p>
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center font-sans text-muted-foreground">
+            <ScrollText className="size-5 text-status-idle" aria-hidden="true" />
+            <p className="text-xs text-foreground/80">No logs yet</p>
+            <p className="max-w-48 text-[10px] leading-relaxed">
+              Connection events will appear here when Aether starts.
+            </p>
+          </div>
         )}
       </div>
     </div>
