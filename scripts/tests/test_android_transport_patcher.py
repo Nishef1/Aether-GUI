@@ -19,6 +19,10 @@ SERVICE_FIXTURE = textwrap.dedent(
     """\
     package com.cluvexstudio.aethergui.vpn
 
+    class FinalVpnProfileArgs {
+        var masqueHttp2: Boolean = false
+    }
+
     class FinalAetherVpnService {
         private fun runSession(
             protocol: String,
@@ -62,6 +66,10 @@ SERVICE_FIXTURE = textwrap.dedent(
             }
         }
 
+        private fun readIntent(intent: android.content.Intent) {
+            val masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, false)
+        }
+
         private fun buildCoreCommand(
             executable: File,
             protocol: String,
@@ -85,6 +93,7 @@ SERVICE_FIXTURE = textwrap.dedent(
         }
 
         companion object {
+            private const val EXTRA_MASQUE_HTTP2 = "masqueHttp2"
             private const val CORE_START_TIMEOUT_MS = 50_000L
             private const val TUN_MTU = 8500
         }
@@ -126,13 +135,18 @@ class AndroidTransportPatcherTest(unittest.TestCase):
 
             self.assertEqual(first_hash, second_hash)
             result = second_bytes.decode("utf-8")
-            self.assertEqual(result.count("val udpAvailable = if (AndroidTransportPolicy"), 1)
             self.assertEqual(result.count("val effectiveWgNoize = if (AndroidTransportPolicy"), 1)
             self.assertEqual(result.count("val initialProbe = AndroidEgressProbe.probe"), 1)
+            self.assertNotIn("AndroidUdpCapabilityProbe.hasUsableUdp()", result)
+            self.assertIn("MASQUE transport selected: HTTP/2 (TCP); Android safe auto", result)
+            self.assertIn("requestedH2=$masqueHttp2", result)
             self.assertIn("SOCKS egress verified via ${initialProbe.provider}", result)
             self.assertIn("wgNoize = effectiveWgNoize", result)
             self.assertIn('remove("AETHER_MASQUE_HTTP2")', result)
+            self.assertIn('put("AETHER_MASQUE_HTTP2", "1")', result)
             self.assertNotIn('if (masqueHttp2) "1" else "0"', result)
+            self.assertIn("var masqueHttp2: Boolean = true", result)
+            self.assertIn("getBooleanExtra(EXTRA_MASQUE_HTTP2, true)", result)
             self.assertIn("AndroidTransportPolicy.startupTimeoutMs", result)
             self.assertIn("AndroidTransportPolicy.appendCoreArgs", result)
             self.assertIn("AndroidTransportPolicy.TUN_MTU", result)
