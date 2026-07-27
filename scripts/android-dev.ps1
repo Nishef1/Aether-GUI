@@ -29,6 +29,20 @@ function Resolve-Adb {
     throw "adb was not found. Reopen PowerShell after installing Android SDK Platform-Tools."
 }
 
+function Resolve-Python {
+    foreach ($name in @("python", "python3")) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($command) {
+            return @{ Command = $command.Source; Prefix = @() }
+        }
+    }
+    $launcher = Get-Command py -ErrorAction SilentlyContinue
+    if ($launcher) {
+        return @{ Command = $launcher.Source; Prefix = @("-3") }
+    }
+    throw "Python 3 was not found. Install Python 3 and reopen PowerShell."
+}
+
 function Remove-AdbReverseQuietly {
     param(
         [Parameter(Mandatory = $true)]
@@ -39,9 +53,6 @@ function Remove-AdbReverseQuietly {
         [int]$Port
     )
 
-    # A missing listener is the expected state on the first run. adb writes that
-    # condition to stderr, and the script-wide Stop preference would otherwise
-    # turn harmless cleanup into a fatal NativeCommandError.
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "SilentlyContinue"
@@ -62,9 +73,6 @@ if (
     (Test-Path (Join-Path $androidSdkDirectory "platform-tools\adb.exe")) -and
     -not $env:ANDROID_HOME
 ) {
-    # Tauri consults ANDROID_HOME even when adb was found through the SDK's
-    # platform-tools directory. Export it for this dev session to avoid a
-    # needless SDK discovery warning and keep the toolchain consistent.
     $env:ANDROID_HOME = $androidSdkDirectory
 }
 if (-not $env:ANDROID_SDK_ROOT -and $env:ANDROID_HOME) {
@@ -111,9 +119,6 @@ $prepareNative = Join-Path $PSScriptRoot "prepare-android-native-final.ps1"
 if (-not (Test-Path $prepareNative)) {
     throw "Final Android native preparation script is missing: $prepareNative"
 }
-
-# Tauri builds only the Rust application library. The executable Aether core and
-# TUN bridge are separate native payloads and must already exist in jniLibs.
 & $prepareNative
 if ($LASTEXITCODE -ne 0) {
     throw "Android native runtime preparation failed with exit code $LASTEXITCODE."
@@ -131,6 +136,14 @@ foreach ($nativeName in @(
     }
 }
 
+$serviceSource = Join-Path $repoRoot "src-tauri\plugins\aether-vpn\android\src\main\java\FinalAetherVpnPlugin.kt"
+$efficiencyPatch = Join-Path $repoRoot "scripts\ci\patch-android-mobile-efficiency.py"
+if (-not (Test-Path $serviceSource) -or -not (Test-Path $efficiencyPatch)) {
+    throw "Android mobile-efficiency source or patch is missing."
+}
+$serviceBackup = [System.IO.File]::ReadAllBytes($serviceSource)
+$python = Resolve-Python
+
 $devPort = 1420
 $hmrPort = 1421
 $exitCode = 1
@@ -138,6 +151,11 @@ $exitCode = 1
 Write-Host "Routing device localhost ports through USB ADB; VPN and LAN adapter addresses will be ignored." -ForegroundColor Cyan
 
 try {
+    & $python.Command @($python.Prefix + @($efficiencyPatch, $repoRoot))
+    if ($LASTEXITCODE -ne 0) {
+        throw "Android mobile-efficiency patch failed with exit code $LASTEXITCODE."
+    }
+
     Remove-AdbReverseQuietly -AdbPath $adb -Serial $serial -Port $devPort
     Remove-AdbReverseQuietly -AdbPath $adb -Serial $serial -Port $hmrPort
 
@@ -157,6 +175,7 @@ try {
     $exitCode = $LASTEXITCODE
 }
 finally {
+    [System.IO.File]::WriteAllBytes($serviceSource, $serviceBackup)
     Remove-AdbReverseQuietly -AdbPath $adb -Serial $serial -Port $devPort
     Remove-AdbReverseQuietly -AdbPath $adb -Serial $serial -Port $hmrPort
 }
