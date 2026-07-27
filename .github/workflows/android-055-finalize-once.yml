@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
+  issue_comment:
+    types:
+      - created
   pull_request:
     branches:
       - main
@@ -27,8 +30,9 @@ concurrency:
 jobs:
   finalize:
     if: >-
-      github.event_name != 'pull_request' ||
-      github.head_ref == 'ci/android-055-finalize-once'
+      (github.event_name != 'pull_request' || github.head_ref == 'ci/android-055-finalize-once') &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.issue.number == 8 && github.event.comment.body == '/finalize-android-055'))
     runs-on: ubuntu-24.04
     steps:
       - name: Check out latest main
