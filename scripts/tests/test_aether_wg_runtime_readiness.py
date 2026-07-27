@@ -17,6 +17,7 @@ PATCHERS = (
     ROOT / "scripts/ci/patch-aether-wg-real-egress.py",
     ROOT / "scripts/ci/patch-aether-wg-runtime-resolver.py",
     ROOT / "scripts/ci/remove-aether-wg-core-readiness-gate.py",
+    ROOT / "scripts/ci/patch-aether-android-fresh-runtime.py",
 )
 CORE_SOURCE = ROOT / "vendor/aether/aether/src"
 SERVICE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
@@ -51,7 +52,7 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
             stderr="".join(stderr),
         )
 
-    def test_pipeline_is_idempotent_and_removes_duplicate_core_gate(self) -> None:
+    def test_pipeline_is_idempotent_and_uses_fresh_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = root / "vendor/aether/aether/src"
@@ -90,7 +91,10 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
             simple = main.split("async fn run_wireguard_tunnel", 1)[1].split("\n}\n", 1)[0]
             nested = main.split("async fn establish_wg", 1)[1].split("\n}\n", 1)[0]
             for block in (simple, nested):
-                self.assertIn("Android owns final SOCKS egress readiness", block)
+                self.assertIn("Android fresh WireGuard runtime", block)
+                self.assertIn("WgTunnel::new", block)
+                self.assertNotIn("WgTunnel::from_established", block)
+                self.assertNotIn("verify_endpoint_keep_session", block)
                 self.assertNotIn("verify_wg_runtime_egress", block)
                 self.assertNotIn("runtime readiness task supervision", block)
             self.assertNotIn("async fn verify_wg_runtime_egress", main)
@@ -113,7 +117,7 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
         self.assertLess(probe_index, tunnel_index)
         self.assertIn("wgNoize = effectiveWgNoize", service)
 
-    def test_android_finalizer_cleans_old_gate_before_rebuild(self) -> None:
+    def test_android_finalizer_applies_fresh_runtime_before_rebuild(self) -> None:
         finalizer = (ROOT / "scripts/prepare-android-native-final.ps1").read_text(
             encoding="utf-8"
         )
@@ -121,6 +125,7 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
             "patch-aether-wg-real-egress.py",
             "patch-aether-wg-runtime-resolver.py",
             "remove-aether-wg-core-readiness-gate.py",
+            "patch-aether-android-fresh-runtime.py",
             "Rebuilding final patched Aether core",
         ]
         positions = [finalizer.index(value) for value in ordered]
