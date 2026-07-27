@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
-SESSION_MARKER = "validated with disposable probe session; starting fresh runtime session"
-READY_MARKER = "fresh WireGuard runtime data-plane ready"
-
-
-def required_replace(text: str, old: str, new: str, label: str) -> str:
-    if old not in text:
-        raise SystemExit(f"{label}: expected source block was not found")
-    return text.replace(old, new, 1)
+# Keep the legacy filename because local and manual Android build scripts already
+# invoke it. The policy is now the opposite of the original experiment: retain
+# the session whose handshake and data plane were actually validated.
+ESTABLISHED_MARKER = "validated session retained for runtime handoff"
+FRESH_SESSION_MARKER = "validated with disposable probe session; starting fresh runtime session"
+FRESH_READY_MARKER = "fresh WireGuard runtime data-plane ready"
 
 
 def target_file(argument: str | None) -> Path:
@@ -24,54 +23,48 @@ def target_file(argument: str | None) -> Path:
     return root / "vendor/aether/aether/src/main.rs"
 
 
-main_rs = target_file(sys.argv[1] if len(sys.argv) > 1 else None)
-if not main_rs.is_file():
-    raise SystemExit(f"Aether main.rs was not found at {main_rs}")
+def function_span(source: str, signature: str) -> tuple[int, int]:
+    start = source.find(signature)
+    if start < 0:
+        raise SystemExit(f"expected function was not found: {signature}")
+    brace = source.find("{", start)
+    if brace < 0:
+        raise SystemExit(f"opening brace was not found for: {signature}")
 
-source = main_rs.read_text(encoding="utf-8")
+    depth = 0
+    for index in range(brace, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = index + 1
+                while end < len(source) and source[end] in "\r\n":
+                    end += 1
+                return start, end
+    raise SystemExit(f"closing brace was not found for: {signature}")
 
-# The endpoint validation session deliberately carries probe traffic and state.
-# Build a clean runtime session instead of handing that consumed session to the
-# reusable netstack/SOCKS path.
-if SESSION_MARKER not in source:
-    source = required_replace(
-        source,
-        "use std::net::{IpAddr, Ipv4Addr, SocketAddr};",
-        "use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};",
-        "IPv6 import",
-    )
 
-    v4_parser = '''fn parse_local_v4(value: &str) -> Result<Ipv4Addr> {
-    let raw = value.split('/').next().unwrap_or(value).trim();
-    let address: Ipv4Addr = raw
-        .parse()
-        .map_err(|_| AetherError::Other(format!("invalid IPv4 identity address '{value}'")))?;
-    if address.is_unspecified() {
-        return Err(AetherError::Other(format!(
-            "unspecified IPv4 identity address '{value}'"
-        )));
-    }
-    Ok(address)
-}
-'''
+def replace_function(source: str, signature: str, transform) -> str:
+    start, end = function_span(source, signature)
+    block = source[start:end]
+    updated = transform(block)
+    return source[:start] + updated + source[end:]
 
-    v6_parser = v4_parser + '''
-fn parse_local_v6(value: &str) -> Result<Ipv6Addr> {
-    let raw = value.split('/').next().unwrap_or(value).trim();
-    let address: Ipv6Addr = raw
-        .parse()
-        .map_err(|_| AetherError::Other(format!("invalid IPv6 identity address '{value}'")))?;
-    if address.is_unspecified() {
-        return Err(AetherError::Other(format!(
-            "unspecified IPv6 identity address '{value}'"
-        )));
-    }
-    Ok(address)
-}
-'''
-    source = required_replace(source, v4_parser, v6_parser, "IPv6 identity parser")
 
-    old_runtime_validation = '''    let private_key = identity.private_key_bytes()?;
+def replace_between(block: str, start_marker: str, end_marker: str, replacement: str, label: str) -> str:
+    start = block.find(start_marker)
+    if start < 0:
+        raise SystemExit(f"{label}: start marker was not found")
+    end = block.find(end_marker, start)
+    if end < 0:
+        raise SystemExit(f"{label}: end marker was not found")
+    return block[:start] + replacement + block[end:]
+
+
+def transform_simple_runtime(block: str) -> str:
+    validation = '''    let private_key = identity.private_key_bytes()?;
     let peer_public_key = identity.peer_public_key_bytes()?;
     let local_ipv4 = parse_local_v4(&identity.ipv4)?;
 
@@ -90,66 +83,49 @@ fn parse_local_v6(value: &str) -> Result<Ipv6Addr> {
     )
     .await
     .map_err(|error| AetherError::Other(format!("tunnel failed validation: {error}")))?;
-    log::info!("[+] wireguard tunnel validated (end-to-end data confirmed); exposing socks5");
-'''
-    new_runtime_validation = '''    let private_key = identity.private_key_bytes()?;
-    let peer_public_key = identity.peer_public_key_bytes()?;
-    let local_ipv4 = parse_local_v4(&identity.ipv4)?;
-    let local_ipv6 = parse_local_v6(&identity.ipv6)?;
-
     log::info!(
-        "[*] validating WireGuard endpoint with a disposable probe session before exposing socks5..."
+        "[+] wireguard tunnel validated (end-to-end data confirmed); validated session retained for runtime handoff"
     );
-    wireguard::verify_endpoint(
-        peer,
-        private_key,
-        peer_public_key,
-        identity.client_id,
-        local_ipv4,
-        &aethernoize,
-        wg_tunnel_validate_timeout(),
-        Some(wg_keepalive_secs()),
-    )
-    .await
-    .map_err(|error| AetherError::Other(format!("tunnel failed validation: {error}")))?;
-    log::info!("[+] wireguard endpoint {SESSION_MARKER}");
 
-    let runtime_config = wireguard::WgConfig {
-        local_private_key: private_key,
-        peer_public_key,
-        peer_endpoint: peer,
-        local_ipv4,
-        local_ipv6,
-        client_id: identity.client_id,
-        preshared_key: None,
-        persistent_keepalive: Some(wg_keepalive_secs()),
-        aethernoize: std::sync::Arc::new(aethernoize),
-    };
-'''.replace("{SESSION_MARKER}", SESSION_MARKER)
-    source = required_replace(
-        source,
-        old_runtime_validation,
-        new_runtime_validation,
-        "WireGuard runtime validation handoff",
+'''
+    block = replace_between(
+        block,
+        "    let private_key = identity.private_key_bytes()?;",
+        "    let (outbound_tx, outbound_rx)",
+        validation,
+        "simple WireGuard validation handoff",
     )
 
-    old_runtime_tunnel = '''    let tunnel = wireguard::WgTunnel::from_established(
+    tunnel = '''    let tunnel = wireguard::WgTunnel::from_established(
         session,
         std::sync::Arc::new(aethernoize),
         inbound_tx,
         local_ipv4,
     );
 '''
-    new_runtime_tunnel = '''    let tunnel = wireguard::WgTunnel::new(runtime_config, inbound_tx).await?;
-'''
-    source = required_replace(
-        source,
-        old_runtime_tunnel,
-        new_runtime_tunnel,
-        "WireGuard fresh runtime tunnel",
+    block = replace_between(
+        block,
+        "    let tunnel =",
+        "    let stack =",
+        tunnel,
+        "simple WireGuard established tunnel",
     )
 
-    old_nested_validation = '''    let private_key = identity.private_key_bytes()?;
+    block = re.sub(
+        r'(    let mut tunnel_task = tokio::spawn\(tunnel\.run\(outbound_rx\)\);\r?\n)'
+        r'    if let Err\(error\) = warm_up_wg_stack\(&stack, "wireguard"\)\.await \{\r?\n'
+        r'        tunnel_task\.abort\(\);\r?\n'
+        r'        return Err\(error\);\r?\n'
+        r'    \}\r?\n',
+        r'\1',
+        block,
+        count=1,
+    )
+    return block
+
+
+def transform_nested_runtime(block: str) -> str:
+    validation = '''    let private_key = identity.private_key_bytes()?;
     let peer_public_key = identity.peer_public_key_bytes()?;
     let local_ipv4 = parse_local_v4(&identity.ipv4)?;
 
@@ -176,180 +152,90 @@ fn parse_local_v6(value: &str) -> Result<Ipv6Addr> {
     .map_err(|error| {
         AetherError::Other(format!("[{label}] tunnel failed validation: {error}"))
     })?;
-    log::info!("[+] [{label}] wireguard tunnel validated (end-to-end data confirmed)");
-'''
-    new_nested_validation = '''    let private_key = identity.private_key_bytes()?;
-    let peer_public_key = identity.peer_public_key_bytes()?;
-    let local_ipv4 = parse_local_v4(&identity.ipv4)?;
-    let local_ipv6 = parse_local_v6(&identity.ipv6)?;
-
-    let profile = if obfuscate {
-        aethernoize_config()
-    } else {
-        aethernoize::from_profile("off")
-    };
-
     log::info!(
-        "[*] [{label}] validating WireGuard endpoint with a disposable probe session..."
+        "[+] [{label}] wireguard tunnel validated (end-to-end data confirmed); validated session retained for runtime handoff"
     );
-    wireguard::verify_endpoint(
-        peer,
-        private_key,
-        peer_public_key,
-        identity.client_id,
-        local_ipv4,
-        &profile,
-        wg_tunnel_validate_timeout(),
-        Some(keepalive.clamp(1, 120)),
-    )
-    .await
-    .map_err(|error| {
-        AetherError::Other(format!("[{label}] tunnel failed validation: {error}"))
-    })?;
-    log::info!("[+] [{label}] wireguard endpoint {SESSION_MARKER}");
 
-    let runtime_config = wireguard::WgConfig {
-        local_private_key: private_key,
-        peer_public_key,
-        peer_endpoint: peer,
-        local_ipv4,
-        local_ipv6,
-        client_id: identity.client_id,
-        preshared_key: None,
-        persistent_keepalive: Some(keepalive.clamp(1, 120)),
-        aethernoize: std::sync::Arc::new(profile),
-    };
-'''.replace("{SESSION_MARKER}", SESSION_MARKER)
-    source = required_replace(
-        source,
-        old_nested_validation,
-        new_nested_validation,
+'''
+    block = replace_between(
+        block,
+        "    let private_key = identity.private_key_bytes()?;",
+        "    let (outbound_tx, outbound_rx)",
+        validation,
         "nested WireGuard validation handoff",
     )
 
-    old_nested_tunnel = '''    let tunnel = wireguard::WgTunnel::from_established(
+    tunnel = '''    let tunnel = wireguard::WgTunnel::from_established(
         session,
         std::sync::Arc::new(profile),
         inbound_tx,
         local_ipv4,
     );
 '''
-    new_nested_tunnel = '''    let tunnel = wireguard::WgTunnel::new(runtime_config, inbound_tx).await?;
-'''
-    source = required_replace(
-        source,
-        old_nested_tunnel,
-        new_nested_tunnel,
-        "nested WireGuard fresh runtime tunnel",
+    block = replace_between(
+        block,
+        "    let tunnel =",
+        "    let stack =",
+        tunnel,
+        "nested WireGuard established tunnel",
     )
 
-# A fresh WgTunnel has not authenticated yet. Gool must not start its inner
-# forwarder on an outer stack that merely exists; drive and verify actual DNS
-# traffic through each fresh runtime stack first. This is a real readiness gate,
-# not a timing sleep.
-if READY_MARKER not in source:
-    running_drop = '''impl Drop for RunningWireGuard {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-async fn establish_wg(
-'''
-    ready_helper = '''impl Drop for RunningWireGuard {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-async fn warm_up_wg_stack(stack: &netstack::StackHandle, label: &str) -> Result<()> {
-    const ATTEMPTS: usize = 3;
-    let mut last_error = None;
-
-    for attempt in 1..=ATTEMPTS {
-        match socks::dns_resolve(stack, "www.cloudflare.com").await {
-            Ok(address) => {
-                log::info!(
-                    "[+] [{label}] fresh WireGuard runtime data-plane ready via {address}"
-                );
-                return Ok(());
-            }
-            Err(error) => {
-                log::warn!(
-                    "[-] [{label}] fresh runtime warm-up attempt {attempt}/{ATTEMPTS} failed: {error}"
-                );
-                last_error = Some(error.to_string());
-                if attempt < ATTEMPTS {
-                    tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
-                }
-            }
-        }
-    }
-
-    Err(AetherError::Other(format!(
-        "[{label}] fresh runtime data-plane warm-up failed: {}",
-        last_error.unwrap_or_else(|| "unknown error".to_string())
-    )))
-}
-
-async fn establish_wg(
-'''
-    source = required_replace(
-        source,
-        running_drop,
-        ready_helper,
-        "fresh WireGuard runtime ready helper",
+    block = re.sub(
+        r'(    let task = tokio::spawn\(tunnel\.run\(outbound_rx\)\);\r?\n)'
+        r'    if let Err\(error\) = warm_up_wg_stack\(&stack, label\)\.await \{\r?\n'
+        r'        task\.abort\(\);\r?\n'
+        r'        return Err\(error\);\r?\n'
+        r'    \}\r?\n',
+        r'\1',
+        block,
+        count=1,
     )
+    return block
 
-    simple_spawn = '''    let mut tunnel_task = tokio::spawn(tunnel.run(outbound_rx));
-    let socks_stack = stack.clone();
-'''
-    simple_ready = '''    let mut tunnel_task = tokio::spawn(tunnel.run(outbound_rx));
-    if let Err(error) = warm_up_wg_stack(&stack, "wireguard").await {
-        tunnel_task.abort();
-        return Err(error);
-    }
-    let socks_stack = stack.clone();
-'''
-    source = required_replace(
-        source,
-        simple_spawn,
-        simple_ready,
-        "simple WireGuard runtime ready gate",
-    )
 
-    nested_spawn = '''    let task = tokio::spawn(tunnel.run(outbound_rx));
+main_rs = target_file(sys.argv[1] if len(sys.argv) > 1 else None)
+if not main_rs.is_file():
+    raise SystemExit(f"Aether main.rs was not found at {main_rs}")
 
-    Ok(RunningWireGuard { stack, task })
-'''
-    nested_ready = '''    let task = tokio::spawn(tunnel.run(outbound_rx));
-    if let Err(error) = warm_up_wg_stack(&stack, label).await {
-        task.abort();
-        return Err(error);
-    }
+source = main_rs.read_text(encoding="utf-8")
+source = replace_function(source, "async fn run_wireguard_tunnel", transform_simple_runtime)
+source = replace_function(source, "async fn establish_wg", transform_nested_runtime)
 
-    Ok(RunningWireGuard { stack, task })
-'''
-    source = required_replace(
-        source,
-        nested_spawn,
-        nested_ready,
-        "nested WireGuard runtime ready gate",
+# Remove the failed fresh-session warm-up experiment when migrating a working
+# tree that was already patched by an earlier Android build.
+if "async fn warm_up_wg_stack" in source:
+    start, end = function_span(source, "async fn warm_up_wg_stack")
+    source = source[:start] + source[end:]
+
+# The fresh-session patch introduced IPv6 parsing only to construct WgConfig.
+# Remove that now-unused helper/import without touching unrelated IPv6 code.
+if source.count("parse_local_v6") == 1 and "fn parse_local_v6" in source:
+    start, end = function_span(source, "fn parse_local_v6")
+    source = source[:start] + source[end:]
+if source.count("Ipv6Addr") == 1:
+    source = source.replace(
+        "use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};",
+        "use std::net::{IpAddr, Ipv4Addr, SocketAddr};",
+        1,
     )
 
 for name in ("run_wireguard_tunnel", "establish_wg"):
-    block = source.split(f"async fn {name}", 1)[1].split("\n}\n", 1)[0]
-    if "WgTunnel::from_established" in block:
-        raise SystemExit(f"{name}: validation session reuse survived patching")
-    if "WgTunnel::new" not in block:
-        raise SystemExit(f"{name}: fresh runtime tunnel was not installed")
+    start, end = function_span(source, f"async fn {name}")
+    block = source[start:end]
+    if "verify_endpoint_keep_session" not in block:
+        raise SystemExit(f"{name}: validated session handoff is missing")
+    if "WgTunnel::from_established" not in block:
+        raise SystemExit(f"{name}: established session is not retained")
+    if "WgTunnel::new(runtime_config" in block:
+        raise SystemExit(f"{name}: failed fresh runtime construction still exists")
+    if "warm_up_wg_stack" in block:
+        raise SystemExit(f"{name}: failed fresh runtime warm-up still exists")
 
-if "async fn warm_up_wg_stack" not in source:
-    raise SystemExit("fresh WireGuard runtime ready helper is missing")
-if 'warm_up_wg_stack(&stack, "wireguard")' not in source:
-    raise SystemExit("simple WireGuard runtime ready gate is missing")
-if "warm_up_wg_stack(&stack, label)" not in source:
-    raise SystemExit("nested WireGuard runtime ready gate is missing")
+for forbidden in (FRESH_SESSION_MARKER, FRESH_READY_MARKER, "async fn warm_up_wg_stack"):
+    if forbidden in source:
+        raise SystemExit(f"failed fresh-session experiment remains: {forbidden}")
+if source.count(ESTABLISHED_MARKER) < 2:
+    raise SystemExit("validated-session runtime markers were not installed")
 
 main_rs.write_text(source, encoding="utf-8")
-print(f"Patched and readiness-gated Aether WireGuard runtime sessions in {main_rs}")
+print(f"Retained validated WireGuard sessions for runtime handoff in {main_rs}")
