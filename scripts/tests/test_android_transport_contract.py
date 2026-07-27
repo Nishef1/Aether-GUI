@@ -25,7 +25,7 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertNotIn("CORE_START_TIMEOUT_MS", service)
         for timeout in (
             "75_000L", "120_000L", "180_000L", "210_000L", "240_000L",
-            "90_000L", "270_000L", "330_000L", "390_000L",
+            "210_000L", "300_000L", "390_000L", "450_000L", "510_000L",
             "150_000L", "360_000L", "450_000L", "510_000L",
         ):
             self.assertIn(timeout, policy)

@@ -229,8 +229,27 @@ $coreCandidates = @(
 )
 $core = $coreCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-if ($ForceRebuild -or -not $core) {
-    Write-Host "Building Aether core for $armAbi..." -ForegroundColor Cyan
+$coreInputs = @(
+    (Join-Path $coreCrate "Cargo.toml"),
+    (Join-Path $coreCrate "Cargo.lock")
+) + @(Get-ChildItem -Path (Join-Path $coreCrate "src") -File -Recurse)
+$coreNewestInput = $coreInputs |
+    Where-Object { Test-Path $_ } |
+    ForEach-Object { Get-Item -LiteralPath $_ } |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+$coreIsStale = $core -and $coreNewestInput -and
+    ((Get-Item $core).LastWriteTimeUtc -lt $coreNewestInput.LastWriteTimeUtc)
+
+if ($ForceRebuild -or -not $core -or $coreIsStale) {
+    $reason = if ($ForceRebuild) {
+        "forced"
+    } elseif (-not $core) {
+        "missing output"
+    } else {
+        "source is newer than output"
+    }
+    Write-Host "Building Aether core for $armAbi ($reason)..." -ForegroundColor Cyan
     Invoke-Checked `
         -Command $cargo `
         -Arguments @(

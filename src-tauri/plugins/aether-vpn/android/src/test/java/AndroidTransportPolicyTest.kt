@@ -16,11 +16,11 @@ class AndroidTransportPolicyTest {
 
     @Test
     fun wireGuardTimeoutsExceedCoreScannerBudgets() {
-        assertEquals(90_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "turbo"))
-        assertEquals(180_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "balanced"))
-        assertEquals(270_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "stealth"))
-        assertEquals(330_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "thorough"))
-        assertEquals(390_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "ironclad"))
+        assertEquals(210_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "turbo"))
+        assertEquals(300_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "balanced"))
+        assertEquals(390_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "stealth"))
+        assertEquals(450_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "thorough"))
+        assertEquals(510_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "ironclad"))
     }
 
     @Test

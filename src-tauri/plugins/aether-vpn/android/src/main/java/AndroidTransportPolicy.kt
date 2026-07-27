@@ -39,11 +39,15 @@ internal object AndroidTransportPolicy {
                 else -> 270_000L
             }
             protocol.equals("wireguard", ignoreCase = true) -> when (mode) {
-                "turbo" -> 90_000L
-                "stealth" -> 270_000L
-                "thorough" -> 330_000L
-                "ironclad" -> 390_000L
-                else -> 180_000L
+                // A candidate may pass the disposable UDP probe but fail the
+                // fresh runtime HTTP warm-up. Allow the core to blacklist it,
+                // scan again, and warm up the replacement before Android
+                // cancels the still-healthy recovery loop.
+                "turbo" -> 210_000L
+                "stealth" -> 390_000L
+                "thorough" -> 450_000L
+                "ironclad" -> 510_000L
+                else -> 300_000L
             }
             isMasque(protocol) -> when (mode) {
                 "turbo" -> 75_000L

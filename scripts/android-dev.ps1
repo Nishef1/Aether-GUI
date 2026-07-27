@@ -56,6 +56,20 @@ function Remove-AdbReverseQuietly {
 }
 
 $adb = Resolve-Adb
+$platformToolsDirectory = Split-Path -Parent $adb
+$androidSdkDirectory = Split-Path -Parent $platformToolsDirectory
+if (
+    (Test-Path (Join-Path $androidSdkDirectory "platform-tools\adb.exe")) -and
+    -not $env:ANDROID_HOME
+) {
+    # Tauri consults ANDROID_HOME even when adb was found through the SDK's
+    # platform-tools directory. Export it for this dev session to avoid a
+    # needless SDK discovery warning and keep the toolchain consistent.
+    $env:ANDROID_HOME = $androidSdkDirectory
+}
+if (-not $env:ANDROID_SDK_ROOT -and $env:ANDROID_HOME) {
+    $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
+}
 $connectedDevices = @(
     & $adb devices |
         Select-Object -Skip 1 |

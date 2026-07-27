@@ -27,4 +27,4 @@ updated = path.read_text(encoding="utf-8")
 if "useLegacyPackaging = true" not in updated:
     raise SystemExit("native-library extraction packaging was not enabled")
 
-print(updated[:3000])
+print(f"Verified Android native-library packaging: {path}")
