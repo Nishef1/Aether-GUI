@@ -63,6 +63,7 @@ class AndroidTransportPolicyTest {
 
         val gool = mutableListOf("aether", "--gool")
         AndroidTransportPolicy.appendCoreArgs(gool, "gool", useMasqueHttp2 = false)
+        assertTrue(gool.windowed(2).contains(listOf("--wg-validate-secs", "25")))
         assertTrue(gool.windowed(2).contains(listOf("--wg-startup-secs", "45")))
         assertTrue(gool.windowed(2).contains(listOf("--wg-reconnect-secs", "2")))
         assertEquals(1280, AndroidTransportPolicy.TUN_MTU)
