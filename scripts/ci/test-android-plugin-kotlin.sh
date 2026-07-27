@@ -24,6 +24,7 @@ plugin_source="$workspace/src-tauri/plugins/aether-vpn/android/src/main/java/Fin
 }
 
 python3 "$script_dir/../tests/test_android_mobile_config.py"
+python3 "$script_dir/../tests/test_android_rust_plugin_dependency.py"
 
 # In the real repository, prove the deterministic runtime patcher is idempotent
 # and verify transport/crash-safe teardown contracts. Do not gate the build on a
