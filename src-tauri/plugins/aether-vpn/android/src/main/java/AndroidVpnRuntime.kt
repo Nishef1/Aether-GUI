@@ -4,6 +4,7 @@ import android.content.Context
 import app.tauri.plugin.JSObject
 import java.io.File
 import java.util.ArrayDeque
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -61,6 +62,7 @@ internal object AndroidVpnRuntime {
     private val status = AtomicReference(idleSnapshot())
     private val activeTunBridge = AtomicReference<HevTun2Socks?>(null)
     private val telemetry = AtomicReference(FinalRuntimeTelemetry())
+    private val loggingEnabled = AtomicBoolean(false)
     private val logSequence = AtomicLong(0L)
     private val logLines = ArrayDeque<FinalNativeLogEntry>()
 
@@ -88,6 +90,18 @@ internal object AndroidVpnRuntime {
     fun diagnosticsPath(context: Context): String =
         File(context.filesDir, "diagnostics/aether-mobile.log").absolutePath
 
+    fun setLoggingEnabled(context: Context, enabled: Boolean) {
+        loggingEnabled.set(enabled)
+        if (!enabled) {
+            synchronized(logLines) {
+                logLines.clear()
+                runCatching { File(diagnosticsPath(context)).delete() }
+            }
+        }
+    }
+
+    fun isLoggingEnabled(): Boolean = loggingEnabled.get()
+
     // Android mobile efficiency policy: retain the complete bounded log in
     // memory for the UI, but avoid flash writes for every scanner INFO line.
     private fun shouldPersistDiagnostic(line: String): Boolean {
@@ -105,6 +119,8 @@ internal object AndroidVpnRuntime {
     }
 
     fun appendLog(context: Context, line: String) {
+        if (!loggingEnabled.get()) return
+
         val timestamp = System.currentTimeMillis()
         val entry = FinalNativeLogEntry(logSequence.incrementAndGet(), timestamp, line)
         synchronized(logLines) {
@@ -122,11 +138,11 @@ internal object AndroidVpnRuntime {
     }
 
     fun logsAfter(afterId: Long): List<FinalNativeLogEntry> = synchronized(logLines) {
-        logLines.filter { it.id > afterId }
+        if (!loggingEnabled.get()) emptyList() else logLines.filter { it.id > afterId }
     }
 
     fun recentLogTail(limit: Int): String = synchronized(logLines) {
-        if (limit <= 0) {
+        if (!loggingEnabled.get() || limit <= 0) {
             ""
         } else {
             logLines.toList().takeLast(limit).joinToString(" | ") { entry -> entry.line }
