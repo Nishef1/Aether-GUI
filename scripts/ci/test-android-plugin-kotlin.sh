@@ -23,16 +23,15 @@ plugin_source="$workspace/src-tauri/plugins/aether-vpn/android/src/main/java/Fin
   exit 3
 }
 
-# In the real repository, prove the patcher itself is idempotent, apply the
-# deterministic runtime wiring, then verify transport and crash-safe teardown
-# contracts before invoking Cargo or Gradle. The behavioral test for this script
-# uses a reduced temporary workspace without plugin sources and skips this block.
+# In the real repository, prove the deterministic runtime patcher is idempotent
+# and verify transport/crash-safe teardown contracts. Do not gate the build on a
+# second text-based imitation of Kotlin compilation: compileDebugKotlin below is
+# the authoritative check for AndroidX, Tauri and Kotlin API/type compatibility.
 if [[ -f "$plugin_source" ]]; then
   python3 "$script_dir/../tests/test_android_transport_patcher.py"
   python3 "$script_dir/apply-android-wireguard-policy.py"
   python3 "$script_dir/../tests/test_android_transport_contract.py"
   python3 "$script_dir/../tests/test_android_disconnect_contract.py"
-  python3 "$script_dir/../tests/test_android_kotlin_compile_contract.py" "$workspace"
 fi
 
 app_package=$(
@@ -118,10 +117,8 @@ grep -Fq 'implementation(project(":tauri-plugin-aether-vpn"))' "$gradle_dependen
 
 chmod +x "$gradlew"
 
-# Compile the custom plugin and run its pure-JVM lifecycle/transport tests before
-# complete APK assembly. This catches AndroidX/Tauri API drift, cancellation
-# regressions, native teardown races, and transport policy drift while feedback
-# is still fast.
+# Compile the actual plugin and run its pure-JVM lifecycle/transport tests before
+# complete APK assembly. This is the single source of truth for Kotlin validity.
 "$gradlew" \
   -p "$android_dir" \
   :tauri-plugin-aether-vpn:compileDebugKotlin \
