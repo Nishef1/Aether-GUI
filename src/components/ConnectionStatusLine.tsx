@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react"
 import { Gauge, Globe2 } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
+import { isAndroid } from "@/lib/platform"
 import { useConnectionStore } from "@/state/connectionStore"
 import { useTelemetryStore } from "@/state/telemetryStore"
+import type { Protocol } from "@/types/connection"
 
 const TEXT_TRANSITION = {
   initial: { y: 4, opacity: 0 },
@@ -66,6 +68,24 @@ function countryName(code: string): string {
   }
 }
 
+function friendlyError(message: string, protocol: Protocol): string {
+  if (!isAndroid || (protocol !== "wireguard" && protocol !== "gool")) {
+    return message
+  }
+
+  const normalized = message.toLowerCase()
+  const blockedWarp =
+    normalized.includes("socks end-to-end egress failed") ||
+    normalized.includes("no clean endpoint") ||
+    normalized.includes("no usable wireguard endpoint") ||
+    normalized.includes("dataplane timeout") ||
+    normalized.includes("wireguard") && normalized.includes("timeout")
+
+  return blockedWarp
+    ? "This network is blocking usable WARP traffic. Select Auto · MASQUE H2."
+    : message
+}
+
 function ScanProgressBar({ percent }: { percent: number | null }) {
   return (
     <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
@@ -87,6 +107,7 @@ function ScanProgressBar({ percent }: { percent: number | null }) {
 
 export function ConnectionStatusLine() {
   const status = useConnectionStore((state) => state.status)
+  const protocol = useConnectionStore((state) => state.profile.protocol)
   const scanBudgetSecs = useConnectionStore((state) => state.scanBudgetSecs)
   const preparingCores = useConnectionStore((state) => state.preparingCores)
   const telemetry = useTelemetryStore((state) => state.snapshot)
@@ -170,7 +191,7 @@ export function ConnectionStatusLine() {
         break
       case "Error":
         primary = "Connection failed"
-        secondary = status.message
+        secondary = friendlyError(status.message, protocol)
         break
     }
 
@@ -196,8 +217,12 @@ export function ConnectionStatusLine() {
       </AnimatePresence>
       <AnimatePresence mode="wait">
         <motion.span
-          key={status.state}
-          className="block min-h-5 max-w-xs truncate font-mono text-xs text-muted-foreground"
+          key={`${status.state}-${secondary}`}
+          className={`block min-h-5 max-w-xs font-mono text-xs text-muted-foreground ${
+            status.state === "Error"
+              ? "line-clamp-3 whitespace-normal leading-relaxed"
+              : "truncate"
+          }`}
           {...TEXT_TRANSITION}
         >
           {secondary}
