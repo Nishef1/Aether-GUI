@@ -34,10 +34,14 @@ class AndroidTransportPolicyTest {
     }
 
     @Test
-    fun androidWireGuardStartsWithCleanDataplane() {
-        assertEquals("off", AndroidTransportPolicy.effectiveWireGuardNoize("balanced"))
-        assertEquals("off", AndroidTransportPolicy.effectiveWireGuardNoize("aggressive"))
+    fun androidWireGuardHonorsRequestedNoize() {
+        assertEquals("balanced", AndroidTransportPolicy.effectiveWireGuardNoize("balanced"))
+        assertEquals("aggressive", AndroidTransportPolicy.effectiveWireGuardNoize("aggressive"))
+        assertEquals("aggressive", AndroidTransportPolicy.effectiveWireGuardNoize("heavy"))
+        assertEquals("light", AndroidTransportPolicy.effectiveWireGuardNoize(" light "))
         assertEquals("off", AndroidTransportPolicy.effectiveWireGuardNoize("off"))
+        assertEquals("off", AndroidTransportPolicy.effectiveWireGuardNoize("none"))
+        assertEquals("balanced", AndroidTransportPolicy.effectiveWireGuardNoize("unknown"))
     }
 
     @Test
