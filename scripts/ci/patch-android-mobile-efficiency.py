@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MARKER = "Android mobile efficiency policy"
+LOGGING_MARKER = "Android opt-in diagnostics"
 
 
 def replace_once(source: str, old: str, new: str, label: str) -> str:
@@ -117,6 +118,45 @@ if MARKER not in service:
     ):
         service = replace_once(service, old, new, label)
 
+if LOGGING_MARKER not in service:
+    service = replace_once(
+        service,
+        '''@InvokeArg
+class FinalNativeLogArgs {
+    var afterId: Long = 0L
+}
+''',
+        '''@InvokeArg
+class FinalNativeLogArgs {
+    var afterId: Long = 0L
+}
+
+@InvokeArg
+class FinalLoggingArgs {
+    var enabled: Boolean = false
+}
+''',
+        "logging invoke args",
+    )
+    service = replace_once(
+        service,
+        '''    @Command
+    fun diagnostics(invoke: Invoke) {
+''',
+        '''    @Command
+    fun setLogging(invoke: Invoke) {
+        // Android opt-in diagnostics: disabled by default and applied immediately.
+        val args = invoke.parseArgs(FinalLoggingArgs::class.java)
+        AndroidVpnRuntime.setLoggingEnabled(activity, args.enabled)
+        invoke.resolve(JSObject().apply { put("enabled", AndroidVpnRuntime.isLoggingEnabled()) })
+    }
+
+    @Command
+    fun diagnostics(invoke: Invoke) {
+''',
+        "logging command",
+    )
+
 runtime = runtime_path.read_text(encoding="utf-8")
 if MARKER not in runtime:
     runtime = replace_once(
@@ -175,9 +215,13 @@ if MARKER not in runtime:
         "diagnostic write filtering",
     )
 
-for path, source in ((service_path, service), (runtime_path, runtime)):
-    if MARKER not in source:
-        raise SystemExit(f"{path.name}: efficiency marker is missing")
-    path.write_text(source, encoding="utf-8")
+if MARKER not in service:
+    raise SystemExit("FinalAetherVpnPlugin.kt: efficiency marker is missing")
+if LOGGING_MARKER not in service:
+    raise SystemExit("FinalAetherVpnPlugin.kt: opt-in logging marker is missing")
+if MARKER not in runtime:
+    raise SystemExit("AndroidVpnRuntime.kt: efficiency marker is missing")
 
-print(f"Applied Android mobile efficiency policy in {java_dir}")
+service_path.write_text(service, encoding="utf-8")
+runtime_path.write_text(runtime, encoding="utf-8")
+print(f"Applied Android mobile efficiency and opt-in diagnostics policy in {java_dir}")
