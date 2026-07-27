@@ -13,62 +13,72 @@ EGRESS_PROBE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/Androi
 POLICY_TEST = ROOT / "src-tauri/plugins/aether-vpn/android/src/test/java/AndroidTransportPolicyTest.kt"
 CORE_MAIN = ROOT / "vendor/aether/aether/src/main.rs"
 CORE_PROBER = ROOT / "vendor/aether/aether/src/prober.rs"
-CORE_WG_PROBER = ROOT / "vendor/aether/aether/src/wg_prober.rs"
+MOBILE_NETWORK_PATCH = ROOT / "scripts/ci/patch-aether-mobile-network-policy.py"
+EFFICIENCY_PATCH = ROOT / "scripts/ci/patch-android-mobile-efficiency.py"
+ICON_PREPARE = ROOT / "scripts/prepare-android-icons.ps1"
+ICON_MANIFEST = ROOT / "src-tauri/icons/android-icon-manifest.json"
+NOTIFICATION_ICON = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/res/drawable/ic_stat_aether.xml"
 
 
 class AndroidTransportContractTest(unittest.TestCase):
-    def test_protocol_specific_startup_deadlines_are_wired(self) -> None:
+    def test_protocol_specific_startup_deadlines_are_bounded(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
         self.assertIn("AndroidTransportPolicy.startupTimeoutMs(protocol, scanMode)", service)
         self.assertIn("waitForSocks(token, bindAddress, process, startupTimeoutMs)", service)
         self.assertNotIn("CORE_START_TIMEOUT_MS", service)
         for timeout in (
-            "75_000L", "120_000L", "180_000L", "210_000L", "240_000L",
-            "300_000L", "360_000L", "390_000L", "450_000L", "510_000L",
-            "150_000L", "270_000L",
+            "75_000L",
+            "100_000L",
+            "110_000L",
+            "120_000L",
+            "180_000L",
+            "210_000L",
+            "240_000L",
         ):
             self.assertIn(timeout, policy)
+        self.assertNotIn("510_000L", policy)
 
-    def test_deadlines_exceed_the_core_scanner_budgets(self) -> None:
+    def test_mobile_scanners_are_fast_and_http_verified(self) -> None:
         masque = CORE_PROBER.read_text(encoding="utf-8")
-        wireguard = CORE_WG_PROBER.read_text(encoding="utf-8")
+        patch = MOBILE_NETWORK_PATCH.read_text(encoding="utf-8")
         tests = POLICY_TEST.read_text(encoding="utf-8")
         self.assertIn("overall_deadline: Duration::from_secs(140)", masque)
-        self.assertIn("overall_deadline: Duration::from_secs(150)", wireguard)
-        self.assertIn("masqueTimeoutsExceedCoreScannerBudgets", tests)
-        self.assertIn("wireGuardAlwaysAllowsForIroncladHttpVerification", tests)
-        self.assertIn("goolAlwaysAllowsForIroncladOuterSelection", tests)
+        self.assertIn("Android auto H2 latency window", patch)
+        self.assertIn("Duration::from_millis(650)", patch)
+        self.assertIn("Android bounded official WARP scan", patch)
+        self.assertIn("overall_deadline: Duration::from_secs(60)", patch)
+        self.assertIn("pub const WG_PORTS: &[u16] = &[2408, 500, 1701, 4500]", patch)
+        self.assertIn("wireGuardUsesBoundedIroncladHttpVerification", tests)
+        self.assertIn("goolUsesBoundedIroncladOuterSelection", tests)
 
-    def test_masque_transport_honors_the_explicit_choice(self) -> None:
+    def test_auto_prefers_h2_and_low_power_runtime_args(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
+        patch = EFFICIENCY_PATCH.read_text(encoding="utf-8")
         tests = POLICY_TEST.read_text(encoding="utf-8")
-        self.assertNotIn("AndroidUdpCapabilityProbe.hasUsableUdp()", service)
-        self.assertIn('if (useMasqueHttp2) "HTTP/2 (TCP)" else "HTTP/3 (QUIC)"', service)
-        self.assertIn('remove("AETHER_MASQUE_HTTP2")', service)
-        self.assertIn('put("AETHER_MASQUE_HTTP2", "1")', service)
-        self.assertNotIn('put("AETHER_MASQUE_HTTP2", if (masqueHttp2) "1" else "0")', service)
         self.assertIn("var masqueHttp2: Boolean = true", service)
         self.assertIn("getBooleanExtra(EXTRA_MASQUE_HTTP2, true)", service)
-        self.assertIn("fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = forceHttp2", policy)
-        self.assertIn("masqueTransportHonorsTheExplicitUserChoice", tests)
+        self.assertIn("fun isFastAuto", policy)
+        self.assertIn('command += "--turbo"', policy)
+        self.assertIn('command += "--quick-reconnect"', policy)
+        self.assertIn('"--health-interval", "30"', policy)
+        self.assertIn("Auto route: MASQUE HTTP/2", patch)
+        self.assertIn("autoUsesFastH2FriendlyCorePolicy", tests)
 
-    def test_wireguard_uses_http_verified_scan_and_honors_noize(self) -> None:
+    def test_wireguard_is_bounded_and_honors_noize(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
         tests = POLICY_TEST.read_text(encoding="utf-8")
         self.assertIn("AndroidTransportPolicy.effectiveWireGuardNoize(wgNoize)", service)
         self.assertIn("wgNoize = effectiveWgNoize", service)
         self.assertIn('private const val VERIFIED_WG_SCAN_MODE = "ironclad"', policy)
-        self.assertIn("fun effectiveWireGuardScanMode", policy)
         self.assertIn("command.removeAll { it in scanFlags }", policy)
         self.assertIn('command += "--$VERIFIED_WG_SCAN_MODE"', policy)
-        self.assertIn("when (requested.trim().lowercase())", policy)
+        self.assertIn('command += "--no-profile-retry"', policy)
+        self.assertIn('"--keepalive", "25"', policy)
         self.assertIn('"balanced" -> "balanced"', policy)
         self.assertIn('"aggressive", "heavy" -> "aggressive"', policy)
-        self.assertNotIn('fun effectiveWireGuardNoize(requested: String): String = "off"', policy)
-        self.assertIn("wireGuardAlwaysAllowsForIroncladHttpVerification", tests)
         self.assertIn("androidWireGuardHonorsRequestedNoize", tests)
 
     def test_connected_is_gated_on_real_socks_dns_tcp_and_http(self) -> None:
@@ -90,20 +100,19 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("egress failed", probe)
         self.assertIn("getDefaultHostnameVerifier", probe)
 
-    def test_runtime_health_flags_cover_all_three_protocols(self) -> None:
-        service = SERVICE.read_text(encoding="utf-8")
-        policy = POLICY.read_text(encoding="utf-8")
-        self.assertIn(
-            "AndroidTransportPolicy.appendCoreArgs(command, protocol, useMasqueHttp2)",
-            service,
-        )
-        for flag in (
-            "--validate-secs", "--health-interval", "--health-timeout",
-            "--health-failures", "--reconnect-secs", "--keepalive",
-            "--wg-validate-secs", "--wg-health-interval", "--wg-stale-secs",
-            "--wg-startup-secs", "--wg-reconnect-secs",
-        ):
-            self.assertIn(f'"{flag}"', policy)
+    def test_mobile_efficiency_and_brand_assets_are_wired(self) -> None:
+        prepare = ICON_PREPARE.read_text(encoding="utf-8")
+        manifest = ICON_MANIFEST.read_text(encoding="utf-8")
+        notification = NOTIFICATION_ICON.read_text(encoding="utf-8")
+        efficiency = EFFICIENCY_PATCH.read_text(encoding="utf-8")
+        self.assertIn("pnpm tauri icon", prepare)
+        self.assertIn('"default": "icon.png"', manifest)
+        self.assertIn('"android_monochrome"', manifest)
+        self.assertIn("android:pathData", notification)
+        self.assertIn("EGRESS_PROBE_INTERVAL_MS = 300_000L", efficiency)
+        self.assertIn("SOCKS_POLL_MAX_INTERVAL_MS", efficiency)
+        self.assertIn("setSmallIcon(R.drawable.ic_stat_aether)", efficiency)
+        self.assertIn("log-level: warn", efficiency)
 
     def test_android_outer_tun_mtu_matches_the_core_and_gool_inner_is_lower(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
