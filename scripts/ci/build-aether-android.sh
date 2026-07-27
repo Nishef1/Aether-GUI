@@ -13,6 +13,11 @@ core="$crate_dir/target/aarch64-linux-android/release/aether"
   exit 2
 }
 
+# Prove the patch is deterministic against the pinned submodule, then apply it
+# to the actual source tree before Cargo reads metadata or compiles the core.
+python3 "$workspace/scripts/tests/test_aether_wg_fresh_session.py"
+python3 "$workspace/scripts/ci/patch-aether-wg-fresh-session.py" "$workspace"
+
 # setup-android may expose its own default NDK through ANDROID_NDK_ROOT. Keep
 # cargo-ndk pinned to the exact NDK selected by the workflow.
 if [[ -n "${NDK_HOME:-}" ]]; then
