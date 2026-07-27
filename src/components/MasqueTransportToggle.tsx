@@ -16,58 +16,55 @@ const DESCRIPTIONS: Record<Transport, string> = {
     "TLS over TCP — may connect where UDP or QUIC is blocked, throttled, or unstable, with potentially higher latency.",
 };
 
-/** Aether ≥1.2.0's MASQUE-only transport choice. Locked outside Idle/Error
- * like every other profile control, and additionally disabled when the
- * selected protocol can't use it (WireGuard / gool). */
 export function MasqueTransportToggle() {
-  const status = useConnectionStore((s) => s.status);
-  const protocol = useConnectionStore((s) => s.profile.protocol);
-  const masqueHttp2 = useConnectionStore((s) => s.profile.masque_http2);
-  const setMasqueHttp2 = useConnectionStore((s) => s.setMasqueHttp2);
+  const status = useConnectionStore((state) => state.status);
+  const protocol = useConnectionStore((state) => state.profile.protocol);
+  const masqueHttp2 = useConnectionStore((state) => state.profile.masque_http2);
+  const setMasqueHttp2 = useConnectionStore((state) => state.setMasqueHttp2);
 
   const locked = status.state !== "Idle" && status.state !== "Error";
   const notMasque = protocol === "wireguard" || protocol === "gool";
-  const showAndroidHint = isAndroid && !notMasque;
+  const androidAuto = isAndroid && protocol === "auto";
+  const effectiveHttp2 = androidAuto || masqueHttp2;
 
   return (
     <div className="space-y-2">
       <ToggleGroup
         type="single"
-        value={masqueHttp2 ? "http2" : "http3"}
-        onValueChange={(v) => {
-          if (v) setMasqueHttp2(v === "http2");
+        value={effectiveHttp2 ? "http2" : "http3"}
+        onValueChange={(value) => {
+          if (value) setMasqueHttp2(value === "http2");
         }}
-        disabled={locked || notMasque}
+        disabled={locked || notMasque || androidAuto}
         className="w-full gap-0 rounded-full bg-black/20 p-1 ring-1 ring-white/10"
       >
-        {(Object.keys(LABELS) as Transport[]).map((t) => (
-          <Tooltip key={t}>
-            {/* asChild targets this plain span, not ToggleGroupItem directly —
-             * Radix's Slot cloning onto ToggleGroupItem's own internals was
-             * silently breaking its data-state/pressed rendering. */}
+        {(Object.keys(LABELS) as Transport[]).map((transport) => (
+          <Tooltip key={transport}>
             <TooltipTrigger asChild>
               <span className="flex-1">
                 <ToggleGroupItem
-                  value={t}
+                  value={transport}
                   size="sm"
-                  aria-label={LABELS[t]}
+                  aria-label={LABELS[transport]}
                   className="w-full rounded-full text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
                 >
-                  {LABELS[t]}
+                  {LABELS[transport]}
                 </ToggleGroupItem>
               </span>
             </TooltipTrigger>
-            <TooltipContent>
-              {DESCRIPTIONS[t]}
-            </TooltipContent>
+            <TooltipContent>{DESCRIPTIONS[transport]}</TooltipContent>
           </Tooltip>
         ))}
       </ToggleGroup>
-      {showAndroidHint && (
+      {androidAuto ? (
         <p className="px-1 text-[10px] leading-relaxed text-muted-foreground">
-          If HTTP/3 cannot pass egress verification, choose HTTP/2 over TCP.
+          Auto keeps HTTP/2 selected for fast, reliable TCP connectivity. Choose MASQUE explicitly to test another transport.
         </p>
-      )}
+      ) : isAndroid && !notMasque ? (
+        <p className="px-1 text-[10px] leading-relaxed text-muted-foreground">
+          HTTP/2 is recommended where UDP or QUIC is filtered.
+        </p>
+      ) : null}
     </div>
   );
 }
