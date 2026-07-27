@@ -17,6 +17,7 @@ import type {
 const MAX_LOG_LINES = 400
 const MAX_PENDING_LOG_LINES = 800
 const LOG_FLUSH_INTERVAL_MS = 180
+const LOGGING_PREFERENCE_KEY = "aether.live-logs.enabled"
 const ANDROID_RUNTIME_POLL_CONNECTING_MS = 750
 const ANDROID_RUNTIME_POLL_ACTIVE_MS = 1_500
 const ANDROID_RUNTIME_POLL_IDLE_MS = 5_000
@@ -36,6 +37,27 @@ interface AndroidNativeLogEntry {
 interface AndroidNativeLogBatch {
   entries: AndroidNativeLogEntry[]
   last_id: number
+}
+
+function readLoggingPreference(): boolean {
+  try {
+    return localStorage.getItem(LOGGING_PREFERENCE_KEY) === "true"
+  } catch {
+    return false
+  }
+}
+
+function persistLoggingPreference(enabled: boolean): void {
+  try {
+    localStorage.setItem(LOGGING_PREFERENCE_KEY, String(enabled))
+  } catch {
+    // The preference is optional; private WebViews may reject local storage.
+  }
+}
+
+async function syncAndroidLogging(enabled: boolean): Promise<void> {
+  if (!isAndroid) return
+  await invoke<boolean>("set_android_logging_enabled", { enabled })
 }
 
 function saveDefaultProfile(profile: ConnectionProfile): Promise<void> {
@@ -76,6 +98,7 @@ interface ConnectionState {
   trafficSessionStarted: boolean
   preparingCores: boolean
   logs: LogLine[]
+  loggingEnabled: boolean
   sidecarError: string | null
   scanBudgetSecs: number | null
   connect: () => Promise<void>
@@ -93,6 +116,7 @@ interface ConnectionState {
   setDnsServer: (dns_server: string) => void
   setBindAddress: (bind_address: string) => void
   setWebrtcLeakProtection: (enabled: boolean) => void
+  setLoggingEnabled: (enabled: boolean) => Promise<void>
   retryAfterSidecarError: () => void
 }
 
@@ -144,6 +168,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     },
     profileSaveError: null,
     logs: [],
+    loggingEnabled: readLoggingPreference(),
     sidecarError: null,
     scanBudgetSecs: null,
     traffic: { received_bytes: 0, sent_bytes: 0 },
@@ -165,6 +190,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         await profileSaveQueue
         if (!isAndroid) {
           await useCoreStore.getState().loadAll()
+        } else {
+          await syncAndroidLogging(get().loggingEnabled)
         }
         if (operation !== connectionOperationRevision) return
 
@@ -265,11 +292,25 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     setBindAddress: (bind_address) => updateProfileQuietly({ bind_address }),
     setWebrtcLeakProtection: (webrtc_leak_protection) =>
       updateProfileQuietly({ webrtc_leak_protection }),
+    setLoggingEnabled: async (enabled) => {
+      const previous = get().loggingEnabled
+      set({ loggingEnabled: enabled, ...(enabled ? {} : { logs: [] }) })
+      persistLoggingPreference(enabled)
+      try {
+        await syncAndroidLogging(enabled)
+      } catch (error) {
+        set({ loggingEnabled: previous })
+        persistLoggingPreference(previous)
+        throw error
+      }
+    },
     retryAfterSidecarError: () => set({ sidecarError: null }),
   }
 })
 
 function appendRuntimeLog(line: string, timestamp = Date.now()): void {
+  if (!useConnectionStore.getState().loggingEnabled) return
+
   useConnectionStore.setState((state) => {
     if (state.logs.at(-1)?.line === line) return state
     return {
@@ -299,6 +340,10 @@ async function initializeConnectionRuntime(): Promise<void> {
 
   const flushLogs = () => {
     flushTimer = null
+    if (!useConnectionStore.getState().loggingEnabled) {
+      pendingLogs = []
+      return
+    }
     if (pendingLogs.length === 0) return
 
     const batch = pendingLogs.slice(-MAX_PENDING_LOG_LINES)
@@ -315,7 +360,7 @@ async function initializeConnectionRuntime(): Promise<void> {
   }
 
   const queueLogs = (logs: LogLine[]) => {
-    if (logs.length === 0) return
+    if (!useConnectionStore.getState().loggingEnabled || logs.length === 0) return
     pendingLogs.push(...logs)
     if (pendingLogs.length > MAX_PENDING_LOG_LINES * 2) {
       pendingLogs = pendingLogs.slice(-MAX_PENDING_LOG_LINES)
@@ -362,14 +407,17 @@ async function initializeConnectionRuntime(): Promise<void> {
     if (!isAndroid || androidPollInFlight || androidPollingStopped) return
     androidPollInFlight = true
     try {
-      const [status, nativeLogs] = await Promise.all([
-        invoke<ConnectionStatus>("get_status"),
-        invoke<AndroidNativeLogBatch>("get_android_logs", {
-          afterId: lastAndroidLogId,
-        }),
-      ])
+      const loggingEnabled = useConnectionStore.getState().loggingEnabled
+      const statusPromise = invoke<ConnectionStatus>("get_status")
+      const logsPromise = loggingEnabled
+        ? invoke<AndroidNativeLogBatch>("get_android_logs", {
+            afterId: lastAndroidLogId,
+          })
+        : Promise.resolve<AndroidNativeLogBatch | null>(null)
+      const [status, nativeLogs] = await Promise.all([statusPromise, logsPromise])
+
       applyStatus(status, "android-poll")
-      if (nativeLogs.entries.length > 0) {
+      if (nativeLogs?.entries.length) {
         lastAndroidLogId = Math.max(lastAndroidLogId, nativeLogs.last_id)
         queueLogs(
           nativeLogs.entries.map((entry) => ({
@@ -444,6 +492,11 @@ async function initializeConnectionRuntime(): Promise<void> {
   }
 
   if (isAndroid) {
+    await syncAndroidLogging(useConnectionStore.getState().loggingEnabled).catch(
+      (error) => {
+        console.error("Failed to apply Android logging preference:", error)
+      }
+    )
     await pollAndroidRuntime()
     scheduleAndroidPoll()
   }
