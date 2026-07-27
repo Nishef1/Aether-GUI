@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
 SERVICE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
-SAFE_MASQUE_MARKER = "MASQUE transport selected: HTTP/2 (TCP); Android safe auto"
+MASQUE_TRANSPORT_MARKER = 'if (useMasqueHttp2) "HTTP/2 (TCP)" else "HTTP/3 (QUIC)"'
 
 
 def replace_required(text: str, old: str, new: str, label: str) -> str:
@@ -23,9 +23,7 @@ def replace_if_present(text: str, old: str, new: str) -> str:
 
 service = SERVICE.read_text(encoding="utf-8")
 
-# A missing or mismatched JS/Tauri field must fail safe to H2 rather than silently
-# turning the user's explicit H2 choice into H3. The policy below still forces H2
-# for Android Auto, but these defaults preserve intent at both plugin boundaries.
+# Preserve an explicit HTTP/2 request when an older caller omits this field.
 service = replace_if_present(
     service,
     '    var masqueHttp2: Boolean = false\n',
@@ -41,8 +39,8 @@ safe_selection = '''            val useMasqueHttp2 = AndroidTransportPolicy.isMa
                 AndroidTransportPolicy.useMasqueHttp2(masqueHttp2, false)
             if (AndroidTransportPolicy.isMasque(protocol)) {
                 log(
-                    "MASQUE transport selected: HTTP/2 (TCP); Android safe auto; " +
-                        "requestedH2=$masqueHttp2"
+                    "MASQUE transport selected: " +
+                        if (useMasqueHttp2) "HTTP/2 (TCP)" else "HTTP/3 (QUIC)"
                 )
             }
             val effectiveWgNoize = if (AndroidTransportPolicy.isWireGuardFamily(protocol)) {
@@ -100,7 +98,7 @@ legacy_selection = '''            val udpAvailable = if (AndroidTransportPolicy.
 
 '''
 
-if "requestedH2=$masqueHttp2" not in service:
+if MASQUE_TRANSPORT_MARKER not in service:
     if legacy_safe_selection in service:
         service = service.replace(legacy_safe_selection, safe_selection, 1)
     elif legacy_selection in service:
@@ -110,7 +108,7 @@ if "requestedH2=$masqueHttp2" not in service:
             service,
             "            val command = buildCoreCommand(\n",
             safe_selection + "            val command = buildCoreCommand(\n",
-            "safe MASQUE H2 and WireGuard stable-pass selection",
+            "MASQUE transport and WireGuard stable-pass selection",
         )
 
 # Pass the resolved settings into CLI argument construction.

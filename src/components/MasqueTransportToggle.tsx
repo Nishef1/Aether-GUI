@@ -1,5 +1,6 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
 
 type Transport = "http3" | "http2";
@@ -26,37 +27,47 @@ export function MasqueTransportToggle() {
 
   const locked = status.state !== "Idle" && status.state !== "Error";
   const notMasque = protocol === "wireguard" || protocol === "gool";
+  const showAndroidHint = isAndroid && !notMasque;
 
   return (
-    <ToggleGroup
-      type="single"
-      value={masqueHttp2 ? "http2" : "http3"}
-      onValueChange={(v) => {
-        if (v) setMasqueHttp2(v === "http2");
-      }}
-      disabled={locked || notMasque}
-      className="w-full gap-0 rounded-full bg-black/20 p-1 ring-1 ring-white/10"
-    >
-      {(Object.keys(LABELS) as Transport[]).map((t) => (
-        <Tooltip key={t}>
-          {/* asChild targets this plain span, not ToggleGroupItem directly —
-           * Radix's Slot cloning onto ToggleGroupItem's own internals was
-           * silently breaking its data-state/pressed rendering. */}
-          <TooltipTrigger asChild>
-            <span className="flex-1">
-              <ToggleGroupItem
-                value={t}
-                size="sm"
-                aria-label={LABELS[t]}
-                className="w-full rounded-full text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
-              >
-                {LABELS[t]}
-              </ToggleGroupItem>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>{DESCRIPTIONS[t]}</TooltipContent>
-        </Tooltip>
-      ))}
-    </ToggleGroup>
+    <div className="space-y-2">
+      <ToggleGroup
+        type="single"
+        value={masqueHttp2 ? "http2" : "http3"}
+        onValueChange={(v) => {
+          if (v) setMasqueHttp2(v === "http2");
+        }}
+        disabled={locked || notMasque}
+        className="w-full gap-0 rounded-full bg-black/20 p-1 ring-1 ring-white/10"
+      >
+        {(Object.keys(LABELS) as Transport[]).map((t) => (
+          <Tooltip key={t}>
+            {/* asChild targets this plain span, not ToggleGroupItem directly —
+             * Radix's Slot cloning onto ToggleGroupItem's own internals was
+             * silently breaking its data-state/pressed rendering. */}
+            <TooltipTrigger asChild>
+              <span className="flex-1">
+                <ToggleGroupItem
+                  value={t}
+                  size="sm"
+                  aria-label={LABELS[t]}
+                  className="w-full rounded-full text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
+                >
+                  {LABELS[t]}
+                </ToggleGroupItem>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {DESCRIPTIONS[t]}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </ToggleGroup>
+      {showAndroidHint && (
+        <p className="px-1 text-[10px] leading-relaxed text-muted-foreground">
+          If HTTP/3 cannot pass egress verification, choose HTTP/2 over TCP.
+        </p>
+      )}
+    </div>
   );
 }

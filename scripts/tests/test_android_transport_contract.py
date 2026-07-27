@@ -40,20 +40,19 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("wireGuardTimeoutsExceedCoreScannerBudgets", tests)
         self.assertIn("goolAllowsForOuterAndInnerWireGuardValidation", tests)
 
-    def test_masque_h2_choice_cannot_silently_turn_into_h3(self) -> None:
+    def test_masque_transport_honors_the_explicit_choice(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
         tests = POLICY_TEST.read_text(encoding="utf-8")
         self.assertNotIn("AndroidUdpCapabilityProbe.hasUsableUdp()", service)
-        self.assertIn("MASQUE transport selected: HTTP/2 (TCP); Android safe auto", service)
-        self.assertIn("requestedH2=$masqueHttp2", service)
+        self.assertIn('if (useMasqueHttp2) "HTTP/2 (TCP)" else "HTTP/3 (QUIC)"', service)
         self.assertIn('remove("AETHER_MASQUE_HTTP2")', service)
         self.assertIn('put("AETHER_MASQUE_HTTP2", "1")', service)
         self.assertNotIn('put("AETHER_MASQUE_HTTP2", if (masqueHttp2) "1" else "0")', service)
         self.assertIn("var masqueHttp2: Boolean = true", service)
         self.assertIn("getBooleanExtra(EXTRA_MASQUE_HTTP2, true)", service)
-        self.assertIn("fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = true", policy)
-        self.assertIn("masqueAutoUsesH2UntilARealQuicProbeExists", tests)
+        self.assertIn("fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = forceHttp2", policy)
+        self.assertIn("masqueTransportHonorsTheExplicitUserChoice", tests)
 
     def test_wireguard_and_gool_use_a_clean_first_dataplane(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")

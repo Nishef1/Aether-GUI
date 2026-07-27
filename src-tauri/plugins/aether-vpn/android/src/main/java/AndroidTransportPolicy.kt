@@ -61,14 +61,12 @@ internal object AndroidTransportPolicy {
     }
 
     /**
-     * Generic UDP reachability does not prove QUIC/MASQUE H3 reachability. The
-     * reported Android network allowed UDP DNS while dropping every H3 probe,
-     * causing an endless rescan loop. Until a real QUIC handshake capability
-     * probe exists, Android Auto uses the reliable H2/TCP transport. H3 remains
-     * a future explicit advanced option rather than an unsafe automatic choice.
+     * Honor the user's explicit MASQUE transport choice. HTTP/3 uses QUIC/UDP;
+     * HTTP/2 uses TCP and is the fallback for networks that permit UDP but drop
+     * MASQUE/QUIC data after the initial handshake.
      */
     @Suppress("UNUSED_PARAMETER")
-    fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = true
+    fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = forceHttp2
 
     fun appendCoreArgs(
         command: MutableList<String>,

@@ -330,8 +330,8 @@ class FinalAetherVpnService : VpnService() {
                 AndroidTransportPolicy.useMasqueHttp2(masqueHttp2, false)
             if (AndroidTransportPolicy.isMasque(protocol)) {
                 log(
-                    "MASQUE transport selected: HTTP/2 (TCP); Android safe auto; " +
-                        "requestedH2=$masqueHttp2"
+                    "MASQUE transport selected: " +
+                        if (useMasqueHttp2) "HTTP/2 (TCP)" else "HTTP/3 (QUIC)"
                 )
             }
             val effectiveWgNoize = if (AndroidTransportPolicy.isWireGuardFamily(protocol)) {
