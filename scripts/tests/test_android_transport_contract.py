@@ -25,8 +25,8 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertNotIn("CORE_START_TIMEOUT_MS", service)
         for timeout in (
             "75_000L", "120_000L", "180_000L", "210_000L", "240_000L",
-            "210_000L", "300_000L", "390_000L", "450_000L", "510_000L",
-            "150_000L", "360_000L", "450_000L", "510_000L",
+            "300_000L", "360_000L", "390_000L", "450_000L", "510_000L",
+            "150_000L", "270_000L",
         ):
             self.assertIn(timeout, policy)
 
@@ -37,8 +37,8 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("overall_deadline: Duration::from_secs(140)", masque)
         self.assertIn("overall_deadline: Duration::from_secs(150)", wireguard)
         self.assertIn("masqueTimeoutsExceedCoreScannerBudgets", tests)
-        self.assertIn("wireGuardTimeoutsExceedCoreScannerBudgets", tests)
-        self.assertIn("goolAllowsForOuterAndInnerWireGuardValidation", tests)
+        self.assertIn("wireGuardAlwaysAllowsForIroncladHttpVerification", tests)
+        self.assertIn("goolAlwaysAllowsForIroncladOuterSelection", tests)
 
     def test_masque_transport_honors_the_explicit_choice(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
@@ -54,16 +54,21 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = forceHttp2", policy)
         self.assertIn("masqueTransportHonorsTheExplicitUserChoice", tests)
 
-    def test_wireguard_and_gool_honor_the_requested_noize_profile(self) -> None:
+    def test_wireguard_uses_http_verified_scan_and_honors_noize(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
         tests = POLICY_TEST.read_text(encoding="utf-8")
         self.assertIn("AndroidTransportPolicy.effectiveWireGuardNoize(wgNoize)", service)
         self.assertIn("wgNoize = effectiveWgNoize", service)
+        self.assertIn('private const val VERIFIED_WG_SCAN_MODE = "ironclad"', policy)
+        self.assertIn("fun effectiveWireGuardScanMode", policy)
+        self.assertIn("command.removeAll { it in scanFlags }", policy)
+        self.assertIn('command += "--$VERIFIED_WG_SCAN_MODE"', policy)
         self.assertIn("when (requested.trim().lowercase())", policy)
         self.assertIn('"balanced" -> "balanced"', policy)
         self.assertIn('"aggressive", "heavy" -> "aggressive"', policy)
         self.assertNotIn('fun effectiveWireGuardNoize(requested: String): String = "off"', policy)
+        self.assertIn("wireGuardAlwaysAllowsForIroncladHttpVerification", tests)
         self.assertIn("androidWireGuardHonorsRequestedNoize", tests)
 
     def test_connected_is_gated_on_real_socks_dns_tcp_and_http(self) -> None:
