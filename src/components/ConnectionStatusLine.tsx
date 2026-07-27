@@ -182,7 +182,7 @@ export function ConnectionStatusLine() {
     : null
 
   return (
-    <div className="flex flex-col items-center gap-2 text-center">
+    <div className="flex min-h-[60px] flex-col items-center gap-2 text-center">
       <AnimatePresence mode="wait">
         <motion.span
           key={status.state}

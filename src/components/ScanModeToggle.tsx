@@ -38,7 +38,7 @@ export function ScanModeToggle() {
         if (v) setScanMode(v as ScanMode);
       }}
       disabled={locked}
-      className="w-full gap-0 rounded-full bg-black/20 p-1 ring-1 ring-white/10"
+      className="grid w-full grid-cols-5 gap-0 rounded-full bg-black/20 p-1 ring-1 ring-white/10"
     >
       {(Object.keys(LABELS) as ScanMode[]).map((mode) => (
         <Tooltip key={mode}>
@@ -46,12 +46,12 @@ export function ScanModeToggle() {
            * Radix's Slot cloning onto ToggleGroupItem's own internals was
            * silently breaking its data-state/pressed rendering. */}
           <TooltipTrigger asChild>
-            <span className="flex-1">
+            <span className="min-w-0">
               <ToggleGroupItem
                 value={mode}
                 size="sm"
                 aria-label={LABELS[mode]}
-                className="w-full rounded-full text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
+                className="w-full truncate rounded-full px-1 text-[10px] text-muted-foreground transition-colors duration-75 sm:text-xs data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
               >
                 {LABELS[mode]}
               </ToggleGroupItem>

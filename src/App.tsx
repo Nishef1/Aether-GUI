@@ -46,9 +46,17 @@ function MobileHeader({ onOpenSettings }: { onOpenSettings: () => void }) {
 
 function MainScreen() {
   return (
-    <div className="relative z-10 flex h-full flex-col items-center overflow-y-auto p-6 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
+    <div
+      className={`relative z-10 flex h-full flex-col items-center overflow-y-auto pb-[max(env(safe-area-inset-bottom),1.5rem)] ${
+        isAndroid ? "gap-4 px-4 pt-3" : "p-6"
+      }`}
+    >
       <ConnectionModeToggle />
-      <div className="flex min-h-52 flex-1 flex-col items-center justify-center gap-6 py-5">
+      <div
+        className={`flex flex-col items-center justify-center gap-5 ${
+          isAndroid ? "min-h-[278px] shrink-0 py-4" : "min-h-52 flex-1 gap-6 py-5"
+        }`}
+      >
         <ConnectButton />
         <ConnectionStatusLine />
       </div>

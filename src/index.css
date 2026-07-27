@@ -166,6 +166,10 @@
   from { transform: translateX(-120%); }
   to { transform: translateX(320%); }
 }
+@keyframes route-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 @keyframes ring-breathe {
   0%, 100% { transform: scale(1); opacity: 0.55; }
   50% { transform: scale(1.015); opacity: 0.7; }
@@ -192,6 +196,7 @@
 }
 
 .anim-scan-route { animation: route-scan 1.1s ease-in-out infinite; will-change: transform; }
+.anim-route-orbit { animation: route-orbit 2.8s linear infinite; will-change: transform; }
 .anim-ring-breathe { animation: ring-breathe 4.5s ease-in-out infinite; }
 .anim-ring-pulse-fast { animation: ring-pulse-fast 1.6s ease-in-out infinite; }
 .anim-ring-pulse-slow { animation: ring-pulse-slow 2.4s ease-in-out infinite; }
@@ -213,5 +218,5 @@
    deliberately left running. */
 @media (prefers-reduced-motion: reduce) {
   .advanced-collapsible-content[data-state] { animation: none; }
-  .anim-ring-breathe, .anim-orb-a, .anim-orb-b { animation: none; }
+  .anim-ring-breathe, .anim-route-orbit, .anim-orb-a, .anim-orb-b { animation: none; }
 }

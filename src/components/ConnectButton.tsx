@@ -109,6 +109,16 @@ export function ConnectButton() {
       transition={{ layout: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
       className="relative flex size-40 shrink-0 items-center justify-center rounded-full text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none"
     >
+      {phase === "connecting" && isAndroid && (
+        <span
+          aria-hidden
+          data-runtime-animation="active"
+          className="anim-route-orbit pointer-events-none absolute -inset-5 rounded-full border border-status-connecting/25"
+        >
+          <span className="absolute -top-1 left-1/2 size-2 -translate-x-1/2 rounded-full bg-status-connecting shadow-[0_0_12px_var(--color-status-connecting)]" />
+        </span>
+      )}
+
       <span
         aria-hidden
         data-runtime-animation={activeMotion ? "active" : undefined}
