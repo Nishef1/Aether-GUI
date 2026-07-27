@@ -9,7 +9,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SERVICE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
 POLICY = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidTransportPolicy.kt"
-UDP_PROBE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidUdpCapabilityProbe.kt"
 EGRESS_PROBE = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressProbe.kt"
 POLICY_TEST = ROOT / "src-tauri/plugins/aether-vpn/android/src/test/java/AndroidTransportPolicyTest.kt"
 CORE_MAIN = ROOT / "vendor/aether/aether/src/main.rs"
@@ -41,18 +40,20 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("wireGuardTimeoutsExceedCoreScannerBudgets", tests)
         self.assertIn("goolAllowsForOuterAndInnerWireGuardValidation", tests)
 
-    def test_masque_auto_does_not_force_h3_when_udp_is_unavailable(self) -> None:
+    def test_masque_h2_choice_cannot_silently_turn_into_h3(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
-        probe = UDP_PROBE.read_text(encoding="utf-8")
-        self.assertIn("AndroidUdpCapabilityProbe.hasUsableUdp()", service)
-        self.assertIn("AndroidTransportPolicy.useMasqueHttp2", service)
+        tests = POLICY_TEST.read_text(encoding="utf-8")
+        self.assertNotIn("AndroidUdpCapabilityProbe.hasUsableUdp()", service)
+        self.assertIn("MASQUE transport selected: HTTP/2 (TCP); Android safe auto", service)
+        self.assertIn("requestedH2=$masqueHttp2", service)
         self.assertIn('remove("AETHER_MASQUE_HTTP2")', service)
         self.assertIn('put("AETHER_MASQUE_HTTP2", "1")', service)
         self.assertNotIn('put("AETHER_MASQUE_HTTP2", if (masqueHttp2) "1" else "0")', service)
-        self.assertIn("forceHttp2 || !udpAvailable", policy)
-        self.assertIn("DatagramSocket", probe)
-        self.assertIn('listOf("1.1.1.1", "8.8.8.8")', probe)
+        self.assertIn("var masqueHttp2: Boolean = true", service)
+        self.assertIn("getBooleanExtra(EXTRA_MASQUE_HTTP2, true)", service)
+        self.assertIn("fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = true", policy)
+        self.assertIn("masqueAutoUsesH2UntilARealQuicProbeExists", tests)
 
     def test_wireguard_and_gool_use_a_clean_first_dataplane(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
