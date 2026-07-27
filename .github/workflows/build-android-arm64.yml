@@ -2,17 +2,13 @@ name: Build Android ARM64 APK
 
 on:
   workflow_dispatch:
-  issue_comment:
-    types:
-      - created
 
 concurrency:
   group: android-arm64-manual
   cancel-in-progress: true
 
 permissions:
-  contents: write
-
+  contents: read
 
 env:
   ANDROID_API: "36"
@@ -24,11 +20,6 @@ env:
 
 jobs:
   build:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.number == 8 &&
-       github.event.comment.body == '/build-android-055-final')
     name: Android arm64-v8a debug APK
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -39,28 +30,6 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 1
-
-      - name: Record one-shot run ID
-        if: github.event_name == 'issue_comment'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          mkdir -p .github
-          python3 - <<'PY' > .github/android-055-build.json
-          import json
-          import os
-          print(json.dumps({
-              "databaseId": int(os.environ["GITHUB_RUN_ID"]),
-              "url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
-              "status": "in_progress",
-              "headSha": os.environ["GITHUB_SHA"],
-          }, separators=(",", ":")))
-          PY
-          git add .github/android-055-build.json
-          git commit -m "ci(android): record one-shot 0.5.5 run"
-          git push origin HEAD:main
 
       - name: Initialize build diagnostics
         shell: bash
@@ -87,7 +56,12 @@ jobs:
           bash scripts/ci/run-with-diagnostics.sh \
             "Run Android plugin source contract tests" \
             "android-plugin-contract-tests.log" \
-            python3 scripts/tests/test_android_plugin_contract.py
+            bash -lc '
+              set -euo pipefail
+              python3 scripts/tests/test_android_plugin_contract.py
+              python3 scripts/tests/test_android_rust_plugin_dependency.py
+              python3 scripts/tests/test_android_mobile_config.py
+            '
 
       - name: Install native build prerequisites
         shell: bash
