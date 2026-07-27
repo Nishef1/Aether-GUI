@@ -1,14 +1,17 @@
 name: Finalize and build Android 0.5.5 once
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
   pull_request:
     branches:
       - main
     types:
       - opened
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/android-055-pr-trigger"
 
 permissions:
   contents: write
@@ -116,9 +119,12 @@ PY
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             gh pr close "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment "One-shot Android build trigger completed; cleaning up."
             git push origin --delete "$PR_HEAD" || true
+          else
+            git push origin --delete ci/android-055-finalize-once || true
           fi
 
           git pull --rebase origin main
+          git rm -f .github/android-055-pr-trigger
           git rm -f .github/workflows/android-055-finalize-once.yml
           if [[ -f .github/android-055-build.json ]]; then
             git add .github/android-055-build.json
