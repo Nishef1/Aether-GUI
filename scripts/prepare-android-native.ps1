@@ -168,6 +168,33 @@ $ndkHome = Resolve-AndroidNdk
 $env:NDK_HOME = $ndkHome
 $env:ANDROID_NDK_HOME = $ndkHome
 $env:ANDROID_NDK_ROOT = $ndkHome
+$nmake = Get-ChildItem (Join-Path $env:ProgramFiles "Microsoft Visual Studio\2022") -Recurse -File -Filter "nmake.exe" -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match "\\Hostx64\\x64\\nmake\.exe$" } |
+    Select-Object -First 1 -ExpandProperty FullName
+if (-not $nmake) {
+    throw "nmake.exe was not found. Install the Visual Studio C++ build tools."
+}
+$env:CMAKE_GENERATOR = "NMake Makefiles"
+$env:PATH = "$(Split-Path -Parent $nmake);$env:PATH"
+$env:CMAKE = Join-Path $repoRoot "scripts\native\cmake-android.cmd"
+
+# cargo-ndk 4.1.2 exports CLANG_PATH without the .exe suffix on Windows.
+# clang-sys validates that exact path before invoking bindgen, so provide the
+# extensionless companion expected by cargo-ndk next to the NDK clang binary.
+$llvmBin = Join-Path $ndkHome "toolchains\llvm\prebuilt\windows-x86_64\bin"
+if (-not (Test-Path $llvmBin)) {
+    $llvmBin = Get-ChildItem (Join-Path $ndkHome "toolchains\llvm\prebuilt") -Directory |
+        Select-Object -First 1 -ExpandProperty FullName |
+        Join-Path -ChildPath "bin"
+}
+$clangExe = Join-Path $llvmBin "clang.exe"
+$clangShim = Join-Path $llvmBin "clang"
+if ((Test-Path $clangExe) -and -not (Test-Path $clangShim)) {
+    Copy-Item $clangExe $clangShim
+}
+if (-not (Test-Path $clangShim)) {
+    throw "Android NDK clang executable was not found: $clangExe"
+}
 
 Write-Host "Android NDK: $ndkHome" -ForegroundColor Cyan
 Write-Host "Preparing bundled Android ARM64 native runtime..." -ForegroundColor Cyan
@@ -384,7 +411,15 @@ foreach ($file in $bundled) {
     if (-not (Test-Path $file)) {
         throw "Failed to bundle Android native component: $file"
     }
-    $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = [System.BitConverter]::ToString(
+            $sha256.ComputeHash([System.IO.File]::ReadAllBytes($file))
+        ).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
     $size = (Get-Item $file).Length
     Write-Host "Bundled $(Split-Path -Leaf $file) ($size bytes, sha256=$hash)" -ForegroundColor Green
 }
