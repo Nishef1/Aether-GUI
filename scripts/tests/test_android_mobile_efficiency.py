@@ -12,7 +12,9 @@ TELEMETRY = ROOT / "src/state/telemetryStore.ts"
 CSS = ROOT / "src/index.css"
 MAIN = ROOT / "src/main.tsx"
 POLICY = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidTransportPolicy.kt"
-PREPARE = ROOT / "scripts/prepare-android-native-final.ps1"
+NATIVE_PREPARE = ROOT / "scripts/prepare-android-native-final.ps1"
+DEV_RUNNER = ROOT / "scripts/android-dev.ps1"
+BUILD_RUNNER = ROOT / "scripts/build-android-arm64.ps1"
 EFFICIENCY_PATCH = ROOT / "scripts/ci/patch-android-mobile-efficiency.py"
 
 
@@ -47,13 +49,22 @@ class AndroidMobileEfficiencyTest(unittest.TestCase):
     def test_transport_keepalives_and_optional_probes_are_spaced(self) -> None:
         policy = POLICY.read_text(encoding="utf-8")
         patch = EFFICIENCY_PATCH.read_text(encoding="utf-8")
-        prepare = PREPARE.read_text(encoding="utf-8")
         self.assertIn('"--health-interval", "30"', policy)
         self.assertIn('"--keepalive", "25"', policy)
         self.assertIn("EGRESS_PROBE_INTERVAL_MS = 300_000L", patch)
         self.assertIn("One long interruptible sleep", patch)
         self.assertIn("shouldPersistDiagnostic", patch)
-        self.assertIn("patch-android-mobile-efficiency.py", prepare)
+
+    def test_efficiency_source_patch_is_transactional(self) -> None:
+        native_prepare = NATIVE_PREPARE.read_text(encoding="utf-8")
+        dev = DEV_RUNNER.read_text(encoding="utf-8")
+        build = BUILD_RUNNER.read_text(encoding="utf-8")
+        self.assertNotIn("patch-android-mobile-efficiency.py", native_prepare)
+        for runner in (dev, build):
+            self.assertIn("patch-android-mobile-efficiency.py", runner)
+            self.assertIn("ReadAllBytes($serviceSource)", runner)
+            self.assertIn("WriteAllBytes($serviceSource, $serviceBackup)", runner)
+            self.assertIn("finally", runner)
 
 
 if __name__ == "__main__":
