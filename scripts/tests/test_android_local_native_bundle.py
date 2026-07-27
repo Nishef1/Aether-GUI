@@ -39,15 +39,17 @@ class AndroidLocalNativeBundleTest(unittest.TestCase):
         self.assertIn("prepare:android:arm64", scripts)
         self.assertIn("prepare-android-native-final.ps1", scripts["prepare:android:arm64"])
         self.assertIn("build-android-arm64.ps1", scripts["build:android:arm64"])
+        self.assertIn("-Debug", scripts["build:android:arm64:debug"])
 
         build = BUILD_SCRIPT.read_text(encoding="utf-8")
         prepare_index = build.index("prepare-android-native-final.ps1")
         patch_index = build.index("patch-android-mobile-efficiency.py")
-        launch_index = build.index("pnpm tauri android build")
+        launch_index = build.index("& pnpm @buildArguments")
         restore_index = build.index("WriteAllBytes($serviceSource, $serviceBackup)")
         self.assertLess(prepare_index, launch_index)
         self.assertLess(patch_index, launch_index)
         self.assertGreater(restore_index, launch_index)
+        self.assertIn('"--debug"', build)
 
     def test_base_preparer_builds_and_copies_all_runtime_components(self) -> None:
         source = BASE_PREPARE_SCRIPT.read_text(encoding="utf-8")
