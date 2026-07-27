@@ -9,9 +9,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONNECTION = ROOT / "src/state/connectionStore.ts"
 TELEMETRY = ROOT / "src/state/telemetryStore.ts"
+SETTINGS = ROOT / "src/components/SettingsPanel.tsx"
+MODE_TOGGLE = ROOT / "src/components/ConnectionModeToggle.tsx"
 CSS = ROOT / "src/index.css"
 MAIN = ROOT / "src/main.tsx"
 POLICY = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidTransportPolicy.kt"
+RUNTIME = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidVpnRuntime.kt"
+ANDROID_BRIDGE = ROOT / "src-tauri/src/android.rs"
+PLUGIN = ROOT / "src-tauri/plugins/aether-vpn/src/lib.rs"
 NATIVE_PREPARE = ROOT / "scripts/prepare-android-native-final.ps1"
 DEV_RUNNER = ROOT / "scripts/android-dev.ps1"
 BUILD_RUNNER = ROOT / "scripts/build-android-arm64.ps1"
@@ -54,6 +59,32 @@ class AndroidMobileEfficiencyTest(unittest.TestCase):
         self.assertIn("EGRESS_PROBE_INTERVAL_MS = 300_000L", patch)
         self.assertIn("One long interruptible sleep", patch)
         self.assertIn("shouldPersistDiagnostic", patch)
+
+    def test_live_logs_are_explicitly_opt_in(self) -> None:
+        connection = CONNECTION.read_text(encoding="utf-8")
+        settings = SETTINGS.read_text(encoding="utf-8")
+        runtime = RUNTIME.read_text(encoding="utf-8")
+        bridge = ANDROID_BRIDGE.read_text(encoding="utf-8")
+        plugin = PLUGIN.read_text(encoding="utf-8")
+        patch = EFFICIENCY_PATCH.read_text(encoding="utf-8")
+
+        self.assertIn('LOGGING_PREFERENCE_KEY = "aether.live-logs.enabled"', connection)
+        self.assertIn("loggingEnabled: readLoggingPreference()", connection)
+        self.assertIn('invoke<boolean>("set_android_logging_enabled"', connection)
+        self.assertIn("loggingEnabled && <LiveLogViewer />", settings)
+        self.assertIn("AtomicBoolean(false)", runtime)
+        self.assertIn("if (!loggingEnabled.get()) return", runtime)
+        self.assertIn("set_android_logging_enabled", bridge)
+        self.assertIn('run_mobile_plugin("setLogging"', plugin)
+        self.assertIn("Android opt-in diagnostics", patch)
+
+    def test_connection_mode_selector_has_no_visible_helper_copy(self) -> None:
+        source = MODE_TOGGLE.read_text(encoding="utf-8")
+        self.assertNotIn("Local SOCKS5 only", source)
+        self.assertNotIn("System-wide TUN", source)
+        self.assertNotIn("TUN + local SOCKS5", source)
+        self.assertNotIn("Android asks for VPN permission", source)
+        self.assertNotIn("description", source)
 
     def test_efficiency_source_patch_is_transactional(self) -> None:
         native_prepare = NATIVE_PREPARE.read_text(encoding="utf-8")
