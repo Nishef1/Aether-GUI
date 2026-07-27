@@ -23,9 +23,9 @@ if ($ForceRebuild) {
 }
 
 # Prepare the NDK environment, TUN bridge, hev-socks5-tunnel, Gradle packaging,
-# and the baseline Aether binary. The baseline script still applies the older
-# session patch, so final WireGuard routing, resolver, readiness, and supervision
-# patches must run only after it returns.
+# and the baseline Aether binary. Final patches run after the baseline step so
+# an already-patched local submodule is migrated deterministically before the
+# ARM64 core is rebuilt and bundled.
 & $basePrepare @baseArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Base Android native preparation failed with exit code $LASTEXITCODE."
@@ -57,8 +57,7 @@ $python = Resolve-Python
 $patches = @(
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-resolver.py"),
-    (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-egress.py"),
-    (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-supervision.py")
+    (Join-Path $repoRoot "scripts\ci\remove-aether-wg-core-readiness-gate.py")
 )
 foreach ($patch in $patches) {
     if (-not (Test-Path $patch)) {
