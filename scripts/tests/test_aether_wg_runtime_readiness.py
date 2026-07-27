@@ -92,7 +92,11 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
             self.assertIn("runtime DNS uses validated independent resolvers", resolver)
             self.assertIn("Ipv4Addr::new(8, 8, 8, 8)", resolver)
             self.assertIn("Ipv4Addr::new(9, 9, 9, 9)", resolver)
-            self.assertNotIn('"1.1.1.1:53"', resolver)
+            self.assertIn("Ipv4Addr::new(1, 1, 1, 1)", resolver)
+            self.assertLess(
+                resolver.index("Ipv4Addr::new(8, 8, 8, 8)"),
+                resolver.index("Ipv4Addr::new(1, 1, 1, 1)"),
+            )
             self.assertIn("sender.close().await", resolver)
             self.assertIn("servers.contains(&response.0)", resolver)
 
@@ -111,6 +115,16 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
                 self.assertIn("tokio::select!", block)
                 self.assertIn("WireGuard tunnel during readiness", block)
                 self.assertIn("verify_wg_runtime_egress", block)
+
+            # run_wireguard_tunnel returns Result<()>, but establish_wg returns
+            # Result<RunningWireGuard>. The nested branch must convert the task's
+            # Result<()> into an AetherError instead of returning it directly.
+            self.assertNotIn(
+                'return flatten_runtime_task("WireGuard tunnel during readiness", result);',
+                nested,
+            )
+            self.assertIn("let error = match flatten_runtime_task(", nested)
+            self.assertIn("return Err(error);", nested)
 
             gool = main.split("async fn run_warp_in_warp", 1)[1].split("\n}\n", 1)[0]
             self.assertIn("spawn_udp_forwarder(&outer.stack, peer)", gool)
