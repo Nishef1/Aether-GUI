@@ -38,7 +38,7 @@ class FinalVpnProfileArgs {
     var connectionMode: String = "proxy"
     var tunEngine: String = "xray"
     var quickReconnect: Boolean = true
-    var masqueHttp2: Boolean = false
+    var masqueHttp2: Boolean = true
     var masqueNoize: String = "firewall"
     var wgNoize: String = "balanced"
     var dnsServer: String = "1.1.1.1"
@@ -269,7 +269,7 @@ class FinalAetherVpnService : VpnService() {
             intent.getStringExtra(EXTRA_DNS_SERVER) ?: DEFAULT_DNS_SERVER
         )
         val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, true)
-        val masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, false)
+        val masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, true)
         val masqueNoize = intent.getStringExtra(EXTRA_MASQUE_NOIZE) ?: "firewall"
         val wgNoize = intent.getStringExtra(EXTRA_WG_NOIZE) ?: "balanced"
         val webrtcLeakProtection = intent.getBooleanExtra(
@@ -326,6 +326,23 @@ class FinalAetherVpnService : VpnService() {
                 error("Bundled ARM64 Aether core was not found at ${executable.absolutePath}")
             }
 
+            val useMasqueHttp2 = AndroidTransportPolicy.isMasque(protocol) &&
+                AndroidTransportPolicy.useMasqueHttp2(masqueHttp2, false)
+            if (AndroidTransportPolicy.isMasque(protocol)) {
+                log(
+                    "MASQUE transport selected: HTTP/2 (TCP); Android safe auto; " +
+                        "requestedH2=$masqueHttp2"
+                )
+            }
+            val effectiveWgNoize = if (AndroidTransportPolicy.isWireGuardFamily(protocol)) {
+                AndroidTransportPolicy.effectiveWireGuardNoize(wgNoize)
+            } else {
+                wgNoize
+            }
+            if (effectiveWgNoize != wgNoize) {
+                log("Android stable dataplane pass: WireGuard noize $wgNoize -> $effectiveWgNoize")
+            }
+
             val command = buildCoreCommand(
                 executable = executable,
                 protocol = protocol,
@@ -334,12 +351,16 @@ class FinalAetherVpnService : VpnService() {
                 bindAddress = bindAddress,
                 quickReconnect = quickReconnect,
                 masqueNoize = masqueNoize,
-                wgNoize = wgNoize,
+                wgNoize = effectiveWgNoize,
+                useMasqueHttp2 = useMasqueHttp2,
             )
             val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
             processBuilder.environment().apply {
                 put("AETHER_CONFIG", File(filesDir, "aether.toml").absolutePath)
-                put("AETHER_MASQUE_HTTP2", if (masqueHttp2) "1" else "0")
+                remove("AETHER_MASQUE_HTTP2")
+                if (AndroidTransportPolicy.isMasque(protocol) && useMasqueHttp2) {
+                    put("AETHER_MASQUE_HTTP2", "1")
+                }
                 put("AETHER_LOG_LEVEL", "info")
                 put("RUST_BACKTRACE", "1")
             }
@@ -354,7 +375,9 @@ class FinalAetherVpnService : VpnService() {
             processAttached = true
             startCoreLogReader(process)
 
-            if (!waitForSocks(token, bindAddress, process, CORE_START_TIMEOUT_MS)) {
+            val startupTimeoutMs = AndroidTransportPolicy.startupTimeoutMs(protocol, scanMode)
+            log("Waiting up to ${startupTimeoutMs / 1000}s for $protocol SOCKS readiness")
+            if (!waitForSocks(token, bindAddress, process, startupTimeoutMs)) {
                 ensureActive(token)
                 val exit = if (process.isAlive) null else process.exitValue()
                 val tail = AndroidVpnRuntime.recentLogTail(8)
@@ -366,6 +389,26 @@ class FinalAetherVpnService : VpnService() {
             }
 
             ensureActive(token)
+            updateSnapshotIfActive(
+                token,
+                FinalServiceSnapshot(
+                    state = "Verifying",
+                    socksAddr = bindAddress,
+                )
+            )
+            updateNotification("Verifying tunnel egress…")
+            val initialProbe = AndroidEgressProbe.probe(bindAddress)
+            ensureActive(token)
+            AndroidVpnRuntime.publishProbe(
+                initialProbe.publicIp,
+                initialProbe.countryCode,
+                initialProbe.latencyMs,
+            )
+            log(
+                "SOCKS egress verified via ${initialProbe.provider}: ${initialProbe.publicIp}" +
+                    (initialProbe.countryCode?.let { " · $it" } ?: "") +
+                    " · ${initialProbe.latencyMs} ms"
+            )
             val connectedAt = System.currentTimeMillis()
             if (connectionMode == "proxy") {
                 updateSnapshotIfActive(
@@ -587,6 +630,7 @@ class FinalAetherVpnService : VpnService() {
         quickReconnect: Boolean,
         masqueNoize: String,
         wgNoize: String,
+        useMasqueHttp2: Boolean,
     ): List<String> {
         val command = mutableListOf(executable.absolutePath)
         when (protocol) {
@@ -615,6 +659,7 @@ class FinalAetherVpnService : VpnService() {
             "--log-level",
             "info",
         )
+        AndroidTransportPolicy.appendCoreArgs(command, protocol, useMasqueHttp2)
         return command
     }
 
@@ -843,8 +888,7 @@ class FinalAetherVpnService : VpnService() {
 
         private const val CHANNEL_ID = "aether_connection"
         private const val NOTIFICATION_ID = 1819
-        private const val CORE_START_TIMEOUT_MS = 50_000L
-        private const val TUN_MTU = 8500
+        private const val TUN_MTU = AndroidTransportPolicy.TUN_MTU
         private const val TUN_IPV4_ADDRESS = "198.18.0.1"
         private const val TUN_IPV6_ADDRESS = "fc00::1"
         private const val DEFAULT_SOCKS_ADDRESS = "127.0.0.1:1819"
