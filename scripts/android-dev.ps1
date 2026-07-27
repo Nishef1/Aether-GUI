@@ -98,6 +98,15 @@ else {
 
 Write-Host "Using Android device: $serial" -ForegroundColor Cyan
 
+$prepareIcons = Join-Path $PSScriptRoot "prepare-android-icons.ps1"
+if (-not (Test-Path $prepareIcons)) {
+    throw "Android icon preparation script is missing: $prepareIcons"
+}
+& $prepareIcons
+if ($LASTEXITCODE -ne 0) {
+    throw "Android icon preparation failed with exit code $LASTEXITCODE."
+}
+
 $prepareNative = Join-Path $PSScriptRoot "prepare-android-native-final.ps1"
 if (-not (Test-Path $prepareNative)) {
     throw "Final Android native preparation script is missing: $prepareNative"
