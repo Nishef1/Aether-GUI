@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,7 +28,7 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
         stderr: list[str] = []
         for patcher in PATCHERS:
             result = subprocess.run(
-                ["python3", str(patcher), str(root)],
+                [sys.executable, str(patcher), str(root)],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -63,7 +64,10 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
                 0,
                 f"first patch pipeline failed\nstdout:\n{first.stdout}\nstderr:\n{first.stderr}",
             )
-            first_bytes = b"".join((target / name).read_bytes() for name in ("main.rs", "wireguard.rs", "socks.rs"))
+            first_bytes = b"".join(
+                (target / name).read_bytes()
+                for name in ("main.rs", "wireguard.rs", "socks.rs")
+            )
             first_hash = hashlib.sha256(first_bytes).hexdigest()
 
             second = self.run_pipeline(root)
@@ -72,14 +76,19 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
                 0,
                 f"second patch pipeline failed\nstdout:\n{second.stdout}\nstderr:\n{second.stderr}",
             )
-            second_bytes = b"".join((target / name).read_bytes() for name in ("main.rs", "wireguard.rs", "socks.rs"))
+            second_bytes = b"".join(
+                (target / name).read_bytes()
+                for name in ("main.rs", "wireguard.rs", "socks.rs")
+            )
             self.assertEqual(first_hash, hashlib.sha256(second_bytes).hexdigest())
 
             main = (target / "main.rs").read_text(encoding="utf-8")
             wireguard = (target / "wireguard.rs").read_text(encoding="utf-8")
             socks = (target / "socks.rs").read_text(encoding="utf-8")
 
-            resolver = socks.split("pub(crate) async fn dns_resolve", 1)[1].split("\n}\n", 1)[0]
+            resolver = socks.split("pub(crate) async fn dns_resolve", 1)[1].split(
+                "\n}\n", 1
+            )[0]
             self.assertIn("runtime DNS uses validated independent resolvers", resolver)
             self.assertIn("Ipv4Addr::new(8, 8, 8, 8)", resolver)
             self.assertIn("Ipv4Addr::new(9, 9, 9, 9)", resolver)
@@ -93,7 +102,9 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
                 wireguard,
             )
 
-            simple = main.split("async fn run_wireguard_tunnel", 1)[1].split("\n}\n", 1)[0]
+            simple = main.split("async fn run_wireguard_tunnel", 1)[1].split(
+                "\n}\n", 1
+            )[0]
             nested = main.split("async fn establish_wg", 1)[1].split("\n}\n", 1)[0]
             for block in (simple, nested):
                 self.assertIn("runtime readiness task supervision", block)
@@ -106,7 +117,9 @@ class WireGuardRuntimeReadinessTest(unittest.TestCase):
             self.assertNotIn("trying independent inner WARP endpoint", gool)
 
     def test_android_finalizer_orders_runtime_patches_before_rebuild(self) -> None:
-        finalizer = (ROOT / "scripts/prepare-android-native-final.ps1").read_text(encoding="utf-8")
+        finalizer = (ROOT / "scripts/prepare-android-native-final.ps1").read_text(
+            encoding="utf-8"
+        )
         ordered = [
             "patch-aether-wg-real-egress.py",
             "patch-aether-wg-runtime-resolver.py",
