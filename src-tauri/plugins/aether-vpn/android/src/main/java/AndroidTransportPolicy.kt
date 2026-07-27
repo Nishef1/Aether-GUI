@@ -13,39 +13,27 @@ internal object AndroidTransportPolicy {
         "--stealth",
         "--ironclad",
     )
+    private val reconnectFlags = setOf("--quick-reconnect", "--no-quick-reconnect")
 
     fun isMasque(protocol: String): Boolean =
         protocol.equals("masque", ignoreCase = true) ||
             protocol.equals("auto", ignoreCase = true)
+
+    fun isFastAuto(protocol: String): Boolean = protocol.equals("auto", ignoreCase = true)
 
     fun isWireGuardFamily(protocol: String): Boolean =
         protocol.equals("wireguard", ignoreCase = true) ||
             protocol.equals("gool", ignoreCase = true)
 
     /**
-     * WireGuard's Turbo/Balanced/Thorough/Stealth discovery modes can accept a
-     * candidate after handshake plus a small raw data-plane probe. On restricted
-     * Android networks that can be a false positive: the candidate answers the
-     * probe while real TCP through SOCKS is still dropped.
-     *
-     * Ironclad is the core mode that confirms finalists with a real HTTP request.
-     * Android defines Connected using an independent SOCKS DNS/TCP/TLS/HTTP probe,
-     * so selecting an endpoint with the same end-to-end requirement prevents the
-     * service from repeatedly launching a known probe-only candidate.
+     * Explicit WireGuard/Gool still uses real HTTP validation. That prevents a
+     * false-positive connection where handshake/probe UDP passes but useful TCP
+     * traffic inside WARP is blocked by the current network.
      */
     @Suppress("UNUSED_PARAMETER")
     fun effectiveWireGuardScanMode(requested: String): String = VERIFIED_WG_SCAN_MODE
 
-    /**
-     * Preserve the user's WireGuard obfuscation choice on Android. The previous
-     * "stable dataplane" override forced every WireGuard and Gool attempt to plain
-     * `off`, even when the UI requested `balanced`. That removed the very handshake
-     * camouflage required on networks which permit an initial WARP exchange and then
-     * classify or throttle the continuing plain-WireGuard flow.
-     *
-     * Android only normalizes aliases and unknown values; profile fallback remains
-     * owned by the Aether core.
-     */
+    /** Preserve the user's explicit WireGuard obfuscation profile. */
     fun effectiveWireGuardNoize(requested: String): String =
         when (requested.trim().lowercase()) {
             "off", "none" -> "off"
@@ -56,9 +44,9 @@ internal object AndroidTransportPolicy {
         }
 
     /**
-     * Upper bound for the core to expose SOCKS. These values exceed each core
-     * scanner budget plus account provisioning, finalist confirmation, and
-     * end-to-end data-plane validation. Cancellation remains immediate.
+     * Auto is deliberately short and predictable. Explicit WireGuard modes are
+     * bounded because the mobile core scans only official consumer WARP ranges
+     * and ports, uses the selected noize profile once, and requires real HTTP.
      */
     fun startupTimeoutMs(protocol: String, scanMode: String): Long {
         val mode = if (isWireGuardFamily(protocol)) {
@@ -67,20 +55,8 @@ internal object AndroidTransportPolicy {
             scanMode.lowercase()
         }
         return when {
-            protocol.equals("gool", ignoreCase = true) -> when (mode) {
-                "turbo" -> 150_000L
-                "stealth" -> 360_000L
-                "thorough" -> 450_000L
-                "ironclad" -> 510_000L
-                else -> 270_000L
-            }
-            protocol.equals("wireguard", ignoreCase = true) -> when (mode) {
-                "turbo" -> 210_000L
-                "stealth" -> 390_000L
-                "thorough" -> 450_000L
-                "ironclad" -> 510_000L
-                else -> 300_000L
-            }
+            protocol.equals("gool", ignoreCase = true) -> 110_000L
+            protocol.equals("wireguard", ignoreCase = true) -> 100_000L
             isMasque(protocol) -> when (mode) {
                 "turbo" -> 75_000L
                 "stealth" -> 210_000L
@@ -92,7 +68,7 @@ internal object AndroidTransportPolicy {
         }
     }
 
-    /** Honor the user's explicit MASQUE transport choice. */
+    /** Honor explicit MASQUE choice; Auto is forced to H2 by the service. */
     @Suppress("UNUSED_PARAMETER")
     fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = forceHttp2
 
@@ -103,9 +79,18 @@ internal object AndroidTransportPolicy {
     ) {
         when {
             isMasque(protocol) -> {
+                if (isFastAuto(protocol)) {
+                    // Auto favors the route that succeeds fastest in Iran today:
+                    // H2/TCP, cached gateway reuse, and a brief verified latency
+                    // sample when a fresh scan is required.
+                    command.removeAll { it in scanFlags }
+                    command += "--turbo"
+                    command.removeAll { it in reconnectFlags }
+                    command += "--quick-reconnect"
+                }
                 command += listOf(
                     "--validate-secs", "12",
-                    "--health-interval", "20",
+                    "--health-interval", "30",
                     "--health-timeout", "20",
                     "--health-failures", "3",
                     "--reconnect-secs", "2",
@@ -113,17 +98,18 @@ internal object AndroidTransportPolicy {
                 if (useMasqueHttp2) command += "--fragment"
             }
             isWireGuardFamily(protocol) -> {
-                // buildCoreCommand adds the UI-selected scan flag first. Replace it
-                // rather than appending a conflicting second flag.
                 command.removeAll { it in scanFlags }
                 command += "--$VERIFIED_WG_SCAN_MODE"
+                // Do not burn minutes cycling through four noize profiles on a
+                // network where real WARP egress is currently blocked.
+                command += "--no-profile-retry"
 
                 val validateSeconds = if (protocol.equals("gool", ignoreCase = true)) "25" else "12"
                 command += listOf(
-                    "--keepalive", "5",
+                    "--keepalive", "25",
                     "--wg-validate-secs", validateSeconds,
-                    "--wg-health-interval", "15",
-                    "--wg-stale-secs", "60",
+                    "--wg-health-interval", "30",
+                    "--wg-stale-secs", "90",
                     "--wg-startup-secs", "45",
                     "--wg-reconnect-secs", "2",
                 )
