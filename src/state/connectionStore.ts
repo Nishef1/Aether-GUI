@@ -17,7 +17,10 @@ import type {
 const MAX_LOG_LINES = 400
 const MAX_PENDING_LOG_LINES = 800
 const LOG_FLUSH_INTERVAL_MS = 180
-const ANDROID_RUNTIME_POLL_MS = 450
+const ANDROID_RUNTIME_POLL_CONNECTING_MS = 750
+const ANDROID_RUNTIME_POLL_ACTIVE_MS = 1_500
+const ANDROID_RUNTIME_POLL_IDLE_MS = 5_000
+const ANDROID_RUNTIME_POLL_HIDDEN_MS = 15_000
 
 let profileSaveQueue: Promise<void> = Promise.resolve()
 let profileSaveRevision = 0
@@ -55,6 +58,15 @@ function sameStatus(left: ConnectionStatus, right: ConnectionStatus): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function androidAutoProfile(profile: ConnectionProfile): ConnectionProfile {
+  if (!isAndroid || profile.protocol !== "auto") return profile
+  return {
+    ...profile,
+    masque_http2: true,
+    quick_reconnect: true,
+  }
+}
+
 interface ConnectionState {
   status: ConnectionStatus
   profile: ConnectionProfile
@@ -89,7 +101,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     patch: Partial<ConnectionProfile>
   ): Promise<void> => {
     const revision = ++profileSaveRevision
-    const profile = { ...get().profile, ...patch }
+    const profile = androidAutoProfile({ ...get().profile, ...patch })
     set({ profile, profileSaveError: null })
 
     return saveDefaultProfile(profile)
@@ -123,7 +135,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       connection_mode: "proxy",
       tun_engine: "xray",
       quick_reconnect: true,
-      masque_http2: false,
+      masque_http2: true,
       masque_noize: "firewall",
       wg_noize: "balanced",
       dns_server: "1.1.1.1",
@@ -157,7 +169,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         if (operation !== connectionOperationRevision) return
 
         set({ preparingCores: false })
-        await invoke("connect", { profileOverride: get().profile })
+        await invoke("connect", { profileOverride: androidAutoProfile(get().profile) })
       } catch (e) {
         if (operation !== connectionOperationRevision) return
         awaitingAndroidFreshStatus = false
@@ -278,8 +290,9 @@ let disposeConnectionRuntime: (() => void) | null = null
 async function initializeConnectionRuntime(): Promise<void> {
   let pendingLogs: LogLine[] = []
   let flushTimer: ReturnType<typeof setTimeout> | null = null
-  let androidPollTimer: ReturnType<typeof setInterval> | null = null
+  let androidPollTimer: ReturnType<typeof setTimeout> | null = null
   let androidPollInFlight = false
+  let androidPollingStopped = false
   let lastAndroidLogId = 0
   let statusEventReceived = false
   const unlisteners: Array<() => void> = []
@@ -346,7 +359,7 @@ async function initializeConnectionRuntime(): Promise<void> {
   }
 
   const pollAndroidRuntime = async () => {
-    if (!isAndroid || androidPollInFlight) return
+    if (!isAndroid || androidPollInFlight || androidPollingStopped) return
     androidPollInFlight = true
     try {
       const [status, nativeLogs] = await Promise.all([
@@ -372,6 +385,35 @@ async function initializeConnectionRuntime(): Promise<void> {
     }
   }
 
+  const androidPollDelay = (): number => {
+    if (typeof document !== "undefined" && document.hidden) {
+      return ANDROID_RUNTIME_POLL_HIDDEN_MS
+    }
+    switch (useConnectionStore.getState().status.state) {
+      case "Launching":
+      case "Connecting":
+      case "StartingTunnel":
+      case "Reconnecting":
+      case "Disconnecting":
+        return ANDROID_RUNTIME_POLL_CONNECTING_MS
+      case "Connected":
+      case "Tunneling":
+        return ANDROID_RUNTIME_POLL_ACTIVE_MS
+      default:
+        return ANDROID_RUNTIME_POLL_IDLE_MS
+    }
+  }
+
+  const scheduleAndroidPoll = (delay = androidPollDelay()) => {
+    if (!isAndroid || androidPollingStopped) return
+    if (androidPollTimer !== null) clearTimeout(androidPollTimer)
+    androidPollTimer = setTimeout(async () => {
+      androidPollTimer = null
+      await pollAndroidRuntime()
+      scheduleAndroidPoll()
+    }, delay)
+  }
+
   try {
     unlisteners.push(
       await listen<ConnectionStatus>("aether://status", (event) => {
@@ -384,6 +426,16 @@ async function initializeConnectionRuntime(): Promise<void> {
         queueLogs([event.payload])
       })
     )
+
+    if (isAndroid && typeof document !== "undefined") {
+      const handleVisibility = () => {
+        if (!document.hidden) scheduleAndroidPoll(0)
+      }
+      document.addEventListener("visibilitychange", handleVisibility)
+      unlisteners.push(() =>
+        document.removeEventListener("visibilitychange", handleVisibility)
+      )
+    }
   } catch (error) {
     unlisteners.forEach((unlisten) => unlisten())
     if (flushTimer !== null) clearTimeout(flushTimer)
@@ -393,16 +445,14 @@ async function initializeConnectionRuntime(): Promise<void> {
 
   if (isAndroid) {
     await pollAndroidRuntime()
-    androidPollTimer = setInterval(
-      () => void pollAndroidRuntime(),
-      ANDROID_RUNTIME_POLL_MS
-    )
+    scheduleAndroidPoll()
   }
 
   disposeConnectionRuntime = () => {
+    androidPollingStopped = true
     unlisteners.forEach((unlisten) => unlisten())
     if (flushTimer !== null) clearTimeout(flushTimer)
-    if (androidPollTimer !== null) clearInterval(androidPollTimer)
+    if (androidPollTimer !== null) clearTimeout(androidPollTimer)
     pendingLogs = []
   }
 
@@ -424,16 +474,29 @@ async function initializeConnectionRuntime(): Promise<void> {
     ),
   ])
 
-  const activeProfile = {
+  const loadedProfile = {
     ...useConnectionStore.getState().profile,
     ...(pendingElevationProfile ?? profile),
   }
+  const activeProfile = androidAutoProfile(loadedProfile)
   useConnectionStore.setState({
     ...(!statusEventReceived ? { status } : {}),
     ...(pendingElevationProfile || initialProfileRevision === profileSaveRevision
       ? { profile: activeProfile }
       : {}),
   })
+
+  if (
+    isAndroid &&
+    loadedProfile.protocol === "auto" &&
+    (loadedProfile.masque_http2 !== activeProfile.masque_http2 ||
+      loadedProfile.quick_reconnect !== activeProfile.quick_reconnect)
+  ) {
+    void saveDefaultProfile(activeProfile).catch((error) => {
+      appendRuntimeLog(`[error:migrating-android-auto-profile] ${String(error)}`)
+    })
+  }
+
   if (!statusEventReceived && status.state === "Error") {
     appendRuntimeLog(`[error:${status.phase}] ${status.message}`)
   }
