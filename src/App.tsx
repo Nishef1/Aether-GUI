@@ -88,15 +88,39 @@ export function App() {
     if (!isAndroid) void loadCores()
   }, [loadCores])
 
+  useEffect(() => {
+    if (!isAndroid) return
+
+    // Android's system Back action asks the WebView to navigate its history.
+    // Settings is an in-app screen rather than a route, so give it one history
+    // entry and translate Back into closing the panel instead of leaving Aether.
+    const closeSettingsFromHistory = () => setSettingsOpen(false)
+    window.addEventListener("popstate", closeSettingsFromHistory)
+    return () => window.removeEventListener("popstate", closeSettingsFromHistory)
+  }, [])
+
+  const openSettings = () => {
+    if (isAndroid) window.history.pushState({ aetherScreen: "settings" }, "")
+    setSettingsOpen(true)
+  }
+
+  const closeSettings = () => {
+    if (isAndroid && window.history.state?.aetherScreen === "settings") {
+      window.history.back()
+      return
+    }
+    setSettingsOpen(false)
+  }
+
   return (
     <TooltipProvider>
       <MotionConfig reducedMotion="user">
         <div className="relative flex h-svh w-full flex-col overflow-hidden bg-background">
           <AmbientBackground />
           {isAndroid ? (
-            <MobileHeader onOpenSettings={() => setSettingsOpen(true)} />
+            <MobileHeader onOpenSettings={openSettings} />
           ) : (
-            <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
+            <TitleBar onOpenSettings={openSettings} />
           )}
           <div className="relative min-h-0 flex-1">
             <AnimatePresence mode="sync">
@@ -126,7 +150,7 @@ export function App() {
             </AnimatePresence>
 
             {settingsOpen && (
-              <SettingsPanel onClose={() => setSettingsOpen(false)} />
+              <SettingsPanel onClose={closeSettings} />
             )}
           </div>
         </div>
