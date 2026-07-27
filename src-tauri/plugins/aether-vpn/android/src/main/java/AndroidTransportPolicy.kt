@@ -4,6 +4,7 @@ package com.cluvexstudio.aethergui.vpn
 internal object AndroidTransportPolicy {
     /** Matches the Aether core's outer TUNNEL_MTU; Gool keeps its inner MTU at 1200. */
     const val TUN_MTU = 1280
+    private const val VERIFIED_WG_SCAN_MODE = "ironclad"
 
     private val scanFlags = setOf(
         "--turbo",
@@ -32,7 +33,8 @@ internal object AndroidTransportPolicy {
      * so selecting an endpoint with the same end-to-end requirement prevents the
      * service from repeatedly launching a known probe-only candidate.
      */
-    fun effectiveWireGuardScanMode(requested: String): String = "ironclad"
+    @Suppress("UNUSED_PARAMETER")
+    fun effectiveWireGuardScanMode(requested: String): String = VERIFIED_WG_SCAN_MODE
 
     /**
      * Preserve the user's WireGuard obfuscation choice on Android. The previous
@@ -73,8 +75,6 @@ internal object AndroidTransportPolicy {
                 else -> 270_000L
             }
             protocol.equals("wireguard", ignoreCase = true) -> when (mode) {
-                // Allow endpoint blacklisting, a fresh scan, and a replacement
-                // runtime before Android cancels the still-healthy recovery loop.
                 "turbo" -> 210_000L
                 "stealth" -> 390_000L
                 "thorough" -> 450_000L
@@ -92,11 +92,7 @@ internal object AndroidTransportPolicy {
         }
     }
 
-    /**
-     * Honor the user's explicit MASQUE transport choice. HTTP/3 uses QUIC/UDP;
-     * HTTP/2 uses TCP and is the fallback for networks that permit UDP but drop
-     * MASQUE/QUIC data after the initial handshake.
-     */
+    /** Honor the user's explicit MASQUE transport choice. */
     @Suppress("UNUSED_PARAMETER")
     fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = forceHttp2
 
@@ -118,10 +114,9 @@ internal object AndroidTransportPolicy {
             }
             isWireGuardFamily(protocol) -> {
                 // buildCoreCommand adds the UI-selected scan flag first. Replace it
-                // rather than appending a conflicting second flag so diagnostics and
-                // the actual core behavior both report the verified mode accurately.
+                // rather than appending a conflicting second flag.
                 command.removeAll { it in scanFlags }
-                command += "--${effectiveWireGuardScanMode("ignored")}" 
+                command += "--$VERIFIED_WG_SCAN_MODE"
 
                 val validateSeconds = if (protocol.equals("gool", ignoreCase = true)) "25" else "12"
                 command += listOf(
