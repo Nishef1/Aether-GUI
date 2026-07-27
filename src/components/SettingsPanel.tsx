@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react"
-import { Cpu, ShieldCheck, X } from "lucide-react"
+import { Cpu, ScrollText, ShieldCheck, X } from "lucide-react"
 import { CoreManagerPanel } from "@/components/CoreManagerPanel"
 import { LiveLogViewer } from "@/components/LiveLogViewer"
+import { Switch } from "@/components/ui/switch"
 import { isAndroid } from "@/lib/platform"
+import { useConnectionStore } from "@/state/connectionStore"
 
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
@@ -17,7 +19,7 @@ function MobileCoreSummary() {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/20 p-3">
       <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
-          <Cpu className="size-4" aria-hidden="true" />
+        <Cpu className="size-4" aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-foreground">Aether v1.4.0 · ARM64</p>
@@ -34,6 +36,8 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const onCloseRef = useRef(onClose)
+  const loggingEnabled = useConnectionStore((state) => state.loggingEnabled)
+  const setLoggingEnabled = useConnectionStore((state) => state.setLoggingEnabled)
 
   useEffect(() => {
     onCloseRef.current = onClose
@@ -104,9 +108,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             Settings
           </h2>
           <p className="text-[10px] text-muted-foreground">
-            {isAndroid
-              ? "Mobile core, diagnostics, and runtime details"
-              : "Cores, diagnostics, and runtime details"}
+            {isAndroid ? "Mobile core and runtime" : "Cores and runtime"}
           </p>
         </div>
         <button
@@ -138,15 +140,28 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         <div className={isAndroid ? "my-4 h-px bg-border" : "my-5 h-px bg-border"} />
 
         <section className="space-y-3">
-          <div>
-            <h3 className="text-xs font-medium text-foreground">Live logs</h3>
-            <p className="text-[10px] leading-relaxed text-muted-foreground">
-              {isAndroid
-                ? "Connection and diagnostic events from this session."
-                : "Recent bounded runtime output. Structured diagnostics restart on every app launch and stop writing after the session size cap is reached."}
-            </p>
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-border/70 bg-muted/20 p-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                <ScrollText className="size-4" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-xs font-medium text-foreground">Live logs</h3>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  {loggingEnabled ? "Recording this session" : "Off"}
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={loggingEnabled}
+              onCheckedChange={(enabled) => {
+                void setLoggingEnabled(enabled).catch(() => undefined)
+              }}
+              aria-label="Enable live logs"
+            />
           </div>
-          <LiveLogViewer />
+
+          {loggingEnabled && <LiveLogViewer />}
         </section>
       </div>
     </div>
