@@ -20,6 +20,7 @@
     "patch:android:wg": "python scripts/ci/patch-aether-wg-real-egress.py",
     "prepare:android:arm64": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-android-native-final.ps1",
     "build:android:arm64": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android-arm64.ps1",
+    "build:android:arm64:debug": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android-arm64.ps1 -Debug",
     "core:aether": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-local-aether.ps1",
     "core:aether:local": "pnpm core:aether",
     "core:aether:bundle:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bundle-embedded-aether.ps1",
