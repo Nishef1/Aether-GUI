@@ -5,6 +5,14 @@ internal object AndroidTransportPolicy {
     /** Matches the Aether core's outer TUNNEL_MTU; Gool keeps its inner MTU at 1200. */
     const val TUN_MTU = 1280
 
+    private val scanFlags = setOf(
+        "--turbo",
+        "--balanced",
+        "--thorough",
+        "--stealth",
+        "--ironclad",
+    )
+
     fun isMasque(protocol: String): Boolean =
         protocol.equals("masque", ignoreCase = true) ||
             protocol.equals("auto", ignoreCase = true)
@@ -12,6 +20,19 @@ internal object AndroidTransportPolicy {
     fun isWireGuardFamily(protocol: String): Boolean =
         protocol.equals("wireguard", ignoreCase = true) ||
             protocol.equals("gool", ignoreCase = true)
+
+    /**
+     * WireGuard's Turbo/Balanced/Thorough/Stealth discovery modes can accept a
+     * candidate after handshake plus a small raw data-plane probe. On restricted
+     * Android networks that can be a false positive: the candidate answers the
+     * probe while real TCP through SOCKS is still dropped.
+     *
+     * Ironclad is the core mode that confirms finalists with a real HTTP request.
+     * Android defines Connected using an independent SOCKS DNS/TCP/TLS/HTTP probe,
+     * so selecting an endpoint with the same end-to-end requirement prevents the
+     * service from repeatedly launching a known probe-only candidate.
+     */
+    fun effectiveWireGuardScanMode(requested: String): String = "ironclad"
 
     /**
      * Preserve the user's WireGuard obfuscation choice on Android. The previous
@@ -38,7 +59,11 @@ internal object AndroidTransportPolicy {
      * end-to-end data-plane validation. Cancellation remains immediate.
      */
     fun startupTimeoutMs(protocol: String, scanMode: String): Long {
-        val mode = scanMode.lowercase()
+        val mode = if (isWireGuardFamily(protocol)) {
+            effectiveWireGuardScanMode(scanMode)
+        } else {
+            scanMode.lowercase()
+        }
         return when {
             protocol.equals("gool", ignoreCase = true) -> when (mode) {
                 "turbo" -> 150_000L
@@ -92,6 +117,12 @@ internal object AndroidTransportPolicy {
                 if (useMasqueHttp2) command += "--fragment"
             }
             isWireGuardFamily(protocol) -> {
+                // buildCoreCommand adds the UI-selected scan flag first. Replace it
+                // rather than appending a conflicting second flag so diagnostics and
+                // the actual core behavior both report the verified mode accurately.
+                command.removeAll { it in scanFlags }
+                command += "--${effectiveWireGuardScanMode("ignored")}" 
+
                 val validateSeconds = if (protocol.equals("gool", ignoreCase = true)) "25" else "12"
                 command += listOf(
                     "--keepalive", "5",
