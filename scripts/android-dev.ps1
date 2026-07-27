@@ -29,6 +29,32 @@ function Resolve-Adb {
     throw "adb was not found. Reopen PowerShell after installing Android SDK Platform-Tools."
 }
 
+function Remove-AdbReverseQuietly {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AdbPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Serial,
+        [Parameter(Mandatory = $true)]
+        [int]$Port
+    )
+
+    # A missing listener is the expected state on the first run. adb writes that
+    # condition to stderr, and the script-wide Stop preference would otherwise
+    # turn harmless cleanup into a fatal NativeCommandError.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        & $AdbPath -s $Serial reverse --remove "tcp:$Port" *> $null
+    }
+    catch {
+        # Cleanup is best-effort. Real reverse-creation failures are handled below.
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 $adb = Resolve-Adb
 $connectedDevices = @(
     & $adb devices |
@@ -64,8 +90,8 @@ Write-Host "Using Android device: $serial" -ForegroundColor Cyan
 Write-Host "Routing device localhost ports through USB ADB; VPN and LAN adapter addresses will be ignored." -ForegroundColor Cyan
 
 try {
-    & $adb -s $serial reverse --remove "tcp:$devPort" 2>$null | Out-Null
-    & $adb -s $serial reverse --remove "tcp:$hmrPort" 2>$null | Out-Null
+    Remove-AdbReverseQuietly -AdbPath $adb -Serial $serial -Port $devPort
+    Remove-AdbReverseQuietly -AdbPath $adb -Serial $serial -Port $hmrPort
 
     & $adb -s $serial reverse "tcp:$devPort" "tcp:$devPort"
     if ($LASTEXITCODE -ne 0) {
@@ -82,8 +108,8 @@ try {
     $exitCode = $LASTEXITCODE
 }
 finally {
-    & $adb -s $serial reverse --remove "tcp:$devPort" 2>$null | Out-Null
-    & $adb -s $serial reverse --remove "tcp:$hmrPort" 2>$null | Out-Null
+    Remove-AdbReverseQuietly -AdbPath $adb -Serial $serial -Port $devPort
+    Remove-AdbReverseQuietly -AdbPath $adb -Serial $serial -Port $hmrPort
 }
 
 exit $exitCode
