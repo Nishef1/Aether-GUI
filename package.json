@@ -14,7 +14,7 @@
     "tauri": "tauri",
     "android:init": "tauri android init",
     "android:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-dev.ps1",
-    "patch:android:wg": "python scripts/ci/patch-aether-wg-egress.py",
+    "patch:android:wg": "python scripts/ci/patch-aether-wg-real-egress.py",
     "prepare:android:arm64": "pnpm patch:android:wg && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-android-native.ps1",
     "build:android:arm64": "pnpm prepare:android:arm64 && tauri android build --apk --target aarch64 --split-per-abi",
     "core:aether": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-local-aether.ps1",
