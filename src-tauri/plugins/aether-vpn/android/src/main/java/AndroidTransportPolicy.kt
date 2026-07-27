@@ -80,6 +80,9 @@ internal object AndroidTransportPolicy {
         when {
             isMasque(protocol) -> {
                 if (isFastAuto(protocol)) {
+                    // Do not leave the core in interactive protocol selection:
+                    // Android Auto is an explicit MASQUE route.
+                    if (!command.contains("--masque")) command += "--masque"
                     // Auto favors the route that succeeds fastest in Iran today:
                     // H2/TCP, cached gateway reuse, and a brief verified latency
                     // sample when a fresh scan is required.
