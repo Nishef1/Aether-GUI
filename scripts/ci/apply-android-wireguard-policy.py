@@ -23,7 +23,40 @@ def replace_if_present(text: str, old: str, new: str) -> str:
 
 service = SERVICE.read_text(encoding="utf-8")
 
+# A missing or mismatched JS/Tauri field must fail safe to H2 rather than silently
+# turning the user's explicit H2 choice into H3. The policy below still forces H2
+# for Android Auto, but these defaults preserve intent at both plugin boundaries.
+service = replace_if_present(
+    service,
+    '    var masqueHttp2: Boolean = false\n',
+    '    var masqueHttp2: Boolean = true\n',
+)
+service = replace_if_present(
+    service,
+    '        val masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, false)\n',
+    '        val masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, true)\n',
+)
+
 safe_selection = '''            val useMasqueHttp2 = AndroidTransportPolicy.isMasque(protocol) &&
+                AndroidTransportPolicy.useMasqueHttp2(masqueHttp2, false)
+            if (AndroidTransportPolicy.isMasque(protocol)) {
+                log(
+                    "MASQUE transport selected: HTTP/2 (TCP); Android safe auto; " +
+                        "requestedH2=$masqueHttp2"
+                )
+            }
+            val effectiveWgNoize = if (AndroidTransportPolicy.isWireGuardFamily(protocol)) {
+                AndroidTransportPolicy.effectiveWireGuardNoize(wgNoize)
+            } else {
+                wgNoize
+            }
+            if (effectiveWgNoize != wgNoize) {
+                log("Android stable dataplane pass: WireGuard noize $wgNoize -> $effectiveWgNoize")
+            }
+
+'''
+
+legacy_safe_selection = '''            val useMasqueHttp2 = AndroidTransportPolicy.isMasque(protocol) &&
                 AndroidTransportPolicy.useMasqueHttp2(masqueHttp2, false)
             if (AndroidTransportPolicy.isMasque(protocol)) {
                 log("MASQUE transport selected: HTTP/2 (TCP); Android safe auto")
@@ -67,8 +100,10 @@ legacy_selection = '''            val udpAvailable = if (AndroidTransportPolicy.
 
 '''
 
-if SAFE_MASQUE_MARKER not in service:
-    if legacy_selection in service:
+if "requestedH2=$masqueHttp2" not in service:
+    if legacy_safe_selection in service:
+        service = service.replace(legacy_safe_selection, safe_selection, 1)
+    elif legacy_selection in service:
         service = service.replace(legacy_selection, safe_selection, 1)
     else:
         service = replace_required(
@@ -153,8 +188,6 @@ elif old_policy_timeout in service:
 elif new_timeout not in service:
     raise SystemExit("transport startup timeout wiring was not found")
 
-# A listening local port is not a connected VPN. Verify remote DNS + TCP + HTTP
-# through the exact SOCKS endpoint before creating TUN or publishing Connected.
 verification_marker = '''            ensureActive(token)
             val connectedAt = System.currentTimeMillis()
 '''
@@ -249,6 +282,10 @@ if "CORE_START_TIMEOUT_MS" in service:
     raise SystemExit("fixed Android core startup timeout still exists")
 if "AndroidUdpCapabilityProbe.hasUsableUdp()" in service:
     raise SystemExit("generic UDP probe still controls MASQUE transport")
+if 'var masqueHttp2: Boolean = false' in service:
+    raise SystemExit("plugin argument still defaults missing H2 requests to false")
+if 'getBooleanExtra(EXTRA_MASQUE_HTTP2, false)' in service:
+    raise SystemExit("service intent still defaults missing H2 requests to false")
 
 SERVICE.write_text(service, encoding="utf-8")
-print("Android safe MASQUE H2, stable WG pass, and egress gate applied successfully")
+print("Android safe MASQUE H2, explicit-H2 preservation, stable WG pass, and egress gate applied")
