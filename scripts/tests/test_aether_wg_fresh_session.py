@@ -16,16 +16,14 @@ SESSION_PATCHER = ROOT / "scripts/ci/patch-aether-wg-fresh-session.py"
 EGRESS_PATCHER = ROOT / "scripts/ci/patch-aether-wg-real-egress.py"
 RESOLVER_PATCHER = ROOT / "scripts/ci/patch-aether-wg-runtime-resolver.py"
 READINESS_CLEANUP = ROOT / "scripts/ci/remove-aether-wg-core-readiness-gate.py"
+ANDROID_FRESH_RUNTIME = ROOT / "scripts/ci/patch-aether-android-fresh-runtime.py"
 CORE_SOURCE = ROOT / "vendor/aether/aether/src"
-ESTABLISHED_MARKER = "validated session retained for runtime handoff"
-FRESH_SESSION_MARKER = "validated with disposable probe session; starting fresh runtime session"
-FRESH_READY_MARKER = "fresh WireGuard runtime data-plane ready"
+FRESH_RUNTIME_MARKER = "Android fresh WireGuard runtime"
 REAL_EGRESS_MARKER = "independent resolver egress"
-ANDROID_READINESS_MARKER = "Android owns final SOCKS egress readiness"
 CANONICAL_GOOL_MARKER = "tunneled through outer warp via"
 
 
-class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
+class AndroidFreshWireGuardRuntimeTest(unittest.TestCase):
     def run_patch_pipeline(self, root: Path) -> subprocess.CompletedProcess[str]:
         outputs: list[str] = []
         errors: list[str] = []
@@ -35,6 +33,7 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
             EGRESS_PATCHER,
             RESOLVER_PATCHER,
             READINESS_CLEANUP,
+            ANDROID_FRESH_RUNTIME,
         )
         for patcher in patchers:
             result = subprocess.run(
@@ -56,7 +55,7 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
             stderr="".join(errors),
         )
 
-    def test_patch_pipeline_is_idempotent_and_delegates_final_readiness(self) -> None:
+    def test_pipeline_is_idempotent_and_restores_fresh_android_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temp_root = Path(directory)
             source_dir = temp_root / "vendor/aether/aether/src"
@@ -92,43 +91,41 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
             wireguard_source = (source_dir / "wireguard.rs").read_text(encoding="utf-8")
             socks_source = (source_dir / "socks.rs").read_text(encoding="utf-8")
 
-            self.assertGreaterEqual(main_source.count(ESTABLISHED_MARKER), 2)
-            self.assertNotIn(FRESH_SESSION_MARKER, main_source)
-            self.assertNotIn(FRESH_READY_MARKER, main_source)
-            self.assertNotIn("async fn warm_up_wg_stack", main_source)
-
-            simple = main_source.split("async fn run_wireguard_tunnel", 1)[1].split("\n}\n", 1)[0]
+            simple = main_source.split("async fn run_wireguard_tunnel", 1)[1].split(
+                "\n}\n", 1
+            )[0]
             nested = main_source.split("async fn establish_wg", 1)[1].split("\n}\n", 1)[0]
             for block in (simple, nested):
-                self.assertIn("verify_endpoint_keep_session", block)
-                self.assertIn("WgTunnel::from_established", block)
-                self.assertIn(ANDROID_READINESS_MARKER, block)
+                self.assertIn(FRESH_RUNTIME_MARKER, block)
+                self.assertIn("WgTunnel::new", block)
+                self.assertNotIn("verify_endpoint_keep_session", block)
+                self.assertNotIn("WgTunnel::from_established", block)
                 self.assertNotIn("verify_wg_runtime_egress", block)
                 self.assertNotIn("runtime readiness task supervision", block)
-                self.assertNotIn("WgTunnel::new(runtime_config", block)
-                self.assertNotIn("warm_up_wg_stack", block)
 
-            self.assertNotIn("async fn verify_wg_runtime_egress", main_source)
-            self.assertLess(simple.index("tokio::spawn(tunnel.run(outbound_rx))"), simple.index("socks::serve"))
+            self.assertLess(
+                simple.index("tokio::spawn(tunnel.run(outbound_rx))"),
+                simple.index("socks::serve"),
+            )
+            self.assertNotIn("validated session retained for runtime handoff", simple)
+            self.assertNotIn("validated session retained for runtime handoff", nested)
 
-            self.assertNotIn("fn gool_inner_candidates", main_source)
-            self.assertNotIn("trying independent inner WARP endpoint", main_source)
-            gool = main_source.split("async fn run_warp_in_warp", 1)[1].split("\n}\n", 1)[0]
+            gool = main_source.split("async fn run_warp_in_warp", 1)[1].split(
+                "\n}\n", 1
+            )[0]
+            self.assertIn("Duration::from_millis(1_500)", gool)
+            self.assertIn("fresh outer runtime settle", gool)
             self.assertIn("spawn_udp_forwarder(&outer.stack, peer)", gool)
             self.assertIn(CANONICAL_GOOL_MARKER, gool)
-            self.assertNotIn("spawn_udp_forwarder(&outer.stack, inner_peer)", gool)
+            self.assertNotIn("trying independent inner WARP endpoint", gool)
+            self.assertNotIn("fn gool_inner_candidates", main_source)
 
             self.assertIn(REAL_EGRESS_MARKER, wireguard_source)
             self.assertIn("Ipv4Addr::new(8, 8, 8, 8)", wireguard_source)
             self.assertIn("Ipv4Addr::new(9, 9, 9, 9)", wireguard_source)
-            self.assertNotIn(
-                "const DATAPLANE_DNS: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1)",
-                wireguard_source,
-            )
-            self.assertIn("for probe in &probes", wireguard_source)
             self.assertIn("runtime DNS uses validated independent resolvers", socks_source)
 
-    def test_local_android_entrypoints_use_finalized_native_pipeline(self) -> None:
+    def test_local_android_entrypoints_apply_fresh_runtime_last(self) -> None:
         package = (ROOT / "package.json").read_text(encoding="utf-8")
         android_dev = (ROOT / "scripts/android-dev.ps1").read_text(encoding="utf-8")
         finalizer = (ROOT / "scripts/prepare-android-native-final.ps1").read_text(
@@ -141,6 +138,7 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
             "patch-aether-wg-real-egress.py",
             "patch-aether-wg-runtime-resolver.py",
             "remove-aether-wg-core-readiness-gate.py",
+            "patch-aether-android-fresh-runtime.py",
             "Rebuilding final patched Aether core",
         ]
         positions = [finalizer.index(value) for value in ordered]
