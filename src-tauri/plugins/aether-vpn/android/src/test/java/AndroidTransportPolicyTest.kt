@@ -53,6 +53,7 @@ class AndroidTransportPolicyTest {
     fun autoUsesFastH2FriendlyCorePolicy() {
         val auto = mutableListOf("aether", "--balanced", "--no-quick-reconnect")
         AndroidTransportPolicy.appendCoreArgs(auto, "auto", useMasqueHttp2 = true)
+        assertEquals(1, auto.count { it == "--masque" })
         assertFalse(auto.contains("--balanced"))
         assertFalse(auto.contains("--no-quick-reconnect"))
         assertEquals(1, auto.count { it == "--turbo" })
