@@ -57,7 +57,10 @@ $python = Resolve-Python
 $patches = @(
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-resolver.py"),
-    (Join-Path $repoRoot "scripts\ci\remove-aether-wg-core-readiness-gate.py")
+    (Join-Path $repoRoot "scripts\ci\remove-aether-wg-core-readiness-gate.py"),
+    # Apply this last. It intentionally replaces the v1.4 retained-probe handoff
+    # with the fresh runtime model used by v1.3 and the Android reference client.
+    (Join-Path $repoRoot "scripts\ci\patch-aether-android-fresh-runtime.py")
 )
 foreach ($patch in $patches) {
     if (-not (Test-Path $patch)) {
