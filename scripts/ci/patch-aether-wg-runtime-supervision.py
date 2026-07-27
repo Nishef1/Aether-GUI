@@ -8,6 +8,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SUPERVISION_MARKER = "runtime readiness task supervision"
+LEGACY_NESTED_RETURN = '''                return flatten_runtime_task("WireGuard tunnel during readiness", result);
+'''
+FIXED_NESTED_RETURN = '''                let error = match flatten_runtime_task(
+                    "WireGuard tunnel during readiness",
+                    result,
+                ) {
+                    Ok(()) => AetherError::Other(
+                        "WireGuard tunnel ended unexpectedly during readiness".into(),
+                    ),
+                    Err(error) => error,
+                };
+                return Err(error);
+'''
 
 
 def function_span(source: str, signature: str) -> tuple[int, int]:
@@ -74,8 +87,15 @@ def transform_simple(block: str) -> str:
 
 
 def transform_nested(block: str) -> str:
+    # Migrate a working tree that already received the first supervision patch.
+    # establish_wg returns Result<RunningWireGuard>, while flatten_runtime_task
+    # returns Result<()>, so the legacy direct return cannot type-check.
     if SUPERVISION_MARKER in block:
-        return block
+        if LEGACY_NESTED_RETURN in block:
+            return block.replace(LEGACY_NESTED_RETURN, FIXED_NESTED_RETURN, 1)
+        if FIXED_NESTED_RETURN in block:
+            return block
+        raise SystemExit("nested WireGuard supervision exists without a recognized exit branch")
 
     old = '''    let task = tokio::spawn(tunnel.run(outbound_rx));
     if let Err(error) = verify_wg_runtime_egress(&stack, label).await {
@@ -83,24 +103,24 @@ def transform_nested(block: str) -> str:
         return Err(error);
     }
 '''
-    new = '''    let mut task = tokio::spawn(tunnel.run(outbound_rx));
+    new = f'''    let mut task = tokio::spawn(tunnel.run(outbound_rx));
     // runtime readiness task supervision: outer/inner failures must win the race
     // against the HTTP readiness timeout and retain their real error message.
-    {
+    {{
         let readiness = verify_wg_runtime_egress(&stack, label);
         tokio::pin!(readiness);
-        tokio::select! {
-            result = &mut task => {
-                return flatten_runtime_task("WireGuard tunnel during readiness", result);
-            }
-            result = &mut readiness => {
-                if let Err(error) = result {
+        tokio::select! {{
+            result = &mut task => {{
+{FIXED_NESTED_RETURN.rstrip()}
+            }}
+            result = &mut readiness => {{
+                if let Err(error) = result {{
                     task.abort();
                     return Err(error);
-                }
-            }
-        }
-    }
+                }}
+            }}
+        }}
+    }}
 '''
     if old not in block:
         raise SystemExit("nested WireGuard readiness gate was not found")
@@ -131,6 +151,11 @@ for label, block in (("simple", simple), ("nested", nested)):
         raise SystemExit(f"{label} WireGuard readiness does not supervise the runtime task")
     if "WireGuard tunnel during readiness" not in block:
         raise SystemExit(f"{label} WireGuard readiness error propagation is missing")
+
+if LEGACY_NESTED_RETURN in nested:
+    raise SystemExit("nested WireGuard readiness still returns Result<()> directly")
+if FIXED_NESTED_RETURN not in nested:
+    raise SystemExit("nested WireGuard readiness does not preserve Result<RunningWireGuard>")
 
 main_rs.write_text(source, encoding="utf-8")
 print(f"Supervised WireGuard runtimes during readiness checks in {main_rs}")
