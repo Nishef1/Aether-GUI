@@ -1,3 +1,7 @@
+param(
+    [switch]$Debug
+)
+
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -48,7 +52,14 @@ try {
     }
 
     $env:VITE_AETHER_PLATFORM = "android"
-    & pnpm tauri android build --apk --target aarch64 --split-per-abi
+    $buildArguments = @("tauri", "android", "build", "--apk", "--target", "aarch64", "--split-per-abi")
+    if ($Debug) {
+        $buildArguments += "--debug"
+        Write-Host "Building an installable ARM64 debug APK for direct sideload testing..." -ForegroundColor Cyan
+    } else {
+        Write-Host "Building an ARM64 release APK; a release signing configuration may be required." -ForegroundColor Cyan
+    }
+    & pnpm @buildArguments
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         throw "Android ARM64 APK build failed with exit code $exitCode."
