@@ -88,6 +88,22 @@ internal object AndroidVpnRuntime {
     fun diagnosticsPath(context: Context): String =
         File(context.filesDir, "diagnostics/aether-mobile.log").absolutePath
 
+    // Android mobile efficiency policy: retain the complete bounded log in
+    // memory for the UI, but avoid flash writes for every scanner INFO line.
+    private fun shouldPersistDiagnostic(line: String): Boolean {
+        val normalized = line.lowercase()
+        return normalized.contains("error") ||
+            normalized.contains("warn") ||
+            normalized.contains("starting aether") ||
+            normalized.contains("selected ") ||
+            normalized.contains("socks5 server listening") ||
+            normalized.contains("socks egress verified") ||
+            normalized.contains("android tun active") ||
+            normalized.contains("transport selected") ||
+            normalized.contains("stopped") ||
+            normalized.contains("native resources released")
+    }
+
     fun appendLog(context: Context, line: String) {
         val timestamp = System.currentTimeMillis()
         val entry = FinalNativeLogEntry(logSequence.incrementAndGet(), timestamp, line)
@@ -95,6 +111,7 @@ internal object AndroidVpnRuntime {
             if (logLines.size >= MAX_LOG_LINES) logLines.removeFirst()
             logLines.addLast(entry)
 
+            if (!shouldPersistDiagnostic(line)) return@synchronized
             val file = File(diagnosticsPath(context))
             file.parentFile?.mkdirs()
             if (file.length() >= MAX_DIAGNOSTICS_BYTES) {
