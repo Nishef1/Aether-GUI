@@ -113,11 +113,21 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
             )
             self.assertIn("for probe in &probes", wireguard_source)
 
-    def test_local_android_entrypoints_apply_real_egress_patch(self) -> None:
+    def test_local_android_entrypoints_use_finalized_native_pipeline(self) -> None:
         package = (ROOT / "package.json").read_text(encoding="utf-8")
         android_dev = (ROOT / "scripts/android-dev.ps1").read_text(encoding="utf-8")
-        self.assertIn("patch-aether-wg-real-egress.py", package)
-        self.assertIn("patch-aether-wg-real-egress.py", android_dev)
+        finalizer = (ROOT / "scripts/prepare-android-native-final.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("prepare-android-native-final.ps1", package)
+        self.assertIn("prepare-android-native-final.ps1", android_dev)
+        self.assertIn("prepare-android-native.ps1", finalizer)
+        self.assertIn("patch-aether-wg-real-egress.py", finalizer)
+        self.assertLess(
+            finalizer.index("prepare-android-native.ps1"),
+            finalizer.index("patch-aether-wg-real-egress.py"),
+        )
+        self.assertIn("Rebuilding final patched Aether core", finalizer)
 
 
 if __name__ == "__main__":
