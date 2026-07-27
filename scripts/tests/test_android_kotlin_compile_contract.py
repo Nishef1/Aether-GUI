@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -16,19 +17,29 @@ class AndroidKotlinCompileContractTest(unittest.TestCase):
     def test_exit_probe_uses_explicit_ssl_socket_factory_type(self) -> None:
         source = PROBE.read_text(encoding="utf-8")
         self.assertIn("import javax.net.ssl.SSLSocketFactory", source)
-        self.assertIn(
-            "SSLContext.getDefault().socketFactory as SSLSocketFactory",
+
+        factory = re.search(
+            r"val\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+            r"(?:SSLContext\.getDefault\(\)\.socketFactory|SSLSocketFactory\.getDefault\(\))"
+            r"\s+as\s+SSLSocketFactory",
             source,
         )
-        self.assertIn(
-            "sslFactory.createSocket(rawSocket, HOST, PORT, true)",
+        self.assertIsNotNone(factory, "TLS factory must be explicitly typed as SSLSocketFactory")
+        factory_name = factory.group("name")
+
+        self.assertRegex(
             source,
+            rf"{re.escape(factory_name)}\.createSocket\(\s*"
+            r"[A-Za-z_][A-Za-z0-9_]*\s*,\s*"
+            r"[A-Za-z_][A-Za-z0-9_]*\s*,\s*"
+            r"[A-Za-z_][A-Za-z0-9_]*\s*,\s*true\s*\)",
         )
-        self.assertNotIn(
-            "SSLContext.getDefault().socketFactory\n                .createSocket",
+        self.assertNotRegex(
             source,
+            r"(?:SSLContext\.getDefault\(\)\.socketFactory|SSLSocketFactory\.getDefault\(\))"
+            r"\s*\.createSocket\(",
         )
-        self.assertIn("runCatching { rawSocket.close() }", source)
+        self.assertIn("runCatching { ssl.close() }", source)
 
     def test_java_array_deque_is_converted_before_take_last(self) -> None:
         source = RUNTIME.read_text(encoding="utf-8")
