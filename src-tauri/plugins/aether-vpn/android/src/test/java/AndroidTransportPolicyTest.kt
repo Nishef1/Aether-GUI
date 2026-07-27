@@ -16,18 +16,18 @@ class AndroidTransportPolicyTest {
     }
 
     @Test
-    fun wireGuardAlwaysAllowsForIroncladHttpVerification() {
+    fun wireGuardUsesBoundedIroncladHttpVerification() {
         for (requested in listOf("turbo", "balanced", "stealth", "thorough", "ironclad")) {
             assertEquals("ironclad", AndroidTransportPolicy.effectiveWireGuardScanMode(requested))
-            assertEquals(510_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", requested))
+            assertEquals(100_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", requested))
         }
     }
 
     @Test
-    fun goolAlwaysAllowsForIroncladOuterSelection() {
+    fun goolUsesBoundedIroncladOuterSelection() {
         for (requested in listOf("turbo", "balanced", "stealth", "thorough", "ironclad")) {
             assertEquals("ironclad", AndroidTransportPolicy.effectiveWireGuardScanMode(requested))
-            assertEquals(510_000L, AndroidTransportPolicy.startupTimeoutMs("gool", requested))
+            assertEquals(110_000L, AndroidTransportPolicy.startupTimeoutMs("gool", requested))
         }
     }
 
@@ -50,27 +50,42 @@ class AndroidTransportPolicyTest {
     }
 
     @Test
-    fun runtimeArgsCoverMasqueAndWireGuardFamilies() {
+    fun autoUsesFastH2FriendlyCorePolicy() {
+        val auto = mutableListOf("aether", "--balanced", "--no-quick-reconnect")
+        AndroidTransportPolicy.appendCoreArgs(auto, "auto", useMasqueHttp2 = true)
+        assertFalse(auto.contains("--balanced"))
+        assertFalse(auto.contains("--no-quick-reconnect"))
+        assertEquals(1, auto.count { it == "--turbo" })
+        assertEquals(1, auto.count { it == "--quick-reconnect" })
+        assertTrue(auto.contains("--fragment"))
+        assertTrue(auto.windowed(2).contains(listOf("--health-interval", "30")))
+        assertTrue(AndroidTransportPolicy.isFastAuto("auto"))
+    }
+
+    @Test
+    fun runtimeArgsCoverExplicitMasqueAndWireGuardFamilies() {
         val masque = mutableListOf("aether", "--masque", "--turbo")
         AndroidTransportPolicy.appendCoreArgs(masque, "masque", useMasqueHttp2 = true)
         assertTrue(masque.contains("--turbo"))
         assertTrue(masque.contains("--fragment"))
         assertTrue(masque.windowed(2).contains(listOf("--validate-secs", "12")))
-        assertTrue(masque.windowed(2).contains(listOf("--health-interval", "20")))
+        assertTrue(masque.windowed(2).contains(listOf("--health-interval", "30")))
         assertTrue(masque.windowed(2).contains(listOf("--reconnect-secs", "2")))
 
         val wireGuard = mutableListOf("aether", "--wg", "--turbo")
         AndroidTransportPolicy.appendCoreArgs(wireGuard, "wireguard", useMasqueHttp2 = false)
         assertFalse(wireGuard.contains("--turbo"))
         assertEquals(1, wireGuard.count { it == "--ironclad" })
-        assertTrue(wireGuard.windowed(2).contains(listOf("--keepalive", "5")))
+        assertTrue(wireGuard.contains("--no-profile-retry"))
+        assertTrue(wireGuard.windowed(2).contains(listOf("--keepalive", "25")))
         assertTrue(wireGuard.windowed(2).contains(listOf("--wg-validate-secs", "12")))
-        assertTrue(wireGuard.windowed(2).contains(listOf("--wg-health-interval", "15")))
+        assertTrue(wireGuard.windowed(2).contains(listOf("--wg-health-interval", "30")))
 
         val gool = mutableListOf("aether", "--gool", "--balanced")
         AndroidTransportPolicy.appendCoreArgs(gool, "gool", useMasqueHttp2 = false)
         assertFalse(gool.contains("--balanced"))
         assertEquals(1, gool.count { it == "--ironclad" })
+        assertTrue(gool.contains("--no-profile-retry"))
         assertTrue(gool.windowed(2).contains(listOf("--wg-validate-secs", "25")))
         assertTrue(gool.windowed(2).contains(listOf("--wg-startup-secs", "45")))
         assertTrue(gool.windowed(2).contains(listOf("--wg-reconnect-secs", "2")))
