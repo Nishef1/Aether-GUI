@@ -50,13 +50,14 @@ if not socks_rs.is_file():
 source = socks_rs.read_text(encoding="utf-8")
 replacement = '''pub(crate) async fn dns_resolve(stack: &StackHandle, name: &str) -> Result<IpAddr> {
     // runtime DNS uses validated independent resolvers. The WireGuard dataplane
-    // validator already proved that at least one of these destinations is reachable;
-    // using only 1.1.1.1 here caused healthy WARP sessions to be rejected on networks
-    // where Cloudflare's in-tunnel resolver address does not answer.
+    // validator already proved that at least one independent destination is reachable;
+    // 1.1.1.1 remains only as a compatibility fallback so the working MASQUE path
+    // is preserved without making WARP runtime readiness depend on it exclusively.
     const TIMEOUT: Duration = Duration::from_secs(6);
     let servers = [
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9)), 53),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 53),
     ];
 
     let udp = stack.open_udp().await?;
@@ -70,7 +71,7 @@ replacement = '''pub(crate) async fn dns_resolve(stack: &StackHandle, name: &str
     if sent == 0 {
         udp.close().await;
         return Err(AetherError::Other(
-            "dns query could not be sent to independent resolvers".into(),
+            "dns query could not be sent to any resolver".into(),
         ));
     }
 
@@ -81,7 +82,7 @@ replacement = '''pub(crate) async fn dns_resolve(stack: &StackHandle, name: &str
         if remaining.is_zero() {
             sender.close().await;
             return Err(AetherError::Other(
-                "dns timeout via independent resolvers".into(),
+                "dns timeout across resolver race".into(),
             ));
         }
 
@@ -94,7 +95,7 @@ replacement = '''pub(crate) async fn dns_resolve(stack: &StackHandle, name: &str
             Err(_) => {
                 sender.close().await;
                 return Err(AetherError::Other(
-                    "dns timeout via independent resolvers".into(),
+                    "dns timeout across resolver race".into(),
                 ));
             }
         };
@@ -118,10 +119,12 @@ if RESOLVER_MARKER not in block:
     raise SystemExit("runtime resolver marker is missing")
 if "Ipv4Addr::new(8, 8, 8, 8)" not in block or "Ipv4Addr::new(9, 9, 9, 9)" not in block:
     raise SystemExit("validated independent runtime resolvers are missing")
-if '"1.1.1.1:53"' in block:
-    raise SystemExit("legacy Cloudflare-only runtime resolver remains")
+if "Ipv4Addr::new(1, 1, 1, 1)" not in block:
+    raise SystemExit("MASQUE-compatible Cloudflare DNS fallback is missing")
+if 'let servers = [\n        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))' in block:
+    raise SystemExit("Cloudflare DNS must not be the first runtime resolver")
 if "sender.close().await" not in block:
     raise SystemExit("runtime DNS socket cleanup is missing")
 
 socks_rs.write_text(source, encoding="utf-8")
-print(f"Aligned runtime DNS with validated independent resolvers in {socks_rs}")
+print(f"Aligned runtime DNS with validated resolver race in {socks_rs}")
