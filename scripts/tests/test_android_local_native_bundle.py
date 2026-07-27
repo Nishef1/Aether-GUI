@@ -11,16 +11,17 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PREPARE_SCRIPT = ROOT / "scripts/prepare-android-native.ps1"
+BASE_PREPARE_SCRIPT = ROOT / "scripts/prepare-android-native.ps1"
+FINAL_PREPARE_SCRIPT = ROOT / "scripts/prepare-android-native-final.ps1"
 DEV_SCRIPT = ROOT / "scripts/android-dev.ps1"
 PACKAGE_JSON = ROOT / "package.json"
 PACKAGING_PATCHER = ROOT / "scripts/ci/patch-android-packaging.py"
 
 
 class AndroidLocalNativeBundleTest(unittest.TestCase):
-    def test_android_dev_prepares_payload_before_tauri_launch(self) -> None:
+    def test_android_dev_prepares_final_payload_before_tauri_launch(self) -> None:
         source = DEV_SCRIPT.read_text(encoding="utf-8")
-        prepare_index = source.index('prepare-android-native.ps1')
+        prepare_index = source.index('prepare-android-native-final.ps1')
         launch_index = source.index('pnpm tauri android dev')
         self.assertLess(prepare_index, launch_index)
 
@@ -35,14 +36,15 @@ class AndroidLocalNativeBundleTest(unittest.TestCase):
         package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
         scripts = package["scripts"]
         self.assertIn("prepare:android:arm64", scripts)
+        self.assertIn("prepare-android-native-final.ps1", scripts["prepare:android:arm64"])
         self.assertTrue(
             scripts["build:android:arm64"].startswith(
                 "pnpm prepare:android:arm64 &&"
             )
         )
 
-    def test_preparer_builds_and_copies_all_runtime_components(self) -> None:
-        source = PREPARE_SCRIPT.read_text(encoding="utf-8")
+    def test_base_preparer_builds_and_copies_all_runtime_components(self) -> None:
+        source = BASE_PREPARE_SCRIPT.read_text(encoding="utf-8")
         required_tokens = (
             '"ndk"',
             '"--target"',
@@ -57,6 +59,19 @@ class AndroidLocalNativeBundleTest(unittest.TestCase):
         )
         for token in required_tokens:
             self.assertIn(token, source)
+
+    def test_final_preparer_removes_duplicate_core_readiness_before_rebuild(self) -> None:
+        source = FINAL_PREPARE_SCRIPT.read_text(encoding="utf-8")
+        ordered = (
+            "patch-aether-wg-real-egress.py",
+            "patch-aether-wg-runtime-resolver.py",
+            "remove-aether-wg-core-readiness-gate.py",
+            "Rebuilding final patched Aether core",
+        )
+        positions = [source.index(token) for token in ordered]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("patch-aether-wg-runtime-egress.py", source)
+        self.assertNotIn("patch-aether-wg-runtime-supervision.py", source)
 
     def test_packaging_patcher_accepts_windows_crlf(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
