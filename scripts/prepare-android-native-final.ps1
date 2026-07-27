@@ -24,8 +24,8 @@ if ($ForceRebuild) {
 
 # Prepare the NDK environment, TUN bridge, hev-socks5-tunnel, Gradle packaging,
 # and the baseline Aether binary. The baseline script still applies the older
-# session patch, so the final egress patch and core rebuild intentionally happen
-# after it returns.
+# session patch, so final WireGuard routing and HTTP-readiness patches must run
+# only after it returns.
 & $basePrepare @baseArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Base Android native preparation failed with exit code $LASTEXITCODE."
@@ -53,15 +53,20 @@ function Resolve-Python {
     throw "Python 3 was not found. Install Python 3 and reopen PowerShell."
 }
 
-$patch = Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"
-if (-not (Test-Path $patch)) {
-    throw "WireGuard real-egress patch is missing: $patch"
-}
-
 $python = Resolve-Python
-& $python.Command @($python.Prefix + @($patch, $repoRoot))
-if ($LASTEXITCODE -ne 0) {
-    throw "WireGuard real-egress patch failed with exit code $LASTEXITCODE."
+$patches = @(
+    (Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"),
+    (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-egress.py")
+)
+foreach ($patch in $patches) {
+    if (-not (Test-Path $patch)) {
+        throw "Final WireGuard patch is missing: $patch"
+    }
+
+    & $python.Command @($python.Prefix + @($patch, $repoRoot))
+    if ($LASTEXITCODE -ne 0) {
+        throw "Final WireGuard patch failed with exit code $LASTEXITCODE`: $patch"
+    }
 }
 
 $cargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
