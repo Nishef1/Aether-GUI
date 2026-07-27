@@ -23,8 +23,8 @@ if ($ForceRebuild) {
 }
 
 # Prepare the NDK environment, TUN bridge, hev-socks5-tunnel, Gradle packaging,
-# and the baseline Aether binary. Final patches run after the baseline step so
-# an already-patched local submodule is migrated deterministically before the
+# and the baseline Aether binary. Final core patches run after the baseline step
+# so an already-patched local submodule is migrated deterministically before the
 # ARM64 core is rebuilt and bundled.
 & $basePrepare @baseArguments
 if ($LASTEXITCODE -ne 0) {
@@ -55,7 +55,6 @@ function Resolve-Python {
 
 $python = Resolve-Python
 $patches = @(
-    (Join-Path $repoRoot "scripts\ci\patch-android-mobile-efficiency.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-resolver.py"),
     (Join-Path $repoRoot "scripts\ci\remove-aether-wg-core-readiness-gate.py"),
@@ -66,12 +65,12 @@ $patches = @(
 )
 foreach ($patch in $patches) {
     if (-not (Test-Path $patch)) {
-        throw "Final Android patch is missing: $patch"
+        throw "Final Aether core patch is missing: $patch"
     }
 
     & $python.Command @($python.Prefix + @($patch, $repoRoot))
     if ($LASTEXITCODE -ne 0) {
-        throw "Final Android patch failed with exit code $LASTEXITCODE`: $patch"
+        throw "Final Aether core patch failed with exit code $LASTEXITCODE`: $patch"
     }
 }
 
