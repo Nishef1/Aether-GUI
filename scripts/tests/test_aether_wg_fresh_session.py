@@ -16,6 +16,7 @@ CORE_MAIN = ROOT / "vendor/aether/aether/src/main.rs"
 ESTABLISHED_MARKER = "validated session retained for runtime handoff"
 FRESH_SESSION_MARKER = "validated with disposable probe session; starting fresh runtime session"
 FRESH_READY_MARKER = "fresh WireGuard runtime data-plane ready"
+GOOL_ROUTE_MARKER = "trying independent inner WARP endpoint"
 
 
 class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
@@ -68,6 +69,28 @@ class ValidatedWireGuardRuntimeSessionTest(unittest.TestCase):
                 self.assertIn("WgTunnel::from_established", block)
                 self.assertNotIn("WgTunnel::new(runtime_config", block)
                 self.assertNotIn("warm_up_wg_stack", block)
+
+            self.assertIn("validate_timeout: Duration", nested)
+            self.assertIn("validate_timeout,", nested)
+
+            self.assertEqual(source.count("fn gool_inner_candidates"), 1)
+            self.assertEqual(source.count(GOOL_ROUTE_MARKER), 1)
+            helper = source.split("fn gool_inner_candidates", 1)[1].split("async fn run_warp_in_warp", 1)[0]
+            self.assertIn("if ip == outer_ip", helper)
+            self.assertIn("MAX_CANDIDATES: usize = 6", helper)
+            self.assertIn("WG_SEEDS_V4", helper)
+            self.assertIn("WG_PRIMARY_PORTS", helper)
+
+            gool = source.split("async fn run_warp_in_warp", 1)[1].split("\n}\n", 1)[0]
+            self.assertIn("const INNER_VALIDATE_TIMEOUT: Duration = Duration::from_secs(8)", gool)
+            self.assertIn("spawn_udp_forwarder(&outer.stack, inner_peer)", gool)
+            self.assertNotIn("spawn_udp_forwarder(&outer.stack, peer)", gool)
+            self.assertIn("for (index, inner_peer) in candidates.into_iter().enumerate()", gool)
+            self.assertIn("trying another endpoint", gool)
+            self.assertLess(
+                gool.index("let mut outer = establish_wg"),
+                gool.index("for (index, inner_peer)"),
+            )
 
     def test_android_core_build_applies_the_handoff_patch_before_cargo(self) -> None:
         build_script = (ROOT / "scripts/ci/build-aether-android.sh").read_text(encoding="utf-8")
