@@ -98,18 +98,9 @@ else {
 
 Write-Host "Using Android device: $serial" -ForegroundColor Cyan
 
-$wgPatch = Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"
-if (-not (Test-Path $wgPatch)) {
-    throw "WireGuard egress patch is missing: $wgPatch"
-}
-& python $wgPatch $repoRoot
-if ($LASTEXITCODE -ne 0) {
-    throw "WireGuard egress patch failed with exit code $LASTEXITCODE."
-}
-
-$prepareNative = Join-Path $PSScriptRoot "prepare-android-native.ps1"
+$prepareNative = Join-Path $PSScriptRoot "prepare-android-native-final.ps1"
 if (-not (Test-Path $prepareNative)) {
-    throw "Android native preparation script is missing: $prepareNative"
+    throw "Final Android native preparation script is missing: $prepareNative"
 }
 
 # Tauri builds only the Rust application library. The executable Aether core and
