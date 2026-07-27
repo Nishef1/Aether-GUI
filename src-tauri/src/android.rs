@@ -106,6 +106,9 @@ fn now_ms() -> u64 {
 fn status_value(status: VpnStatus) -> Value {
     match status.state.as_str() {
         "Launching" => json!({ "state": "Launching" }),
+        // SOCKS is live but Android is still performing its mandatory
+        // end-to-end egress check. This is a connecting phase, not Idle.
+        "Verifying" => json!({ "state": "Connecting" }),
         "StartingTunnel" => json!({
             "state": "StartingTunnel",
             "socks_addr": status.socks_addr.unwrap_or_else(|| "127.0.0.1:1819".into())

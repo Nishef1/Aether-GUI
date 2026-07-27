@@ -139,6 +139,7 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("webrtc_leak_protection", plugin_bridge)
         self.assertIn("fn get_android_logs", android_bridge)
         self.assertIn("fn get_runtime_telemetry(app: AppHandle)", android_bridge)
+        self.assertIn('"Verifying" => json!({ "state": "Connecting" })', android_bridge)
 
     def test_native_logs_status_and_cancel_are_polled_on_android(self) -> None:
         store = CONNECTION_STORE.read_text(encoding="utf-8")

@@ -22,6 +22,7 @@ const ANDROID_RUNTIME_POLL_MS = 450
 let profileSaveQueue: Promise<void> = Promise.resolve()
 let profileSaveRevision = 0
 let connectionOperationRevision = 0
+let awaitingAndroidFreshStatus = false
 
 interface AndroidNativeLogEntry {
   id: number
@@ -140,6 +141,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
 
     connect: async () => {
       const operation = ++connectionOperationRevision
+      awaitingAndroidFreshStatus = isAndroid
       set({
         traffic: { received_bytes: 0, sent_bytes: 0 },
         trafficBaseline: null,
@@ -158,6 +160,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         await invoke("connect", { profileOverride: get().profile })
       } catch (e) {
         if (operation !== connectionOperationRevision) return
+        awaitingAndroidFreshStatus = false
         const message = String(e)
         const lower = message.toLowerCase()
 
@@ -196,6 +199,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
 
     disconnect: async () => {
       ++connectionOperationRevision
+      awaitingAndroidFreshStatus = false
       set({ preparingCores: false, status: { state: "Disconnecting" } })
       try {
         await invoke("disconnect")
@@ -306,7 +310,28 @@ async function initializeConnectionRuntime(): Promise<void> {
     flushTimer ??= setTimeout(flushLogs, LOG_FLUSH_INTERVAL_MS)
   }
 
-  const applyStatus = (status: ConnectionStatus) => {
+  const applyStatus = (
+    status: ConnectionStatus,
+    source: "event" | "android-poll" = "event"
+  ) => {
+    // A pending Android poll can return the preceding session's Connected
+    // snapshot after the user has tapped Connect again. Wait until the native
+    // service itself reports a new startup phase before accepting a terminal
+    // snapshot, avoiding a one-frame Disconnect/Connected button flicker.
+    if (isAndroid && awaitingAndroidFreshStatus && source === "android-poll") {
+      if (
+        status.state === "Launching" ||
+        status.state === "Connecting" ||
+        status.state === "StartingTunnel" ||
+        status.state === "Reconnecting" ||
+        status.state === "Error"
+      ) {
+        awaitingAndroidFreshStatus = false
+      } else {
+        return
+      }
+    }
+
     const current = useConnectionStore.getState().status
     if (!sameStatus(current, status)) {
       useConnectionStore.setState({
@@ -330,7 +355,7 @@ async function initializeConnectionRuntime(): Promise<void> {
           afterId: lastAndroidLogId,
         }),
       ])
-      applyStatus(status)
+      applyStatus(status, "android-poll")
       if (nativeLogs.entries.length > 0) {
         lastAndroidLogId = Math.max(lastAndroidLogId, nativeLogs.last_id)
         queueLogs(
