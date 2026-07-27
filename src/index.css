@@ -205,6 +205,34 @@
 .anim-orb-a { animation: orb-drift-a 10s ease-in-out infinite; }
 .anim-orb-b { animation: orb-drift-b 13s ease-in-out infinite; }
 
+/* Mobile keeps operational feedback but drops decorative continuous GPU work.
+   The connection ring remains readable at a slower cadence; background orbs and
+   glow loops become static, so the WebView can spend more time idle. */
+html[data-platform="android"] .anim-orb-a,
+html[data-platform="android"] .anim-orb-b,
+html[data-platform="android"] .anim-route-orbit {
+  animation: none;
+}
+
+html[data-platform="android"] .anim-ring-breathe {
+  animation-duration: 8s;
+}
+
+html[data-platform="android"] .anim-ring-pulse-fast,
+html[data-platform="android"] .anim-scan-route {
+  animation-duration: 2.2s;
+}
+
+html[data-platform="android"] .anim-ring-pulse-slow {
+  animation-duration: 4s;
+}
+
+html[data-platform="android"] .anim-glow-fast,
+html[data-platform="android"] .anim-glow-slow {
+  animation: none;
+  opacity: 0.5;
+}
+
 /* Never inherit an accidental pause into connection/update feedback. Fully
    hidden windows can still be suspended by the OS, but the focus runtime calls
    play() on these animations as soon as a foreground frame is available. */
