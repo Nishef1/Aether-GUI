@@ -1,7 +1,6 @@
 package com.cluvexstudio.aethergui.vpn
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,10 +40,10 @@ class AndroidTransportPolicyTest {
     }
 
     @Test
-    fun masqueAutoSelectsH2WhenUdpIsUnavailable() {
+    fun masqueAutoUsesH2UntilARealQuicProbeExists() {
         assertTrue(AndroidTransportPolicy.useMasqueHttp2(forceHttp2 = true, udpAvailable = true))
         assertTrue(AndroidTransportPolicy.useMasqueHttp2(forceHttp2 = false, udpAvailable = false))
-        assertFalse(AndroidTransportPolicy.useMasqueHttp2(forceHttp2 = false, udpAvailable = true))
+        assertTrue(AndroidTransportPolicy.useMasqueHttp2(forceHttp2 = false, udpAvailable = true))
     }
 
     @Test
