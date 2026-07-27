@@ -14,14 +14,23 @@ internal object AndroidTransportPolicy {
             protocol.equals("gool", ignoreCase = true)
 
     /**
-     * Android uses a clean WireGuard first pass. The endpoint scanner already
-     * performs an authenticated handshake and a direct raw-IP data check, but
-     * the reported device then failed when that session was reused by SOCKS.
-     * Post-handshake junk is a plausible differentiator, not yet a proven root
-     * cause, so the stable first pass disables it and the new SOCKS egress gate
-     * supplies stage-specific evidence before Connected is published.
+     * Preserve the user's WireGuard obfuscation choice on Android. The previous
+     * "stable dataplane" override forced every WireGuard and Gool attempt to plain
+     * `off`, even when the UI requested `balanced`. That removed the very handshake
+     * camouflage required on networks which permit an initial WARP exchange and then
+     * classify or throttle the continuing plain-WireGuard flow.
+     *
+     * Android only normalizes aliases and unknown values; profile fallback remains
+     * owned by the Aether core.
      */
-    fun effectiveWireGuardNoize(requested: String): String = "off"
+    fun effectiveWireGuardNoize(requested: String): String =
+        when (requested.trim().lowercase()) {
+            "off", "none" -> "off"
+            "light" -> "light"
+            "aggressive", "heavy" -> "aggressive"
+            "balanced" -> "balanced"
+            else -> "balanced"
+        }
 
     /**
      * Upper bound for the core to expose SOCKS. These values exceed each core
@@ -39,10 +48,8 @@ internal object AndroidTransportPolicy {
                 else -> 270_000L
             }
             protocol.equals("wireguard", ignoreCase = true) -> when (mode) {
-                // A candidate may pass the disposable UDP probe but fail the
-                // fresh runtime HTTP warm-up. Allow the core to blacklist it,
-                // scan again, and warm up the replacement before Android
-                // cancels the still-healthy recovery loop.
+                // Allow endpoint blacklisting, a fresh scan, and a replacement
+                // runtime before Android cancels the still-healthy recovery loop.
                 "turbo" -> 210_000L
                 "stealth" -> 390_000L
                 "thorough" -> 450_000L
