@@ -94,6 +94,18 @@ struct NativeLogRequest {
     after_id: u64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoggingRequest {
+    enabled: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoggingStatus {
+    pub enabled: bool,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareResult {
@@ -140,6 +152,12 @@ impl<R: Runtime> AetherVpn<R> {
     pub fn logs(&self, after_id: u64) -> Result<NativeLogBatch> {
         self.0
             .run_mobile_plugin("logs", NativeLogRequest { after_id })
+            .map_err(Into::into)
+    }
+
+    pub fn set_logging(&self, enabled: bool) -> Result<LoggingStatus> {
+        self.0
+            .run_mobile_plugin("setLogging", LoggingRequest { enabled })
             .map_err(Into::into)
     }
 
