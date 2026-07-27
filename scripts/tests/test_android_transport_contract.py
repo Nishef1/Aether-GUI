@@ -54,14 +54,17 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = forceHttp2", policy)
         self.assertIn("masqueTransportHonorsTheExplicitUserChoice", tests)
 
-    def test_wireguard_and_gool_use_a_clean_first_dataplane(self) -> None:
+    def test_wireguard_and_gool_honor_the_requested_noize_profile(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
         tests = POLICY_TEST.read_text(encoding="utf-8")
         self.assertIn("AndroidTransportPolicy.effectiveWireGuardNoize(wgNoize)", service)
         self.assertIn("wgNoize = effectiveWgNoize", service)
-        self.assertIn('fun effectiveWireGuardNoize(requested: String): String = "off"', policy)
-        self.assertIn("androidWireGuardStartsWithCleanDataplane", tests)
+        self.assertIn("when (requested.trim().lowercase())", policy)
+        self.assertIn('"balanced" -> "balanced"', policy)
+        self.assertIn('"aggressive", "heavy" -> "aggressive"', policy)
+        self.assertNotIn('fun effectiveWireGuardNoize(requested: String): String = "off"', policy)
+        self.assertIn("androidWireGuardHonorsRequestedNoize", tests)
 
     def test_connected_is_gated_on_real_socks_dns_tcp_and_http(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
@@ -77,7 +80,7 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("cloudflare-domain-tls", probe)
         self.assertIn("ip-api-domain-http", probe)
         self.assertIn("cloudflare-literal-tcp", probe)
-        self.assertIn("targetHost = \"1.1.1.1\"", probe)
+        self.assertIn('targetHost = "1.1.1.1"', probe)
         self.assertIn("remote DNS/domain ", probe)
         self.assertIn("egress failed", probe)
         self.assertIn("getDefaultHostnameVerifier", probe)
