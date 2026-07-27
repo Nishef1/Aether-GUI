@@ -5,7 +5,7 @@ import { create } from "zustand"
 import { isAndroid } from "@/lib/platform"
 import type { ConnectionStatus, RuntimeTelemetry } from "@/types/connection"
 
-const ANDROID_TELEMETRY_POLL_MS = 1000
+const ANDROID_TELEMETRY_VISIBLE_MS = 2_500
 
 const EMPTY_TELEMETRY: RuntimeTelemetry = {
   received_bytes: 0,
@@ -31,8 +31,8 @@ function applyTelemetry(snapshot: RuntimeTelemetry): void {
   useTelemetryStore.setState({ snapshot })
 }
 
-function refreshAfterFocus(focused: boolean): void {
-  if (focused) void useTelemetryStore.getState().refresh()
+function isConnected(status: ConnectionStatus): boolean {
+  return status.state === "Connected" || status.state === "Tunneling"
 }
 
 export const useTelemetryStore = create<TelemetryStore>(() => ({
@@ -52,7 +52,42 @@ let disposeRuntime: (() => void) | null = null
 
 async function initializeTelemetryRuntime(): Promise<void> {
   const unlisteners: Array<() => void> = []
-  let androidTimer: ReturnType<typeof setInterval> | null = null
+  let androidTimer: ReturnType<typeof setTimeout> | null = null
+  let androidConnected = false
+
+  const clearAndroidTimer = () => {
+    if (androidTimer !== null) clearTimeout(androidTimer)
+    androidTimer = null
+  }
+
+  const scheduleAndroidRefresh = (immediate = false) => {
+    clearAndroidTimer()
+    if (
+      !isAndroid ||
+      !androidConnected ||
+      (typeof document !== "undefined" && document.hidden)
+    ) {
+      return
+    }
+
+    androidTimer = setTimeout(
+      async () => {
+        androidTimer = null
+        await useTelemetryStore.getState().refresh()
+        scheduleAndroidRefresh()
+      },
+      immediate ? 0 : ANDROID_TELEMETRY_VISIBLE_MS
+    )
+  }
+
+  const refreshAfterFocus = (focused: boolean) => {
+    if (!focused) return
+    if (!isAndroid || androidConnected) {
+      void useTelemetryStore.getState().refresh()
+    }
+    scheduleAndroidRefresh()
+  }
+
   try {
     unlisteners.push(
       await listen<RuntimeTelemetry>("aether://telemetry", (event) => {
@@ -61,13 +96,12 @@ async function initializeTelemetryRuntime(): Promise<void> {
     )
     unlisteners.push(
       await listen<ConnectionStatus>("aether://status", (event) => {
-        if (
-          event.payload.state !== "Connected" &&
-          event.payload.state !== "Tunneling"
-        ) {
+        androidConnected = isConnected(event.payload)
+        if (!androidConnected) {
           useTelemetryStore.getState().reset()
+          clearAndroidTimer()
         } else if (isAndroid) {
-          void useTelemetryStore.getState().refresh()
+          scheduleAndroidRefresh(true)
         }
       })
     )
@@ -81,24 +115,38 @@ async function initializeTelemetryRuntime(): Promise<void> {
         refreshAfterFocus(payload)
       })
     )
+
+    if (typeof document !== "undefined") {
+      const handleVisibility = () => {
+        if (document.hidden) {
+          clearAndroidTimer()
+        } else {
+          scheduleAndroidRefresh(true)
+        }
+      }
+      document.addEventListener("visibilitychange", handleVisibility)
+      unlisteners.push(() =>
+        document.removeEventListener("visibilitychange", handleVisibility)
+      )
+    }
   } catch (error) {
     unlisteners.forEach((unlisten) => unlisten())
+    clearAndroidTimer()
     throw error
   }
 
   if (isAndroid) {
-    androidTimer = setInterval(
-      () => void useTelemetryStore.getState().refresh(),
-      ANDROID_TELEMETRY_POLL_MS
-    )
-  }
-
-  disposeRuntime = () => {
-    unlisteners.forEach((unlisten) => unlisten())
-    if (androidTimer !== null) clearInterval(androidTimer)
+    const status = await invoke<ConnectionStatus>("get_status").catch(() => null)
+    androidConnected = status !== null && isConnected(status)
   }
 
   await useTelemetryStore.getState().refresh()
+  scheduleAndroidRefresh()
+
+  disposeRuntime = () => {
+    unlisteners.forEach((unlisten) => unlisten())
+    clearAndroidTimer()
+  }
 }
 
 export async function initTelemetryListeners(): Promise<void> {
