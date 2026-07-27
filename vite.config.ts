@@ -17,8 +17,8 @@ export default defineConfig({
   clearScreen: false,
 
   server: {
-    // Android must be able to reach the Vite development server.
-    host: mobileHost || "0.0.0.0",
+    // Keep desktop development local. Mobile commands provide the exact host.
+    host: mobileHost || false,
     port: 1420,
     strictPort: true,
     watch: {
