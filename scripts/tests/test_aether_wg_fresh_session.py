@@ -13,11 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PATCHER = ROOT / "scripts/ci/patch-aether-wg-fresh-session.py"
 CORE_MAIN = ROOT / "vendor/aether/aether/src/main.rs"
-MARKER = "validated with disposable probe session; starting fresh runtime session"
+SESSION_MARKER = "validated with disposable probe session; starting fresh runtime session"
+READY_MARKER = "fresh WireGuard runtime data-plane ready"
 
 
 class FreshWireGuardRuntimeSessionTest(unittest.TestCase):
-    def test_patcher_is_idempotent_and_removes_runtime_session_reuse(self) -> None:
+    def test_patcher_is_idempotent_and_readiness_gates_every_runtime_stack(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "main.rs"
             shutil.copy2(CORE_MAIN, target)
@@ -53,15 +54,33 @@ class FreshWireGuardRuntimeSessionTest(unittest.TestCase):
             self.assertEqual(first_hash, second_hash)
 
             source = first_bytes.decode("utf-8")
-            self.assertIn(MARKER, source)
+            self.assertIn(SESSION_MARKER, source)
+            self.assertIn(READY_MARKER, source)
             self.assertIn("fn parse_local_v6", source)
+            self.assertIn("async fn warm_up_wg_stack", source)
+            self.assertIn('socks::dns_resolve(stack, "www.cloudflare.com")', source)
+            self.assertIn("const ATTEMPTS: usize = 3", source)
+            self.assertIn("task.abort()", source)
 
-            for name in ("run_wireguard_tunnel", "establish_wg"):
-                block = source.split(f"async fn {name}", 1)[1].split("\n}\n", 1)[0]
+            simple = source.split("async fn run_wireguard_tunnel", 1)[1].split("\n}\n", 1)[0]
+            nested = source.split("async fn establish_wg", 1)[1].split("\n}\n", 1)[0]
+
+            for block in (simple, nested):
                 self.assertNotIn("WgTunnel::from_established", block)
                 self.assertNotIn("verify_endpoint_keep_session", block)
                 self.assertIn("wireguard::verify_endpoint(", block)
                 self.assertIn("wireguard::WgTunnel::new(runtime_config, inbound_tx).await?", block)
+
+            self.assertIn('warm_up_wg_stack(&stack, "wireguard")', simple)
+            self.assertIn("warm_up_wg_stack(&stack, label)", nested)
+            self.assertLess(
+                simple.index('warm_up_wg_stack(&stack, "wireguard")'),
+                simple.index("socks::serve"),
+            )
+            self.assertLess(
+                nested.index("warm_up_wg_stack(&stack, label)"),
+                nested.index("Ok(RunningWireGuard"),
+            )
 
     def test_android_core_build_applies_the_patcher_before_cargo(self) -> None:
         build_script = (ROOT / "scripts/ci/build-aether-android.sh").read_text(encoding="utf-8")
