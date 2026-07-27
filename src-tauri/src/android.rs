@@ -227,6 +227,14 @@ fn get_android_logs(app: AppHandle, after_id: u64) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn set_android_logging_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    app.aether_vpn()
+        .set_logging(enabled)
+        .map(|status| status.enabled)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn get_default_profile(state: State<'_, MobileState>) -> ConnectionProfile {
     state.profile.lock().unwrap().clone()
 }
@@ -401,6 +409,7 @@ pub fn run_inner() {
             disconnect,
             get_status,
             get_android_logs,
+            set_android_logging_enabled,
             get_default_profile,
             take_pending_elevation_profile,
             set_default_profile,
