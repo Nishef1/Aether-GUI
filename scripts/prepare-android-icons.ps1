@@ -94,9 +94,10 @@ if ($backgroundColor -notmatch '^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$') {
     throw "android-icon-manifest.json contains an invalid bg_color: $backgroundColor"
 }
 
-# Tauri creates Android density folders under --output together with unrelated
-# desktop/iOS assets. Copy only Android mipmaps into the generated Android project
-# so the separately approved Windows icon set is never overwritten.
+# Tauri creates Android density folders under --output\android together with
+# unrelated desktop/iOS assets. Copy only Android mipmaps into the generated
+# Android project so the separately approved Windows icon set is never
+# overwritten.
 $temporaryOutput = Join-Path ([System.IO.Path]::GetTempPath()) ("aether-android-icons-" + [guid]::NewGuid().ToString("N"))
 try {
     New-Item -ItemType Directory -Force -Path $temporaryOutput | Out-Null
@@ -106,9 +107,14 @@ try {
         throw "Tauri Android icon generation failed with exit code $LASTEXITCODE."
     }
 
-    $mipmapDirectories = @(Get-ChildItem -LiteralPath $temporaryOutput -Directory | Where-Object { $_.Name -like 'mipmap-*' })
+    $androidOutput = Join-Path $temporaryOutput "android"
+    if (-not (Test-Path -LiteralPath $androidOutput -PathType Container)) {
+        throw "Tauri did not generate an Android resource directory in $temporaryOutput"
+    }
+
+    $mipmapDirectories = @(Get-ChildItem -LiteralPath $androidOutput -Directory | Where-Object { $_.Name -like 'mipmap-*' })
     if ($mipmapDirectories.Count -eq 0) {
-        throw "Tauri did not generate any Android mipmap directories in $temporaryOutput"
+        throw "Tauri did not generate any Android mipmap directories in $androidOutput"
     }
 
     foreach ($directory in $mipmapDirectories) {
