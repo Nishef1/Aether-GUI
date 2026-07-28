@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONNECTION = ROOT / "src/state/connectionStore.ts"
 TELEMETRY = ROOT / "src/state/telemetryStore.ts"
+CONNECTION_STATUS = ROOT / "src/components/ConnectionStatusLine.tsx"
 SETTINGS = ROOT / "src/components/SettingsPanel.tsx"
 MODE_TOGGLE = ROOT / "src/components/ConnectionModeToggle.tsx"
 CSS = ROOT / "src/index.css"
@@ -34,13 +35,21 @@ class AndroidMobileEfficiencyTest(unittest.TestCase):
         self.assertIn("scheduleAndroidPoll", source)
         self.assertNotIn("setInterval(\n      () => void pollAndroidRuntime()", source)
 
-    def test_telemetry_stops_when_hidden_or_disconnected(self) -> None:
+    def test_telemetry_follows_reconciled_android_connection_state(self) -> None:
         source = TELEMETRY.read_text(encoding="utf-8")
         self.assertIn("ANDROID_TELEMETRY_VISIBLE_MS = 2_500", source)
-        self.assertIn("androidConnected", source)
-        self.assertIn("document.hidden", source)
+        self.assertIn("useConnectionStore.subscribe", source)
+        self.assertIn("applyConnectionState(state.status)", source)
+        self.assertIn("Native status changes after Launching", source)
+        self.assertIn("pageVisible", source)
         self.assertIn("clearAndroidTimer", source)
         self.assertNotIn("ANDROID_TELEMETRY_POLL_MS = 1000", source)
+
+    def test_connection_clock_does_not_depend_on_telemetry_samples(self) -> None:
+        source = CONNECTION_STATUS.read_text(encoding="utf-8")
+        self.assertIn("useElapsed(connectedAt)", source)
+        self.assertNotIn("telemetryClock", source)
+        self.assertNotIn("formatElapsed(connectedAt, telemetry", source)
 
     def test_android_visuals_keep_feedback_not_decoration(self) -> None:
         css = CSS.read_text(encoding="utf-8")
