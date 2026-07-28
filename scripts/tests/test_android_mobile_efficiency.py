@@ -38,9 +38,10 @@ class AndroidMobileEfficiencyTest(unittest.TestCase):
     def test_telemetry_follows_reconciled_android_connection_state(self) -> None:
         source = TELEMETRY.read_text(encoding="utf-8")
         self.assertIn("ANDROID_TELEMETRY_VISIBLE_MS = 2_500", source)
+        self.assertIn("isConnected(useConnectionStore.getState().status)", source)
         self.assertIn("useConnectionStore.subscribe", source)
         self.assertIn("applyConnectionState(state.status)", source)
-        self.assertIn("Native status changes after Launching", source)
+        self.assertIn("scheduleAndroidRefresh(true)", source)
         self.assertIn("pageVisible", source)
         self.assertIn("clearAndroidTimer", source)
         self.assertNotIn("ANDROID_TELEMETRY_POLL_MS = 1000", source)
