@@ -52,11 +52,17 @@ class AndroidLocalNativeBundleTest(unittest.TestCase):
         self.assertGreater(restore_index, launch_index)
         self.assertIn('"--debug"', build)
 
-    def test_icon_preparer_uses_portable_dotnet_hashing(self) -> None:
+    def test_icon_preparer_installs_portable_adaptive_resources(self) -> None:
         source = ICON_PREPARE_SCRIPT.read_text(encoding="utf-8")
-        self.assertNotIn("Get-FileHash", source)
+        self.assertNotIn("(Get-FileHash", source)
         self.assertIn("System.Security.Cryptography.SHA256", source)
         self.assertIn("System.IO.File]::OpenRead", source)
+        self.assertIn("mipmapDirectories", source)
+        self.assertIn("Copy-Item", source)
+        self.assertIn("mipmap-anydpi-v26", source)
+        self.assertIn("mipmap-anydpi-v33", source)
+        self.assertIn("<monochrome", source)
+        self.assertIn("aether_launcher_colors.xml", source)
 
     def test_base_preparer_builds_and_copies_all_runtime_components(self) -> None:
         source = BASE_PREPARE_SCRIPT.read_text(encoding="utf-8")
