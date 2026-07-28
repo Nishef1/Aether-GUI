@@ -118,12 +118,7 @@ export function ConnectionStatusLine() {
     status.state === "Connected" || status.state === "Tunneling"
       ? status.connected_at_ms
       : null
-  const telemetryClock =
-    connectedAt == null
-      ? 0
-      : Math.max(connectedAt, telemetry.sampled_at_ms || connectedAt)
-  const elapsed =
-    connectedAt == null ? "" : formatElapsed(connectedAt, telemetryClock)
+  const { formatted: elapsed } = useElapsed(connectedAt)
   const connectionReady =
     status.state === "Connected" || status.state === "Tunneling"
 
