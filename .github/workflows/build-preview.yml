@@ -2,6 +2,11 @@ name: Build unsigned desktop release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Semantic version tag to release (for example v0.5.7)"
+        required: true
+        type: string
 
 concurrency:
   group: unsigned-desktop-release
@@ -12,7 +17,7 @@ permissions:
   statuses: write
 
 env:
-  RELEASE_TAG: v0.5.2
+  RELEASE_TAG: ${{ inputs.tag }}
 
 jobs:
   prepare-release:
@@ -34,13 +39,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --latest \
-            --title "Aether-GUI v0.5.2" \
-            --notes "Unsigned desktop release built from the pinned custom Aether core. Windows SmartScreen and macOS Gatekeeper may display warnings. SHA-256 checksum files are included for every platform."
+            --title "Aether-GUI $RELEASE_TAG" \
+            --generate-notes
 
   build:
     name: ${{ matrix.name }}
@@ -81,8 +85,6 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          version: 10
 
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

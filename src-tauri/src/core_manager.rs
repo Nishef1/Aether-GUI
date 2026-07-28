@@ -287,7 +287,12 @@ pub fn install_version(
     kind: CoreKind,
     version: &str,
 ) -> Result<CoreStatus, AetherError> {
-    if crate::is_admin() {
+    // `is_admin` deliberately treats the Windows detached TUN helper as an
+    // elevation capability so connection setup does not relaunch the GUI.
+    // Core downloads and version changes, however, must be gated by this
+    // process's actual integrity level. Otherwise every normal Windows GUI is
+    // incorrectly treated as elevated and cannot update its cores.
+    if crate::os_is_admin() {
         return Err(AetherError::CoreManager(
             "core installation is disabled while the GUI is elevated; restart normally".into(),
         ));
@@ -381,12 +386,15 @@ pub fn list_releases(app: &AppHandle, kind: CoreKind) -> Result<Vec<CoreRelease>
     let active = active_version(app, kind);
     let mut releases = fetch_release_json(kind)?
         .into_iter()
-        .filter(|release| !release.draft)
+        // The managed downloader must never offer a pre-release. This matters
+        // most for Xray and sing-box, whose upstream feeds frequently publish
+        // release candidates ahead of the stable tag.
+        .filter(|release| !release.draft && !release.prerelease)
         .map(|release| CoreRelease {
             installed: installed.iter().any(|version| version == &release.tag_name),
             active: active.as_deref() == Some(release.tag_name.as_str()),
             version: release.tag_name,
-            prerelease: release.prerelease,
+            prerelease: false,
         })
         .collect::<Vec<_>>();
 
@@ -421,7 +429,10 @@ pub fn install_latest_stable(app: &AppHandle, kind: CoreKind) -> Result<CoreStat
 pub fn ensure_active(app: &AppHandle, kind: CoreKind) -> Result<PathBuf, AetherError> {
     match resolve_binary(app, kind) {
         Ok(path) => Ok(path),
-        Err(_) if !crate::is_admin() => {
+        // A normal Windows GUI may prepare missing cores before delegating TUN
+        // work to its detached elevated helper. Only a genuinely elevated GUI
+        // must avoid downloading or mutating core versions.
+        Err(_) if !crate::os_is_admin() => {
             install_latest_stable(app, kind)?;
             resolve_binary(app, kind)
         }
