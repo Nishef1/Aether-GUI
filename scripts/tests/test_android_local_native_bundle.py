@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BASE_PREPARE_SCRIPT = ROOT / "scripts/prepare-android-native.ps1"
 FINAL_PREPARE_SCRIPT = ROOT / "scripts/prepare-android-native-final.ps1"
+ICON_PREPARE_SCRIPT = ROOT / "scripts/prepare-android-icons.ps1"
 DEV_SCRIPT = ROOT / "scripts/android-dev.ps1"
 BUILD_SCRIPT = ROOT / "scripts/build-android-arm64.ps1"
 PACKAGE_JSON = ROOT / "package.json"
@@ -50,6 +51,12 @@ class AndroidLocalNativeBundleTest(unittest.TestCase):
         self.assertLess(patch_index, launch_index)
         self.assertGreater(restore_index, launch_index)
         self.assertIn('"--debug"', build)
+
+    def test_icon_preparer_uses_portable_dotnet_hashing(self) -> None:
+        source = ICON_PREPARE_SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("Get-FileHash", source)
+        self.assertIn("System.Security.Cryptography.SHA256", source)
+        self.assertIn("System.IO.File]::OpenRead", source)
 
     def test_base_preparer_builds_and_copies_all_runtime_components(self) -> None:
         source = BASE_PREPARE_SCRIPT.read_text(encoding="utf-8")
