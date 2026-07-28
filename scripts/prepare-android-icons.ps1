@@ -3,6 +3,23 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
+function Get-Sha256Hex {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 $manifest = Join-Path $repoRoot "src-tauri\icons\android-icon-manifest.json"
 $source = Join-Path $repoRoot "src-tauri\icons\icon.png"
 $monochrome = Join-Path $repoRoot "src-tauri\icons\android-monochrome.svg"
@@ -17,10 +34,12 @@ foreach ($required in @($manifest, $source, $monochrome)) {
     }
 }
 
+# Use the .NET hashing API instead of Get-FileHash so this works in stripped-down
+# Windows PowerShell sessions as well as PowerShell 7.
 $hashInput = @(
-    (Get-FileHash -Algorithm SHA256 -LiteralPath $manifest).Hash,
-    (Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash,
-    (Get-FileHash -Algorithm SHA256 -LiteralPath $monochrome).Hash
+    (Get-Sha256Hex -Path $manifest)
+    (Get-Sha256Hex -Path $source)
+    (Get-Sha256Hex -Path $monochrome)
 ) -join "`n"
 $hashBytes = [System.Text.Encoding]::UTF8.GetBytes($hashInput)
 $sha = [System.Security.Cryptography.SHA256]::Create()
