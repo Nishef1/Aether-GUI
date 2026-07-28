@@ -20,7 +20,7 @@ env:
 
 jobs:
   build:
-    name: Android arm64-v8a debug APK
+    name: Android arm64-v8a release APK
     runs-on: ubuntu-24.04
     timeout-minutes: 90
 
@@ -198,6 +198,14 @@ jobs:
             "native-packaging.log" \
             python3 scripts/ci/patch-android-packaging.py
 
+      - name: Configure a signed release APK
+        shell: bash
+        run: |
+          bash scripts/ci/run-with-diagnostics.sh \
+            "Configure a signed release APK" \
+            "android-release-signing.log" \
+            python3 scripts/ci/patch-android-release-signing.py
+
       - name: Bundle ARM64 native components
         shell: bash
         run: |
@@ -206,16 +214,15 @@ jobs:
             "native-bundle.log" \
             bash scripts/ci/bundle-android-native.sh
 
-      - name: Build a directly installable ARM64 debug APK
+      - name: Build a directly installable ARM64 release APK
         shell: bash
         env:
           CI: "true"
         run: |
           bash scripts/ci/run-with-diagnostics.sh \
-            "Build a directly installable ARM64 debug APK" \
+            "Build a directly installable ARM64 release APK" \
             "tauri-android-build.log" \
             pnpm tauri android build \
-              --debug \
               --apk \
               --target aarch64 \
               --split-per-abi

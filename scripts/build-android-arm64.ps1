@@ -24,9 +24,11 @@ function Resolve-Python {
 $prepareIcons = Join-Path $PSScriptRoot "prepare-android-icons.ps1"
 $prepareNative = Join-Path $PSScriptRoot "prepare-android-native-final.ps1"
 $efficiencyPatch = Join-Path $repoRoot "scripts\ci\patch-android-mobile-efficiency.py"
+$releaseSigningPatch = Join-Path $repoRoot "scripts\ci\patch-android-release-signing.py"
 $serviceSource = Join-Path $repoRoot "src-tauri\plugins\aether-vpn\android\src\main\java\FinalAetherVpnPlugin.kt"
+$python = Resolve-Python
 
-foreach ($required in @($prepareIcons, $prepareNative, $efficiencyPatch, $serviceSource)) {
+foreach ($required in @($prepareIcons, $prepareNative, $efficiencyPatch, $releaseSigningPatch, $serviceSource)) {
     if (-not (Test-Path $required)) {
         throw "Required Android build input is missing: $required"
     }
@@ -42,8 +44,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Android native runtime preparation failed with exit code $LASTEXITCODE."
 }
 
+& $python.Command @($python.Prefix + @($releaseSigningPatch))
+if ($LASTEXITCODE -ne 0) {
+    throw "Android release APK signing preparation failed with exit code $LASTEXITCODE."
+}
+
 $serviceBackup = [System.IO.File]::ReadAllBytes($serviceSource)
-$python = Resolve-Python
 $exitCode = 1
 try {
     & $python.Command @($python.Prefix + @($efficiencyPatch, $repoRoot))
