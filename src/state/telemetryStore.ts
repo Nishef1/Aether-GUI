@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { create } from "zustand"
 import { isAndroid } from "@/lib/platform"
+import { useConnectionStore } from "@/state/connectionStore"
 import type { ConnectionStatus, RuntimeTelemetry } from "@/types/connection"
 
 const ANDROID_TELEMETRY_VISIBLE_MS = 2_500
@@ -53,7 +54,8 @@ let disposeRuntime: (() => void) | null = null
 async function initializeTelemetryRuntime(): Promise<void> {
   const unlisteners: Array<() => void> = []
   let androidTimer: ReturnType<typeof setTimeout> | null = null
-  let androidConnected = false
+  let androidConnected = isConnected(useConnectionStore.getState().status)
+  let pageVisible = typeof document === "undefined" || !document.hidden
 
   const clearAndroidTimer = () => {
     if (androidTimer !== null) clearTimeout(androidTimer)
@@ -62,13 +64,7 @@ async function initializeTelemetryRuntime(): Promise<void> {
 
   const scheduleAndroidRefresh = (immediate = false) => {
     clearAndroidTimer()
-    if (
-      !isAndroid ||
-      !androidConnected ||
-      (typeof document !== "undefined" && document.hidden)
-    ) {
-      return
-    }
+    if (!isAndroid || !androidConnected || !pageVisible) return
 
     androidTimer = setTimeout(
       async () => {
@@ -80,8 +76,25 @@ async function initializeTelemetryRuntime(): Promise<void> {
     )
   }
 
+  const applyConnectionState = (status: ConnectionStatus) => {
+    const nextConnected = isConnected(status)
+    if (nextConnected === androidConnected) return
+
+    androidConnected = nextConnected
+    if (!androidConnected) {
+      useTelemetryStore.getState().reset()
+      clearAndroidTimer()
+    } else if (isAndroid) {
+      // Android service state is reconciled by connectionStore polling. Native
+      // status changes after Launching are not emitted as aether://status events,
+      // so telemetry must follow that authoritative reconciled store instead.
+      scheduleAndroidRefresh(true)
+    }
+  }
+
   const refreshAfterFocus = (focused: boolean) => {
     if (!focused) return
+    pageVisible = true
     if (!isAndroid || androidConnected) {
       void useTelemetryStore.getState().refresh()
     }
@@ -94,17 +107,21 @@ async function initializeTelemetryRuntime(): Promise<void> {
         applyTelemetry(event.payload)
       })
     )
-    unlisteners.push(
-      await listen<ConnectionStatus>("aether://status", (event) => {
-        androidConnected = isConnected(event.payload)
-        if (!androidConnected) {
-          useTelemetryStore.getState().reset()
-          clearAndroidTimer()
-        } else if (isAndroid) {
-          scheduleAndroidRefresh(true)
-        }
-      })
-    )
+
+    if (isAndroid) {
+      unlisteners.push(
+        useConnectionStore.subscribe((state) => {
+          applyConnectionState(state.status)
+        })
+      )
+    } else {
+      unlisteners.push(
+        await listen<ConnectionStatus>("aether://status", (event) => {
+          applyConnectionState(event.payload)
+        })
+      )
+    }
+
     unlisteners.push(
       await listen<boolean>("app://focused", (event) => {
         refreshAfterFocus(event.payload)
@@ -118,7 +135,8 @@ async function initializeTelemetryRuntime(): Promise<void> {
 
     if (typeof document !== "undefined") {
       const handleVisibility = () => {
-        if (document.hidden) {
+        pageVisible = !document.hidden
+        if (!pageVisible) {
           clearAndroidTimer()
         } else {
           scheduleAndroidRefresh(true)
@@ -136,8 +154,10 @@ async function initializeTelemetryRuntime(): Promise<void> {
   }
 
   if (isAndroid) {
-    const status = await invoke<ConnectionStatus>("get_status").catch(() => null)
-    androidConnected = status !== null && isConnected(status)
+    const nativeStatus = await invoke<ConnectionStatus>("get_status").catch(() => null)
+    androidConnected =
+      isConnected(useConnectionStore.getState().status) ||
+      (nativeStatus !== null && isConnected(nativeStatus))
   }
 
   await useTelemetryStore.getState().refresh()
