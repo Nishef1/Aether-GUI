@@ -1,6 +1,7 @@
 name: Publish Aether-GUI v0.7.2
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -13,7 +14,7 @@ permissions:
 
 concurrency:
   group: publish-aether-gui-v0.7.2
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   publish:
@@ -25,7 +26,7 @@ jobs:
       EXPECTED_VERSION: 0.7.2
       EXPECTED_CORE_SHA: d713c3e35ba84e7c0e8c45a701544feca4bbb63d
     steps:
-      - name: Check out the release source
+      - name: Check out repository and tag
         uses: actions/checkout@v4
         with:
           ref: main
@@ -33,150 +34,103 @@ jobs:
           submodules: recursive
           token: ${{ github.token }}
 
-      - name: Synchronize release metadata
+      - name: Resume and publish all v0.7.2 assets
         shell: bash
         run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import re
-          from pathlib import Path
+          set -Eeuo pipefail
 
-          expected = "0.7.2"
-          package = json.loads(Path("package.json").read_text(encoding="utf-8"))
-          tauri = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
-          cargo_toml = Path("src-tauri/Cargo.toml").read_text(encoding="utf-8")
-          cargo_version = re.search(r'^version\s*=\s*"([^"]+)"', cargo_toml, re.MULTILINE)
-          values = [package.get("version"), tauri.get("version"), cargo_version.group(1) if cargo_version else None]
-          if values != [expected, expected, expected]:
-              raise SystemExit(f"release versions are not synchronized: {values}")
+          update_status() {
+            local state="$1"
+            local stage="$2"
+            local details="$3"
+            local windows_run="${4:-}"
+            local android_run="${5:-}"
+            local release_sha="${6:-}"
 
-          lock_path = Path("src-tauri/Cargo.lock")
-          lock = lock_path.read_text(encoding="utf-8")
-          package_pattern = re.compile(r'(\[\[package\]\]\nname = "aether-gui"\nversion = ")([^"]+)(")')
-          updated, count = package_pattern.subn(rf'\g<1>{expected}\g<3>', lock, count=1)
-          if count != 1:
-              raise SystemExit("aether-gui package entry was not found exactly once in Cargo.lock")
-          lock_path.write_text(updated, encoding="utf-8")
-          PY
+            jq -n \
+              --arg version "$EXPECTED_VERSION" \
+              --arg tag "$RELEASE_TAG" \
+              --arg state "$state" \
+              --arg stage "$stage" \
+              --arg details "$details" \
+              --arg windows_run "$windows_run" \
+              --arg android_run "$android_run" \
+              --arg release_sha "$release_sha" \
+              --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{version:$version,tag:$tag,state:$state,stage:$stage,details:$details,windows_run:$windows_run,android_run:$android_run,release_sha:$release_sha,updated_at:$updated_at}' \
+              > /tmp/release-status.json
 
-          actual_core_sha=$(git ls-tree HEAD vendor/aether | awk '{print $3}')
-          if [[ "$actual_core_sha" != "$EXPECTED_CORE_SHA" ]]; then
-            echo "Expected Aether submodule $EXPECTED_CORE_SHA, found $actual_core_sha" >&2
-            exit 1
-          fi
-
-          node scripts/verify-version.mjs
-
-          if ! git diff --quiet -- src-tauri/Cargo.lock; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src-tauri/Cargo.lock
-            git commit -m "release: synchronize Cargo.lock for 0.7.2"
-            git push origin HEAD:main
-          fi
-
-      - name: Create the v0.7.2 source tag
-        id: source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin main --tags
-          git reset --hard origin/main
-          release_sha=$(git rev-parse HEAD)
-          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
-
-          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            tagged_sha=$(git rev-list -n 1 "$RELEASE_TAG")
-            if [[ "$tagged_sha" != "$release_sha" ]]; then
-              echo "$RELEASE_TAG already points to $tagged_sha instead of $release_sha" >&2
-              exit 1
+            local encoded existing
+            encoded=$(base64 -w0 /tmp/release-status.json)
+            existing=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json?ref=main" --jq .sha 2>/dev/null || true)
+            if [[ -n "$existing" ]]; then
+              gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json" \
+                -f message="release: record v0.7.2 status (${stage})" \
+                -f content="$encoded" \
+                -f branch=main \
+                -f sha="$existing" >/dev/null
+            else
+              gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json" \
+                -f message="release: record v0.7.2 status (${stage})" \
+                -f content="$encoded" \
+                -f branch=main >/dev/null
             fi
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$RELEASE_TAG" "$release_sha" -m "Aether-GUI $RELEASE_TAG"
-            git push origin "refs/tags/$RELEASE_TAG"
-          fi
+          }
 
-      - name: Build and publish the signed Windows release
-        id: windows
-        shell: bash
-        env:
-          RELEASE_SHA: ${{ steps.source.outputs.sha }}
-        run: |
-          set -euo pipefail
+          select_reusable_run() {
+            local workflow="$1"
+            local sha="$2"
+            gh run list --workflow "$workflow" --limit 100 \
+              --json databaseId,headSha,status,conclusion,createdAt \
+              --jq "[.[] | select(.headSha == \"${sha}\") | select(.status != \"completed\" or .conclusion == \"success\")][0].databaseId // empty"
+          }
 
-          gh run list --workflow build.yml --event workflow_dispatch --limit 100 \
-            --json databaseId --jq '.[].databaseId' > /tmp/windows-before.txt
-
-          gh workflow run build.yml --ref "$RELEASE_TAG" -f tag="$RELEASE_TAG"
+          wait_for_dispatched_run() {
+            local workflow="$1"
+            local sha="$2"
+            local run_id=""
+            for _ in $(seq 1 90); do
+              run_id=$(select_reusable_run "$workflow" "$sha")
+              [[ -n "$run_id" ]] && break
+              sleep 4
+            done
+            [[ -n "$run_id" ]] || return 1
+            printf '%s' "$run_id"
+          }
 
           windows_run=""
-          for _ in $(seq 1 90); do
-            while IFS=$'\t' read -r run_id head_sha; do
-              if [[ "$head_sha" == "$RELEASE_SHA" ]] && ! grep -qx "$run_id" /tmp/windows-before.txt; then
-                windows_run="$run_id"
-                break
-              fi
-            done < <(gh run list --workflow build.yml --event workflow_dispatch --limit 100 \
-              --json databaseId,headSha --jq '.[] | [.databaseId, .headSha] | @tsv')
-            [[ -n "$windows_run" ]] && break
-            sleep 4
-          done
-
-          if [[ -z "$windows_run" ]]; then
-            echo "Could not locate the dispatched Windows release workflow" >&2
-            exit 1
-          fi
-
-          echo "run_id=$windows_run" >> "$GITHUB_OUTPUT"
-          gh run watch "$windows_run" --exit-status
-
-      - name: Build the Android ARM64 release APK
-        id: android
-        shell: bash
-        env:
-          RELEASE_SHA: ${{ steps.source.outputs.sha }}
-        run: |
-          set -euo pipefail
-
-          gh run list --workflow build-android-arm64.yml --event workflow_dispatch --limit 100 \
-            --json databaseId --jq '.[].databaseId' > /tmp/android-before.txt
-
-          gh workflow run build-android-arm64.yml --ref "$RELEASE_TAG"
-
           android_run=""
-          for _ in $(seq 1 90); do
-            while IFS=$'\t' read -r run_id head_sha; do
-              if [[ "$head_sha" == "$RELEASE_SHA" ]] && ! grep -qx "$run_id" /tmp/android-before.txt; then
-                android_run="$run_id"
-                break
-              fi
-            done < <(gh run list --workflow build-android-arm64.yml --event workflow_dispatch --limit 100 \
-              --json databaseId,headSha --jq '.[] | [.databaseId, .headSha] | @tsv')
-            [[ -n "$android_run" ]] && break
-            sleep 4
-          done
+          release_sha=""
+          trap 'code=$?; update_status failure failed "publisher exited with code ${code}" "$windows_run" "$android_run" "$release_sha"; exit "$code"' ERR
 
-          if [[ -z "$android_run" ]]; then
-            echo "Could not locate the dispatched Android workflow" >&2
+          git fetch origin main --tags --force
+          git show-ref --verify --quiet "refs/tags/$RELEASE_TAG" || {
+            echo "Release tag $RELEASE_TAG does not exist" >&2
             exit 1
+          }
+          release_sha=$(git rev-list -n 1 "$RELEASE_TAG")
+          update_status running validating "validating tagged source" "" "" "$release_sha"
+
+          package_version=$(git show "$RELEASE_TAG:package.json" | jq -r .version)
+          tauri_version=$(git show "$RELEASE_TAG:src-tauri/tauri.conf.json" | jq -r .version)
+          cargo_version=$(git show "$RELEASE_TAG:src-tauri/Cargo.toml" | sed -n 's/^version = "\([^"]*\)"/\1/p' | head -n 1)
+          lock_version=$(git show "$RELEASE_TAG:src-tauri/Cargo.lock" | awk '/^name = "aether-gui"$/{getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit}')
+          core_sha=$(git ls-tree "$RELEASE_TAG" vendor/aether | awk '{print $3}')
+
+          [[ "$package_version" == "$EXPECTED_VERSION" ]]
+          [[ "$tauri_version" == "$EXPECTED_VERSION" ]]
+          [[ "$cargo_version" == "$EXPECTED_VERSION" ]]
+          [[ "$lock_version" == "$EXPECTED_VERSION" ]]
+          [[ "$core_sha" == "$EXPECTED_CORE_SHA" ]]
+
+          update_status running windows "resuming or starting signed Windows release" "" "" "$release_sha"
+          windows_run=$(select_reusable_run build.yml "$release_sha")
+          if [[ -z "$windows_run" ]]; then
+            gh workflow run build.yml --ref "$RELEASE_TAG" -f tag="$RELEASE_TAG"
+            windows_run=$(wait_for_dispatched_run build.yml "$release_sha")
           fi
-
-          echo "run_id=$android_run" >> "$GITHUB_OUTPUT"
-          gh run watch "$android_run" --exit-status
-          mkdir -p android-artifacts
-          gh run download "$android_run" --name Aether-Android-arm64-v8a --dir android-artifacts
-
-      - name: Attach Android assets and publish release notes
-        shell: bash
-        env:
-          RELEASE_SHA: ${{ steps.source.outputs.sha }}
-          WINDOWS_RUN: ${{ steps.windows.outputs.run_id }}
-          ANDROID_RUN: ${{ steps.android.outputs.run_id }}
-        run: |
-          set -euo pipefail
+          update_status running windows "watching Windows release workflow" "$windows_run" "" "$release_sha"
+          gh run watch "$windows_run" --exit-status
 
           for _ in $(seq 1 60); do
             gh release view "$RELEASE_TAG" >/dev/null 2>&1 && break
@@ -184,6 +138,21 @@ jobs:
           done
           gh release view "$RELEASE_TAG" >/dev/null
 
+          update_status running android "resuming or starting Android ARM64 build" "$windows_run" "" "$release_sha"
+          android_run=$(select_reusable_run build-android-arm64.yml "$release_sha")
+          if [[ -z "$android_run" ]]; then
+            gh workflow run build-android-arm64.yml --ref "$RELEASE_TAG"
+            android_run=$(wait_for_dispatched_run build-android-arm64.yml "$release_sha")
+          fi
+          update_status running android "watching Android ARM64 workflow" "$windows_run" "$android_run" "$release_sha"
+          gh run watch "$android_run" --exit-status
+
+          rm -rf android-artifacts
+          mkdir -p android-artifacts
+          gh run download "$android_run" --name Aether-Android-arm64-v8a --dir android-artifacts
+          test -n "$(find android-artifacts -type f -name '*.apk' -print -quit)"
+
+          update_status running publishing "attaching Android assets and release notes" "$windows_run" "$android_run" "$release_sha"
           gh release upload "$RELEASE_TAG" android-artifacts/* --clobber
 
           cat > release-notes.md <<'EOF'
@@ -216,16 +185,23 @@ jobs:
 
           Source commit and all downloadable assets are built from the same `v0.7.2` tag.
           EOF
-
           sed -i 's/^          //' release-notes.md
           gh release edit "$RELEASE_TAG" --title "Aether-GUI v0.7.2" --notes-file release-notes.md
+
+          assets=$(gh release view "$RELEASE_TAG" --json assets --jq '[.assets[].name]')
+          jq -e 'any(.[]; endswith(".exe"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".apk"))' <<<"$assets" >/dev/null
+          jq -e 'index("latest.json") != null' <<<"$assets" >/dev/null
+
+          update_status success complete "Windows and Android assets are published" "$windows_run" "$android_run" "$release_sha"
+          trap - ERR
 
           {
             echo "## Published Aether-GUI v0.7.2"
             echo
-            echo "- Source SHA: $RELEASE_SHA"
-            echo "- Windows workflow: $WINDOWS_RUN"
-            echo "- Android workflow: $ANDROID_RUN"
+            echo "- Source SHA: $release_sha"
+            echo "- Windows workflow: $windows_run"
+            echo "- Android workflow: $android_run"
             echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
             echo
             gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | "- Asset: \(.name) (\(.size) bytes)"'
