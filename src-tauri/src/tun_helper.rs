@@ -398,8 +398,8 @@ fn trusted_tun_dir() -> Result<PathBuf, String> {
 
 #[cfg(windows)]
 fn validate_control_dir(dir: &Path) -> Result<(), String> {
-    let canonical = fs::canonicalize(dir)
-        .map_err(|error| format!("canonicalize helper runtime: {error}"))?;
+    let canonical =
+        fs::canonicalize(dir).map_err(|error| format!("canonicalize helper runtime: {error}"))?;
     let trusted_elevation = fs::canonicalize(trusted_tun_dir()?.join("elevation"))
         .map_err(|error| format!("canonicalize trusted elevation runtime: {error}"))?;
     if canonical.parent() != Some(trusted_elevation.as_path()) {
@@ -484,8 +484,7 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String>
     let temp = path.with_extension("tmp");
     let contents = serde_json::to_vec(value)
         .map_err(|error| format!("serialize helper readiness: {error}"))?;
-    fs::write(&temp, contents)
-        .map_err(|error| format!("write helper readiness: {error}"))?;
+    fs::write(&temp, contents).map_err(|error| format!("write helper readiness: {error}"))?;
     fs::rename(&temp, path).map_err(|error| format!("publish helper readiness: {error}"))
 }
 
@@ -596,12 +595,7 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn spawn_log_tail(
-    path: PathBuf,
-    exit_path: PathBuf,
-    stream: &'static str,
-    tx: Sender<HelperLog>,
-) {
+fn spawn_log_tail(path: PathBuf, exit_path: PathBuf, stream: &'static str, tx: Sender<HelperLog>) {
     std::thread::spawn(move || {
         let mut offset = 0u64;
         loop {

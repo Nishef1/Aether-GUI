@@ -186,7 +186,10 @@ async fn connect(
 
     let launching = json!({ "state": "Launching" });
     emit_status(&app, &launching);
-    emit_log(&app, "[android] start requested for bundled ARM64 Aether core");
+    emit_log(
+        &app,
+        "[android] start requested for bundled ARM64 Aether core",
+    );
 
     match app.aether_vpn().start(profile.into()) {
         Ok(status) => {
@@ -212,10 +215,7 @@ async fn disconnect(app: AppHandle) -> Result<(), String> {
     let disconnecting = json!({ "state": "Disconnecting" });
     emit_status(&app, &disconnecting);
     emit_log(&app, "[android] disconnect requested");
-    let status = app
-        .aether_vpn()
-        .stop()
-        .map_err(|error| error.to_string())?;
+    let status = app.aether_vpn().stop().map_err(|error| error.to_string())?;
     emit_status(&app, &status_value(status));
     Ok(())
 }

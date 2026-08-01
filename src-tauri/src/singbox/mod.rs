@@ -224,7 +224,9 @@ fn spawn_process(
     log_tx: mpsc::Sender<process::ProcessLog>,
 ) -> Result<TunnelProcess, AetherError> {
     match engine {
-        TunEngine::Singbox => process::spawn(binary, config_path, log_tx).map(TunnelProcess::Singbox),
+        TunEngine::Singbox => {
+            process::spawn(binary, config_path, log_tx).map(TunnelProcess::Singbox)
+        }
         TunEngine::Xray => {
             let (xray_tx, xray_rx) = mpsc::channel::<xray::process::ProcessLog>();
             std::thread::spawn(move || {
@@ -288,7 +290,12 @@ pub fn start_tunnel(
         mgr.socks_port = Some(aether_socks_port);
         mgr.engine = Some(engine);
     }
-    emit_log(&app, engine, "info", format!("TUN process started (pid {pid})"));
+    emit_log(
+        &app,
+        engine,
+        "info",
+        format!("TUN process started (pid {pid})"),
+    );
 
     let app_for_logs = app.clone();
     std::thread::spawn(move || {
@@ -586,11 +593,19 @@ mod tests {
     fn recognizes_only_expected_tun_core_names() {
         assert!(expected_process_name(
             TunEngine::Singbox,
-            if cfg!(windows) { "sing-box.exe" } else { "sing-box" }
+            if cfg!(windows) {
+                "sing-box.exe"
+            } else {
+                "sing-box"
+            }
         ));
         assert!(expected_process_name(
             TunEngine::Xray,
-            if cfg!(windows) { "xray-v26.5.9.exe" } else { "xray-v26.5.9" }
+            if cfg!(windows) {
+                "xray-v26.5.9.exe"
+            } else {
+                "xray-v26.5.9"
+            }
         ));
         assert!(!expected_process_name(TunEngine::Xray, "not-xray.exe"));
     }
