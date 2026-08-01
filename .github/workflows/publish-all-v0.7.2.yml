@@ -1,0 +1,160 @@
+name: Publish Aether-GUI v0.7.2 all platforms
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/release-v0.7.2.all.trigger
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: publish-aether-gui-v0.7.2-all-platforms
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.7.2
+      EXPECTED_VERSION: 0.7.2
+      EXPECTED_CORE_SHA: 1d33f9f73d13af78cb2eaf1410494fe939e1aa4f
+    steps:
+      - name: Check out final source and tags
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ github.token }}
+
+      - name: Retag, build all supported platforms, and verify release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          release_sha=$(git rev-parse HEAD)
+          package_version=$(jq -r .version package.json)
+          tauri_version=$(jq -r .version src-tauri/tauri.conf.json)
+          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n1)
+          lock_version=$(awk '/^name = "aether-gui"$/{getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit}' src-tauri/Cargo.lock)
+          core_sha=$(git ls-tree HEAD vendor/aether | awk '{print $3}')
+
+          [[ "$package_version" == "$EXPECTED_VERSION" ]]
+          [[ "$tauri_version" == "$EXPECTED_VERSION" ]]
+          [[ "$cargo_version" == "$EXPECTED_VERSION" ]]
+          [[ "$lock_version" == "$EXPECTED_VERSION" ]]
+          [[ "$core_sha" == "$EXPECTED_CORE_SHA" ]]
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$RELEASE_TAG" "$release_sha" -m "Aether-GUI $RELEASE_TAG"
+          git push origin "refs/tags/$RELEASE_TAG" --force
+
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$release_sha" \
+              --title "Aether-GUI v0.7.2" \
+              --notes "Release assets are being built from the v0.7.2 source tag."
+          fi
+
+          gh workflow run release-windows-v0.7.2.yml --ref main
+          gh workflow run build-android-arm64.yml --ref "$RELEASE_TAG"
+          gh workflow run release-unix-v0.7.2.yml --ref main
+
+          find_run() {
+            local workflow="$1" sha="$2" id=""
+            for _ in $(seq 1 120); do
+              id=$(gh run list --workflow "$workflow" --limit 30 \
+                --json databaseId,headSha,event,createdAt \
+                --jq "[.[] | select(.event == \"workflow_dispatch\" and .headSha == \"${sha}\")][0].databaseId // empty")
+              [[ -n "$id" ]] && break
+              sleep 5
+            done
+            [[ -n "$id" ]]
+            printf '%s' "$id"
+          }
+
+          windows_run=$(find_run release-windows-v0.7.2.yml "$release_sha")
+          android_run=$(find_run build-android-arm64.yml "$release_sha")
+          unix_run=$(find_run release-unix-v0.7.2.yml "$release_sha")
+
+          echo "Windows run: $windows_run"
+          echo "Android run: $android_run"
+          echo "Unix desktop run: $unix_run"
+
+          set +e
+          gh run watch "$windows_run" --exit-status
+          windows_result=$?
+          gh run watch "$android_run" --exit-status
+          android_result=$?
+          gh run watch "$unix_run" --exit-status
+          unix_result=$?
+          set -e
+
+          if (( windows_result != 0 || android_result != 0 || unix_result != 0 )); then
+            echo "One or more platform builds failed: windows=$windows_result android=$android_result unix=$unix_result" >&2
+            exit 1
+          fi
+
+          rm -rf android-artifacts
+          mkdir -p android-artifacts
+          gh run download "$android_run" --name Aether-Android-arm64-v8a --dir android-artifacts
+          apk_path=$(find android-artifacts -type f -name '*.apk' -print -quit)
+          [[ -n "$apk_path" ]]
+          gh release upload "$RELEASE_TAG" android-artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+
+          cat > release-notes.md <<'EOF'
+          ## Aether-GUI v0.7.2
+
+          This release focuses on Android connection stability, sustained media traffic, VPN lifecycle resilience, and selective integration of Aether 1.5 reliability fixes.
+
+          ### Highlights
+          - Quick Reconnect defaults to off and Android Auto no longer silently enables it.
+          - WebRTC UDP-over-TCP protection defaults to off; ordinary UDP and QUIC remain inside the VPN.
+          - Existing Android profiles migrate once to the new defaults while later user choices remain persistent.
+          - The foreground Android VPN service survives removal from Recent Apps and process recreation.
+          - SOCKS5 UDP source pinning, netstack backpressure protection, MASQUE HTTP/2 flow-control correction, H3 closed-channel protection, bounded WireGuard transient-error handling, and strict HTTP probe parsing.
+          - Fixed MASQUE HTTP/2 datagram-context decoding with focused H2/H3 tests.
+
+          ### Downloads
+          - Windows x64 NSIS installer with updater metadata.
+          - Android ARM64 (`arm64-v8a`) APK and checksums.
+          - Linux x64 AppImage, Debian package, RPM package, and checksums.
+          - macOS Apple Silicon DMG and checksums.
+          - macOS Intel DMG and checksums.
+
+          Windows updater artifacts use the repository signing key. Linux packages are unsigned. macOS DMGs are ad-hoc signed and are not notarized.
+          EOF
+          sed -i 's/^          //' release-notes.md
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --title "Aether-GUI v0.7.2" --notes-file release-notes.md --latest
+
+          assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]')
+          jq -e 'any(.[]; endswith(".exe"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".apk"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".AppImage"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".deb"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".rpm"))' <<<"$assets" >/dev/null
+          jq -e '[.[] | select(endswith(".dmg"))] | length >= 2' <<<"$assets" >/dev/null
+          jq -e 'index("latest.json") != null' <<<"$assets" >/dev/null
+
+          {
+            echo "## Aether-GUI v0.7.2 publication complete"
+            echo
+            echo "- Source SHA: $release_sha"
+            echo "- Core SHA: $core_sha"
+            echo "- Windows run: $windows_run"
+            echo "- Android run: $android_run"
+            echo "- Linux/macOS run: $unix_run"
+            echo
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[] | "- \(.name) (\(.size) bytes)"'
+          } >> "$GITHUB_STEP_SUMMARY"
