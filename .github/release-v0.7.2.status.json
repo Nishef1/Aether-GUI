@@ -2,11 +2,11 @@
   "version": "0.7.2",
   "tag": "v0.7.2",
   "state": "running",
-  "stage": "source-repaired",
-  "details": "fixed core pinned and source tag moved; dispatching fixed finalizer",
+  "stage": "validating",
+  "details": "validated fixed v0.7.2 tagged source",
   "windows_run": "",
   "android_run": "",
   "release_sha": "f26ba6e1c67e590d2996b74cea25b10134bd162c",
   "core_sha": "1d33f9f73d13af78cb2eaf1410494fe939e1aa4f",
-  "updated_at": "2026-08-01T19:47:42Z"
+  "updated_at": "2026-08-01T19:47:53Z"
 }
