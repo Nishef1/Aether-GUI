@@ -85,7 +85,6 @@ function androidAutoProfile(profile: ConnectionProfile): ConnectionProfile {
   return {
     ...profile,
     masque_http2: true,
-    quick_reconnect: true,
   }
 }
 
@@ -158,13 +157,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       ip_version: "v4",
       connection_mode: "proxy",
       tun_engine: "xray",
-      quick_reconnect: true,
+      quick_reconnect: false,
       masque_http2: true,
       masque_noize: "firewall",
       wg_noize: "balanced",
       dns_server: "1.1.1.1",
       bind_address: "127.0.0.1:1819",
-      webrtc_leak_protection: true,
+      webrtc_leak_protection: false,
     },
     profileSaveError: null,
     logs: [],
@@ -542,8 +541,7 @@ async function initializeConnectionRuntime(): Promise<void> {
   if (
     isAndroid &&
     loadedProfile.protocol === "auto" &&
-    (loadedProfile.masque_http2 !== activeProfile.masque_http2 ||
-      loadedProfile.quick_reconnect !== activeProfile.quick_reconnect)
+    loadedProfile.masque_http2 !== activeProfile.masque_http2
   ) {
     void saveDefaultProfile(activeProfile).catch((error) => {
       appendRuntimeLog(`[error:migrating-android-auto-profile] ${String(error)}`)
