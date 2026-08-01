@@ -1,0 +1,112 @@
+name: Retag Fixed Aether-GUI v0.7.2 Source
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/release-v0.7.2.retag.trigger
+
+permissions:
+  contents: write
+  actions: write
+  pull-requests: write
+
+concurrency:
+  group: retag-fixed-aether-gui-v0.7.2
+  cancel-in-progress: false
+
+jobs:
+  retag:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.7.2
+      FIXED_CORE_SHA: 1d33f9f73d13af78cb2eaf1410494fe939e1aa4f
+      OLD_CORE_SHA: d713c3e35ba84e7c0e8c45a701544feca4bbb63d
+    steps:
+      - name: Check out the reviewed fixed-source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ github.token }}
+
+      - name: Fast-forward main, move tag, and dispatch finalizer
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tree_line=$(git ls-tree HEAD vendor/aether)
+          read -r _ _ core_sha _ <<<"$tree_line"
+          if [[ "$core_sha" != "$FIXED_CORE_SHA" ]]; then
+            echo "Expected fixed core $FIXED_CORE_SHA, found $core_sha" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for workflow in \
+            .github/workflows/publish-v0.7.2.yml \
+            .github/workflows/resume-v0.7.2.yml \
+            .github/workflows/finalize-v0.7.2.yml; do
+            if [[ -f "$workflow" ]]; then
+              sed -i "s/$OLD_CORE_SHA/$FIXED_CORE_SHA/g" "$workflow"
+              git add "$workflow"
+            fi
+          done
+
+          if ! git diff --cached --quiet; then
+            git commit -m "release: validate fixed Aether core for v0.7.2"
+          fi
+
+          git fetch origin main
+          git merge-base --is-ancestor origin/main HEAD
+          git push origin HEAD:main
+
+          release_sha=$(git rev-parse HEAD)
+          git tag -fa "$RELEASE_TAG" "$release_sha" -m "Aether-GUI $RELEASE_TAG (fixed MASQUE core)"
+          git push origin "refs/tags/$RELEASE_TAG" --force
+
+          jq -n \
+            --arg version "0.7.2" \
+            --arg tag "$RELEASE_TAG" \
+            --arg state "running" \
+            --arg stage "source-repaired" \
+            --arg details "fixed core pinned and source tag moved; dispatching finalizer" \
+            --arg windows_run "" \
+            --arg android_run "" \
+            --arg release_sha "$release_sha" \
+            --arg core_sha "$FIXED_CORE_SHA" \
+            --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version:$version,tag:$tag,state:$state,stage:$stage,details:$details,windows_run:$windows_run,android_run:$android_run,release_sha:$release_sha,core_sha:$core_sha,updated_at:$updated_at}' \
+            > /tmp/release-status.json
+
+          encoded=$(base64 -w0 /tmp/release-status.json)
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json?ref=main" --jq .sha 2>/dev/null || true)
+          if [[ -n "$existing" ]]; then
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json" \
+              -f message="release: record fixed v0.7.2 source" \
+              -f content="$encoded" \
+              -f branch=main \
+              -f sha="$existing" >/dev/null
+          else
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json" \
+              -f message="release: record fixed v0.7.2 source" \
+              -f content="$encoded" \
+              -f branch=main >/dev/null
+          fi
+
+          for _ in $(seq 1 45); do
+            if gh workflow view finalize-v0.7.2.yml >/dev/null 2>&1; then
+              gh workflow run finalize-v0.7.2.yml --ref main
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Could not dispatch finalizer after moving the tag" >&2
+          exit 1
