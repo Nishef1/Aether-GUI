@@ -81,20 +81,27 @@ fn profile_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|error| error.to_string())
 }
 
+fn normalize_runtime_defaults(mut profile: ConnectionProfile) -> (ConnectionProfile, bool) {
+    if profile.android_runtime_defaults_version >= CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION {
+        return (profile, false);
+    }
+
+    profile.quick_reconnect = false;
+    profile.webrtc_leak_protection = false;
+    profile.android_runtime_defaults_version = CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION;
+    (profile, true)
+}
+
 fn load_profile(app: &AppHandle) -> ConnectionProfile {
-    let mut profile = profile_path(app)
+    let loaded = profile_path(app)
         .ok()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default();
-
-    if profile.android_runtime_defaults_version < CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION {
-        profile.quick_reconnect = false;
-        profile.webrtc_leak_protection = false;
-        profile.android_runtime_defaults_version = CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION;
+    let (profile, migrated) = normalize_runtime_defaults(loaded);
+    if migrated {
         let _ = save_profile(app, &profile);
     }
-
     profile
 }
 
@@ -162,7 +169,8 @@ async fn connect(
     state: State<'_, MobileState>,
     profile_override: Option<ConnectionProfile>,
 ) -> Result<(), String> {
-    let profile = profile_override.unwrap_or_else(|| state.profile.lock().unwrap().clone());
+    let requested = profile_override.unwrap_or_else(|| state.profile.lock().unwrap().clone());
+    let (profile, _) = normalize_runtime_defaults(requested);
     if profile.connection_mode != "proxy" {
         let permission = app
             .aether_vpn()
@@ -256,6 +264,7 @@ fn set_default_profile(
     state: State<'_, MobileState>,
     profile: ConnectionProfile,
 ) -> Result<(), String> {
+    let (profile, _) = normalize_runtime_defaults(profile);
     save_profile(&app, &profile)?;
     *state.profile.lock().unwrap() = profile;
     Ok(())
