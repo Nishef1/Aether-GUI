@@ -1,0 +1,106 @@
+name: Finalize Aether-GUI v0.7.2 assets
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/release-v0.7.2.finalize.trigger]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: finalize-aether-gui-v0.7.2-assets
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.7.2
+      WINDOWS_RUN: '30717164103'
+      ANDROID_RUN: '30717164829'
+      UNIX_RUN: '30717458100'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Wait for platform builds and finalize release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          wait_for_run() {
+            local run_id="$1" label="$2"
+            for _ in $(seq 1 900); do
+              state=$(gh run view "$run_id" --json status,conclusion --jq '[.status, (.conclusion // "")] | @tsv')
+              status=${state%%$'\t'*}
+              conclusion=${state#*$'\t'}
+              echo "$label: status=$status conclusion=$conclusion"
+              if [[ "$status" == completed ]]; then
+                [[ "$conclusion" == success ]]
+                return
+              fi
+              sleep 20
+            done
+            echo "$label did not complete before timeout" >&2
+            return 1
+          }
+
+          wait_for_run "$WINDOWS_RUN" Windows
+          wait_for_run "$ANDROID_RUN" Android
+          wait_for_run "$UNIX_RUN" Unix-desktop
+
+          rm -rf android-release
+          mkdir -p android-release
+          gh run download "$ANDROID_RUN" --name Aether-Android-arm64-v8a --dir android-release
+          test -s android-release/app-arm64-release.apk
+          mv android-release/app-arm64-release.apk android-release/Aether-GUI_0.7.2_arm64-v8a.apk
+          if [[ -f android-release/SHA256SUMS.txt ]]; then
+            mv android-release/SHA256SUMS.txt android-release/Aether-GUI_0.7.2_Android_SHA256SUMS.txt
+          fi
+          gh release upload "$RELEASE_TAG" android-release/* --repo "$GITHUB_REPOSITORY" --clobber
+
+          cat > release-notes.md <<'EOF'
+          ## Aether-GUI v0.7.2
+
+          This release focuses on Android connection stability, sustained media traffic, VPN lifecycle resilience, and selective integration of Aether reliability fixes.
+
+          ### Highlights
+          - Quick Reconnect defaults to off and Android Auto no longer silently enables it.
+          - WebRTC UDP-over-TCP protection defaults to off; ordinary UDP and QUIC remain inside the VPN.
+          - Existing Android profiles migrate once to the new defaults while later user choices remain persistent.
+          - The foreground Android VPN service survives removal from Recent Apps and process recreation.
+          - Added SOCKS5 UDP source pinning, netstack backpressure protection, MASQUE HTTP/2 flow-control correction, H3 closed-channel protection, bounded WireGuard transient-error handling, and strict HTTP probe parsing.
+          - Fixed MASQUE HTTP/2 datagram-context decoding with focused H2/H3 tests.
+
+          ### Downloads
+          - Windows x64 NSIS installer and updater metadata.
+          - Android ARM64 (`arm64-v8a`) APK, checksums, and native-source notices.
+          - Linux x64 AppImage, Debian package, RPM package, and checksums.
+          - macOS Apple Silicon DMG and checksums.
+          - macOS Intel DMG and checksums.
+
+          Windows updater artifacts use the repository updater signing key. Linux packages are unsigned. macOS DMGs are ad-hoc signed and are not Apple-notarized.
+          EOF
+          sed -i 's/^          //' release-notes.md
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --title 'Aether-GUI v0.7.2' --notes-file release-notes.md --latest
+
+          assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]')
+          jq -e 'any(.[]; endswith(".exe"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".apk"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".AppImage"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".deb"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".rpm"))' <<<"$assets" >/dev/null
+          jq -e '[.[] | select(endswith(".dmg"))] | length >= 2' <<<"$assets" >/dev/null
+          jq -e 'index("latest.json") != null' <<<"$assets" >/dev/null
+
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url,tagName,name,assets \
+            --jq '{url,tag:.tagName,name,assets:[.assets[]|{name,size}]}' > /tmp/final-release.json
+          cat /tmp/final-release.json
+          cat /tmp/final-release.json >> "$GITHUB_STEP_SUMMARY"
