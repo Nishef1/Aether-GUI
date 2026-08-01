@@ -1,0 +1,63 @@
+name: Capture corrected v0.7.2 run IDs
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/release-v0.7.2.capture.trigger]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WINDOWS_RUN: '30717164103'
+      ANDROID_RUN: '30717164829'
+      UNIX_TRIGGER_SHA: b41f51c87a803facff5f71d638c4d0053f9b72a7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ github.token }}
+      - name: Record exact run IDs and status
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unix_run=""
+          for _ in $(seq 1 120); do
+            unix_run=$(gh run list --workflow release-unix-v0.7.2.yml --limit 50 \
+              --json databaseId,headSha,event,createdAt \
+              --jq "[.[] | select(.event == \"push\" and .headSha == \"${UNIX_TRIGGER_SHA}\")][0].databaseId // empty")
+            [[ -n "$unix_run" ]] && break
+            sleep 5
+          done
+          [[ -n "$unix_run" ]]
+
+          run_json() {
+            gh run view "$1" --json status,conclusion,url
+          }
+          windows=$(run_json "$WINDOWS_RUN")
+          android=$(run_json "$ANDROID_RUN")
+          unix=$(run_json "$unix_run")
+
+          jq -n \
+            --arg windows_run "$WINDOWS_RUN" --argjson windows "$windows" \
+            --arg android_run "$ANDROID_RUN" --argjson android "$android" \
+            --arg unix_run "$unix_run" --argjson unix "$unix" \
+            --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{windows:({run:$windows_run}+$windows),android:({run:$android_run}+$android),unix_desktop:({run:$unix_run}+$unix),updated_at:$updated_at}' \
+            > /tmp/status.json
+
+          content=$(base64 -w0 /tmp/status.json)
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.corrected-runs.json?ref=main" --jq .sha 2>/dev/null || true)
+          if [[ -n "$existing" ]]; then
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.corrected-runs.json" \
+              -f message='release: refresh corrected v0.7.2 run IDs' -f content="$content" -f branch=main -f sha="$existing" >/dev/null
+          else
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.corrected-runs.json" \
+              -f message='release: record corrected v0.7.2 run IDs' -f content="$content" -f branch=main >/dev/null
+          fi
