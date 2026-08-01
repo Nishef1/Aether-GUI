@@ -8,6 +8,8 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_aether_vpn::{AetherVpnExt, VpnProfile, VpnStatus};
 
+const CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION: u8 = 1;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     pub protocol: String,
@@ -24,6 +26,8 @@ pub struct ConnectionProfile {
     pub bind_address: String,
     #[serde(default)]
     pub webrtc_leak_protection: bool,
+    #[serde(default)]
+    pub android_runtime_defaults_version: u8,
 }
 
 impl Default for ConnectionProfile {
@@ -41,6 +45,7 @@ impl Default for ConnectionProfile {
             dns_server: "1.1.1.1".into(),
             bind_address: "127.0.0.1:1819".into(),
             webrtc_leak_protection: false,
+            android_runtime_defaults_version: CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION,
         }
     }
 }
@@ -77,11 +82,20 @@ fn profile_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 }
 
 fn load_profile(app: &AppHandle) -> ConnectionProfile {
-    profile_path(app)
+    let mut profile = profile_path(app)
         .ok()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    if profile.android_runtime_defaults_version < CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION {
+        profile.quick_reconnect = false;
+        profile.webrtc_leak_protection = false;
+        profile.android_runtime_defaults_version = CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION;
+        let _ = save_profile(app, &profile);
+    }
+
+    profile
 }
 
 fn save_profile(app: &AppHandle, profile: &ConnectionProfile) -> Result<(), String> {
