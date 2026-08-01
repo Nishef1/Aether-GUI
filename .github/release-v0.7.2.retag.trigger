@@ -1,1 +1,1 @@
-retag v0.7.2 with fixed core and bundled resource mappings
+retag v0.7.2 and retry with target-suffixed Tauri sidecars
