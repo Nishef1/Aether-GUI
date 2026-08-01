@@ -1,0 +1,230 @@
+name: Publish Aether-GUI v0.7.2
+
+on:
+  push:
+    branches:
+      - release/v0.7.2
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: publish-aether-gui-v0.7.2
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.7.2
+      EXPECTED_VERSION: 0.7.2
+      EXPECTED_CORE_SHA: d713c3e35ba84e7c0e8c45a701544feca4bbb63d
+    steps:
+      - name: Check out the release source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ github.token }}
+
+      - name: Synchronize release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          expected = "0.7.2"
+          package = json.loads(Path("package.json").read_text(encoding="utf-8"))
+          tauri = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+          cargo_toml = Path("src-tauri/Cargo.toml").read_text(encoding="utf-8")
+          cargo_version = re.search(r'^version\s*=\s*"([^"]+)"', cargo_toml, re.MULTILINE)
+          values = [package.get("version"), tauri.get("version"), cargo_version.group(1) if cargo_version else None]
+          if values != [expected, expected, expected]:
+              raise SystemExit(f"release versions are not synchronized: {values}")
+
+          lock_path = Path("src-tauri/Cargo.lock")
+          lock = lock_path.read_text(encoding="utf-8")
+          package_pattern = re.compile(r'(\[\[package\]\]\nname = "aether-gui"\nversion = ")([^"]+)(")')
+          updated, count = package_pattern.subn(rf'\g<1>{expected}\g<3>', lock, count=1)
+          if count != 1:
+              raise SystemExit("aether-gui package entry was not found exactly once in Cargo.lock")
+          lock_path.write_text(updated, encoding="utf-8")
+          PY
+
+          actual_core_sha=$(git ls-tree HEAD vendor/aether | awk '{print $3}')
+          if [[ "$actual_core_sha" != "$EXPECTED_CORE_SHA" ]]; then
+            echo "Expected Aether submodule $EXPECTED_CORE_SHA, found $actual_core_sha" >&2
+            exit 1
+          fi
+
+          node scripts/verify-version.mjs
+
+          if ! git diff --quiet -- src-tauri/Cargo.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src-tauri/Cargo.lock
+            git commit -m "release: synchronize Cargo.lock for 0.7.2"
+            git push origin HEAD:main
+          fi
+
+      - name: Create the v0.7.2 source tag
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          git reset --hard origin/main
+          release_sha=$(git rev-parse HEAD)
+          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
+
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            tagged_sha=$(git rev-list -n 1 "$RELEASE_TAG")
+            if [[ "$tagged_sha" != "$release_sha" ]]; then
+              echo "$RELEASE_TAG already points to $tagged_sha instead of $release_sha" >&2
+              exit 1
+            fi
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$RELEASE_TAG" "$release_sha" -m "Aether-GUI $RELEASE_TAG"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+
+      - name: Build and publish the signed Windows release
+        id: windows
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          gh run list --workflow build.yml --event workflow_dispatch --limit 100 \
+            --json databaseId --jq '.[].databaseId' > /tmp/windows-before.txt
+
+          gh workflow run build.yml --ref "$RELEASE_TAG" -f tag="$RELEASE_TAG"
+
+          windows_run=""
+          for _ in $(seq 1 90); do
+            while IFS=$'\t' read -r run_id head_sha; do
+              if [[ "$head_sha" == "$RELEASE_SHA" ]] && ! grep -qx "$run_id" /tmp/windows-before.txt; then
+                windows_run="$run_id"
+                break
+              fi
+            done < <(gh run list --workflow build.yml --event workflow_dispatch --limit 100 \
+              --json databaseId,headSha --jq '.[] | [.databaseId, .headSha] | @tsv')
+            [[ -n "$windows_run" ]] && break
+            sleep 4
+          done
+
+          if [[ -z "$windows_run" ]]; then
+            echo "Could not locate the dispatched Windows release workflow" >&2
+            exit 1
+          fi
+
+          echo "run_id=$windows_run" >> "$GITHUB_OUTPUT"
+          gh run watch "$windows_run" --exit-status
+
+      - name: Build the Android ARM64 release APK
+        id: android
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          gh run list --workflow build-android-arm64.yml --event workflow_dispatch --limit 100 \
+            --json databaseId --jq '.[].databaseId' > /tmp/android-before.txt
+
+          gh workflow run build-android-arm64.yml --ref "$RELEASE_TAG"
+
+          android_run=""
+          for _ in $(seq 1 90); do
+            while IFS=$'\t' read -r run_id head_sha; do
+              if [[ "$head_sha" == "$RELEASE_SHA" ]] && ! grep -qx "$run_id" /tmp/android-before.txt; then
+                android_run="$run_id"
+                break
+              fi
+            done < <(gh run list --workflow build-android-arm64.yml --event workflow_dispatch --limit 100 \
+              --json databaseId,headSha --jq '.[] | [.databaseId, .headSha] | @tsv')
+            [[ -n "$android_run" ]] && break
+            sleep 4
+          done
+
+          if [[ -z "$android_run" ]]; then
+            echo "Could not locate the dispatched Android workflow" >&2
+            exit 1
+          fi
+
+          echo "run_id=$android_run" >> "$GITHUB_OUTPUT"
+          gh run watch "$android_run" --exit-status
+          mkdir -p android-artifacts
+          gh run download "$android_run" --name Aether-Android-arm64-v8a --dir android-artifacts
+
+      - name: Attach Android assets and publish release notes
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          WINDOWS_RUN: ${{ steps.windows.outputs.run_id }}
+          ANDROID_RUN: ${{ steps.android.outputs.run_id }}
+        run: |
+          set -euo pipefail
+
+          for _ in $(seq 1 60); do
+            gh release view "$RELEASE_TAG" >/dev/null 2>&1 && break
+            sleep 5
+          done
+          gh release view "$RELEASE_TAG" >/dev/null
+
+          gh release upload "$RELEASE_TAG" android-artifacts/* --clobber
+
+          cat > release-notes.md <<'EOF'
+          ## Aether-GUI v0.7.2
+
+          This release focuses on Android connection stability, sustained media traffic, VPN lifecycle resilience, and selective integration of the reliability fixes introduced in Aether 1.5.
+
+          ### Android
+
+          - Quick Reconnect is disabled by default and Auto no longer silently enables it.
+          - WebRTC UDP-over-TCP protection is disabled by default, keeping normal UDP and QUIC inside the VPN without forcing media traffic through TCP.
+          - Existing profiles are migrated once to the new defaults while later user choices remain persistent.
+          - The foreground VPN service survives removal of the app from Recent Apps and supports process recreation.
+          - Android builds use the same deterministic core patch chain locally and in GitHub Actions.
+
+          ### Core reliability and security
+
+          - Pins SOCKS5 UDP relay traffic to the client that owns the control connection.
+          - Prevents netstack deadlocks under queue backpressure.
+          - Fixes MASQUE HTTP/2 flow control and non-blocking receive behavior.
+          - Prevents closed MASQUE HTTP/3 channels from causing a busy loop.
+          - Retries bounded transient WireGuard UDP errors and cancels child tasks cleanly.
+          - Sends post-handshake WireGuard obfuscation junk only once per fresh session.
+          - Uses bounded, correctly parsed HTTP endpoint probes.
+
+          ### Downloads
+
+          - Signed Windows NSIS installer with updater metadata.
+          - Android ARM64 (`arm64-v8a`) release APK with SHA-256 checksums.
+
+          Source commit and all downloadable assets are built from the same `v0.7.2` tag.
+          EOF
+
+          sed -i 's/^          //' release-notes.md
+          gh release edit "$RELEASE_TAG" --title "Aether-GUI v0.7.2" --notes-file release-notes.md
+
+          {
+            echo "## Published Aether-GUI v0.7.2"
+            echo
+            echo "- Source SHA: $RELEASE_SHA"
+            echo "- Windows workflow: $WINDOWS_RUN"
+            echo "- Android workflow: $ANDROID_RUN"
+            echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+            echo
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | "- Asset: \(.name) (\(.size) bytes)"'
+          } >> "$GITHUB_STEP_SUMMARY"
