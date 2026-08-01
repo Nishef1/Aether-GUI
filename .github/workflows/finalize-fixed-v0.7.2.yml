@@ -1,0 +1,145 @@
+name: Finalize Fixed Aether-GUI v0.7.2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: finalize-fixed-aether-gui-v0.7.2
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.7.2
+      EXPECTED_CORE_SHA: 1d33f9f73d13af78cb2eaf1410494fe939e1aa4f
+    steps:
+      - name: Check out repository metadata
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Build Windows and Android assets and publish release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          update_status() {
+            local state="$1" stage="$2" details="$3"
+            local windows_run="${4:-}" android_run="${5:-}" release_sha="${6:-}"
+            jq -n \
+              --arg version "0.7.2" --arg tag "$RELEASE_TAG" \
+              --arg state "$state" --arg stage "$stage" --arg details "$details" \
+              --arg windows_run "$windows_run" --arg android_run "$android_run" \
+              --arg release_sha "$release_sha" --arg core_sha "$EXPECTED_CORE_SHA" \
+              --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{version:$version,tag:$tag,state:$state,stage:$stage,details:$details,windows_run:$windows_run,android_run:$android_run,release_sha:$release_sha,core_sha:$core_sha,updated_at:$updated_at}' \
+              > /tmp/release-status.json
+            local encoded existing
+            encoded=$(base64 -w0 /tmp/release-status.json)
+            existing=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json?ref=main" --jq .sha 2>/dev/null || true)
+            if [[ -n "$existing" ]]; then
+              gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json" \
+                -f message="release: record v0.7.2 status (${stage})" -f content="$encoded" \
+                -f branch=main -f sha="$existing" >/dev/null
+            else
+              gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json" \
+                -f message="release: record v0.7.2 status (${stage})" -f content="$encoded" \
+                -f branch=main >/dev/null
+            fi
+          }
+
+          latest_run() {
+            local workflow="$1" sha="${2:-}"
+            if [[ -n "$sha" ]]; then
+              gh run list --workflow "$workflow" --limit 100 \
+                --json databaseId,headSha,status,conclusion,createdAt \
+                --jq "[.[] | select(.headSha == \"${sha}\") | select(.status != \"completed\" or .conclusion == \"success\")][0].databaseId // empty"
+            else
+              gh run list --workflow "$workflow" --limit 100 \
+                --json databaseId,status,conclusion,createdAt \
+                --jq '[.[] | select(.status != "completed" or .conclusion == "success")][0].databaseId // empty'
+            fi
+          }
+
+          wait_for_run() {
+            local workflow="$1" sha="${2:-}" id=""
+            for _ in $(seq 1 90); do
+              id=$(latest_run "$workflow" "$sha")
+              [[ -n "$id" ]] && break
+              sleep 4
+            done
+            [[ -n "$id" ]]
+            printf '%s' "$id"
+          }
+
+          windows_run="" android_run="" release_sha=""
+          trap 'code=$?; update_status failure failed "finalizer exited with code ${code}" "$windows_run" "$android_run" "$release_sha"; exit "$code"' ERR
+
+          git fetch origin --tags --force
+          release_sha=$(git rev-list -n 1 "$RELEASE_TAG")
+          tree_line=$(git ls-tree "$RELEASE_TAG" vendor/aether)
+          read -r _ _ core_sha _ <<<"$tree_line"
+          [[ "$core_sha" == "$EXPECTED_CORE_SHA" ]]
+          [[ "$(git show "$RELEASE_TAG:package.json" | jq -r .version)" == "0.7.2" ]]
+          update_status running validating "validated fixed v0.7.2 tagged source" "" "" "$release_sha"
+
+          update_status running windows "starting corrected Windows release" "" "" "$release_sha"
+          gh workflow run release-windows-v0.7.2.yml --ref main
+          windows_run=$(wait_for_run release-windows-v0.7.2.yml)
+          update_status running windows "watching corrected Windows release" "$windows_run" "" "$release_sha"
+          gh run watch "$windows_run" --exit-status
+
+          for _ in $(seq 1 60); do
+            gh release view "$RELEASE_TAG" >/dev/null 2>&1 && break
+            sleep 5
+          done
+          gh release view "$RELEASE_TAG" >/dev/null
+
+          update_status running android "starting Android ARM64 release" "$windows_run" "" "$release_sha"
+          gh workflow run build-android-arm64.yml --ref "$RELEASE_TAG"
+          android_run=$(wait_for_run build-android-arm64.yml "$release_sha")
+          update_status running android "watching Android ARM64 release" "$windows_run" "$android_run" "$release_sha"
+          gh run watch "$android_run" --exit-status
+
+          rm -rf android-artifacts
+          mkdir -p android-artifacts
+          gh run download "$android_run" --name Aether-Android-arm64-v8a --dir android-artifacts
+          [[ -n "$(find android-artifacts -type f -name '*.apk' -print -quit)" ]]
+          gh release upload "$RELEASE_TAG" android-artifacts/* --clobber
+
+          cat > release-notes.md <<'EOF'
+          ## Aether-GUI v0.7.2
+
+          Android reliability and media-traffic release with selective Aether 1.5 stability fixes.
+
+          ### Highlights
+          - Quick Reconnect defaults to off and Auto no longer re-enables it.
+          - WebRTC UDP-over-TCP defaults to off; normal UDP/QUIC remains inside the VPN.
+          - Existing Android profiles migrate once to the new defaults.
+          - Foreground VPN service survives removal from Recent Apps and process recreation.
+          - SOCKS5 UDP source pinning, netstack backpressure protection, MASQUE HTTP/2 flow-control correction, H3 closed-channel protection, bounded WireGuard transient-error handling, and strict HTTP probe parsing.
+          - Fixed MASQUE HTTP/2 datagram-context decoding with H2/H3 regression tests.
+
+          ### Downloads
+          - Signed Windows NSIS installer and updater metadata.
+          - Android ARM64 (`arm64-v8a`) release APK and SHA-256 checksums.
+          EOF
+          sed -i 's/^          //' release-notes.md
+          gh release edit "$RELEASE_TAG" --title "Aether-GUI v0.7.2" --notes-file release-notes.md
+
+          assets=$(gh release view "$RELEASE_TAG" --json assets --jq '[.assets[].name]')
+          jq -e 'any(.[]; endswith(".exe"))' <<<"$assets" >/dev/null
+          jq -e 'any(.[]; endswith(".apk"))' <<<"$assets" >/dev/null
+          jq -e 'index("latest.json") != null' <<<"$assets" >/dev/null
+
+          update_status success complete "Windows and Android assets are published" "$windows_run" "$android_run" "$release_sha"
+          trap - ERR
