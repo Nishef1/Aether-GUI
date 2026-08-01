@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MASQUE_MARKER = "Android auto H2 latency window"
+MASQUE_ORDER_MARKER = "Android documented MASQUE ingress order"
 WG_MARKER = "Android bounded official WARP scan"
 
 
@@ -39,6 +40,33 @@ for path in (prober_path, wg_prober_path, wireguard_path):
         raise SystemExit(f"Aether source file was not found: {path}")
 
 prober = prober_path.read_text(encoding="utf-8")
+if MASQUE_ORDER_MARKER not in prober:
+    prober = replace_pattern(
+        prober,
+        r"pub const MASQUE_CIDRS_V4: &\[&str\] = &\[.*?\n\];",
+        '''// Android documented MASQUE ingress order: probe the current ingress
+// range first, then the proven consumer compatibility pools. This preserves the
+// fork's deliberately bounded list while adopting Aether v1.5.0 scan priority.
+pub const MASQUE_CIDRS_V4: &[&str] = &[
+    "162.159.197.0/24",
+    "162.159.198.0/24",
+    "162.159.192.0/24",
+];''',
+        "MASQUE IPv4 ingress order",
+    )
+    prober = replace_pattern(
+        prober,
+        r"pub const MASQUE_SEEDS: &\[&str\] = &\[.*?\n\];",
+        '''pub const MASQUE_SEEDS: &[&str] = &[
+    "162.159.197.3",
+    "162.159.197.1",
+    "162.159.198.2",
+    "162.159.198.1",
+    "162.159.192.1",
+];''',
+        "MASQUE seed order",
+    )
+
 if MASQUE_MARKER not in prober:
     prober = replace_pattern(
         prober,
@@ -114,6 +142,7 @@ pub const WG_SEEDS_V6: &[&str] = &["2606:4700:100::1"];'''
 
 for name, source, marker in (
     ("prober.rs", prober, MASQUE_MARKER),
+    ("prober.rs", prober, MASQUE_ORDER_MARKER),
     ("wg_prober.rs", wg_prober, WG_MARKER),
     ("wireguard.rs", wireguard, WG_MARKER),
 ):
@@ -122,6 +151,10 @@ for name, source, marker in (
 
 if "early_exit_first: false" not in prober or "Duration::from_millis(650)" not in prober:
     raise SystemExit("MASQUE Auto latency sampling policy was not applied")
+if 'MASQUE_CIDRS_V4: &[&str] = &[\n    "162.159.197.0/24"' not in prober:
+    raise SystemExit("documented MASQUE IPv4 ingress is not first")
+if 'MASQUE_SEEDS: &[&str] = &[\n    "162.159.197.3"' not in prober:
+    raise SystemExit("documented live MASQUE seed is not first")
 if "overall_deadline: Duration::from_secs(60)" not in wg_prober:
     raise SystemExit("bounded WireGuard Ironclad deadline was not applied")
 if "188.114.96.0/24" in wireguard or "854," in wireguard:
