@@ -13,6 +13,10 @@ core="$crate_dir/target/aarch64-linux-android/release/aether"
   exit 2
 }
 
+# Validate the source contract before mutating the checked-out submodule. This
+# guards patch ordering, default flags, scanner bounds, MTUs, and egress gating.
+python3 "$workspace/scripts/tests/test_android_transport_contract.py"
+
 # Keep CI and the local PowerShell build on the same deterministic core source.
 # The baseline fresh-session migration runs first; the final patches then layer
 # Android's verified egress, runtime DNS, bounded discovery, and fresh runtime
