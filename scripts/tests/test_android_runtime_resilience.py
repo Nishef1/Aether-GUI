@@ -21,6 +21,7 @@ RUNTIME_RELATIVE = Path(
 )
 MANIFEST = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/AndroidManifest.xml"
 CONNECTION_STORE = ROOT / "src/state/connectionStore.ts"
+CONNECTION_TYPES = ROOT / "src/types/connection.ts"
 ANDROID_BACKEND = ROOT / "src-tauri/src/android.rs"
 COMMON_PROFILE = ROOT / "src-tauri/src/aether/profiles.rs"
 TRANSPORT_POLICY = (
@@ -89,6 +90,23 @@ class AndroidRuntimeResilienceTest(unittest.TestCase):
         self.assertRegex(android, r"quick_reconnect:\s*false")
         self.assertRegex(android, r"webrtc_leak_protection:\s*false")
         self.assertRegex(common, r"quick_reconnect:\s*false")
+
+    def test_legacy_android_profile_is_migrated_once(self) -> None:
+        android = ANDROID_BACKEND.read_text(encoding="utf-8")
+        types = CONNECTION_TYPES.read_text(encoding="utf-8")
+        self.assertIn("CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION: u8 = 1", android)
+        self.assertIn("pub android_runtime_defaults_version: u8", android)
+        self.assertIn(
+            "profile.android_runtime_defaults_version < CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION",
+            android,
+        )
+        migration = android.split(
+            "if profile.android_runtime_defaults_version <", 1
+        )[1].split("profile\n}", 1)[0]
+        self.assertIn("profile.quick_reconnect = false", migration)
+        self.assertIn("profile.webrtc_leak_protection = false", migration)
+        self.assertIn("let _ = save_profile(app, &profile)", migration)
+        self.assertIn("android_runtime_defaults_version?: number", types)
 
     def test_android_auto_does_not_override_quick_reconnect(self) -> None:
         store = CONNECTION_STORE.read_text(encoding="utf-8")
