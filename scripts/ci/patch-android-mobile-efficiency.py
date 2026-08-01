@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MARKER = "Android mobile efficiency policy"
 LOGGING_MARKER = "Android opt-in diagnostics"
+RUNTIME_RESILIENCE_MARKER = "Android runtime resilience policy"
 
 
 def replace_once(source: str, old: str, new: str, label: str) -> str:
@@ -118,6 +119,53 @@ if MARKER not in service:
     ):
         service = replace_once(service, old, new, label)
 
+if RUNTIME_RESILIENCE_MARKER not in service:
+    service = replace_once(
+        service,
+        '''        return Service.START_NOT_STICKY
+''',
+        '''        // Android runtime resilience policy: redeliver the complete
+        // start intent if an OEM kills the foreground-service process after the
+        // app task is removed. Explicit Stop still calls stopSelf and remains final.
+        return Service.START_REDELIVER_INTENT
+''',
+        "foreground VPN restart policy",
+    )
+    service = replace_once(
+        service,
+        '''                tunnel = createSystemTunnel(
+                    bindAddress,
+                    dnsServer,
+                    webrtcLeakProtection,
+                )
+''',
+        '''                // Android runtime resilience policy: the system VPN
+                // already carries SOCKS5 UDP ASSOCIATE inside Aether. Keeping
+                // QUIC datagrams native avoids TCP head-of-line stalls in media
+                // apps while preserving full-tunnel containment.
+                tunnel = createSystemTunnel(
+                    bindAddress,
+                    dnsServer,
+                    false,
+                )
+''',
+        "native UDP media compatibility",
+    )
+    service = replace_once(
+        service,
+        '''                log(
+                    "Android TUN active; SOCKS=$bindAddress; WebRTC protection=" +
+                        if (webrtcLeakProtection) "UDP-in-TCP" else "standard UDP relay"
+                )
+''',
+        '''                log(
+                    "Android TUN active; SOCKS=$bindAddress; " +
+                        "UDP/QUIC relayed through SOCKS5"
+                )
+''',
+        "accurate Android UDP status",
+    )
+
 if LOGGING_MARKER not in service:
     service = replace_once(
         service,
@@ -219,9 +267,11 @@ if MARKER not in service:
     raise SystemExit("FinalAetherVpnPlugin.kt: efficiency marker is missing")
 if LOGGING_MARKER not in service:
     raise SystemExit("FinalAetherVpnPlugin.kt: opt-in logging marker is missing")
+if RUNTIME_RESILIENCE_MARKER not in service:
+    raise SystemExit("FinalAetherVpnPlugin.kt: runtime resilience marker is missing")
 if MARKER not in runtime:
     raise SystemExit("AndroidVpnRuntime.kt: efficiency marker is missing")
 
 service_path.write_text(service, encoding="utf-8")
 runtime_path.write_text(runtime, encoding="utf-8")
-print(f"Applied Android mobile efficiency and opt-in diagnostics policy in {java_dir}")
+print(f"Applied Android mobile efficiency, runtime resilience, and opt-in diagnostics policy in {java_dir}")
