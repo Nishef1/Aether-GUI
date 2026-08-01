@@ -1,0 +1,137 @@
+name: Watch Aether-GUI v0.7.2 platform runs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/release-v0.7.2.watch.trigger
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: watch-aether-gui-v0.7.2-runs
+  cancel-in-progress: true
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.7.2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Capture and watch platform runs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          git fetch origin --tags --force
+          release_sha=$(git rev-list -n 1 "$RELEASE_TAG")
+
+          find_run() {
+            local workflow="$1" id=""
+            for _ in $(seq 1 180); do
+              id=$(gh run list --workflow "$workflow" --limit 50 \
+                --json databaseId,headSha,event,createdAt \
+                --jq "[.[] | select(.event == \"workflow_dispatch\" and .headSha == \"${release_sha}\")][0].databaseId // empty")
+              [[ -n "$id" ]] && break
+              sleep 5
+            done
+            [[ -n "$id" ]]
+            printf '%s' "$id"
+          }
+
+          write_status() {
+            local state="$1" details="$2"
+            local windows_status="$3" windows_conclusion="$4"
+            local android_status="$5" android_conclusion="$6"
+            local unix_status="$7" unix_conclusion="$8"
+
+            assets='[]'
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[] | {name:.name,size:.size}]')
+            fi
+
+            jq -n \
+              --arg version "0.7.2" \
+              --arg tag "$RELEASE_TAG" \
+              --arg release_sha "$release_sha" \
+              --arg state "$state" \
+              --arg details "$details" \
+              --arg windows_run "$windows_run" \
+              --arg windows_status "$windows_status" \
+              --arg windows_conclusion "$windows_conclusion" \
+              --arg android_run "$android_run" \
+              --arg android_status "$android_status" \
+              --arg android_conclusion "$android_conclusion" \
+              --arg unix_run "$unix_run" \
+              --arg unix_status "$unix_status" \
+              --arg unix_conclusion "$unix_conclusion" \
+              --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --argjson assets "$assets" \
+              '{version:$version,tag:$tag,release_sha:$release_sha,state:$state,details:$details,windows:{run:$windows_run,status:$windows_status,conclusion:$windows_conclusion},android:{run:$android_run,status:$android_status,conclusion:$android_conclusion},unix_desktop:{run:$unix_run,status:$unix_status,conclusion:$unix_conclusion},assets:$assets,updated_at:$updated_at}' \
+              > /tmp/status.json
+
+            encoded=$(base64 -w0 /tmp/status.json)
+            existing=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.all.status.json?ref=main" --jq .sha 2>/dev/null || true)
+            if [[ -n "$existing" ]]; then
+              gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.all.status.json" \
+                -f message="release: update v0.7.2 platform status" \
+                -f content="$encoded" -f branch=main -f sha="$existing" >/dev/null
+            else
+              gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.all.status.json" \
+                -f message="release: record v0.7.2 platform status" \
+                -f content="$encoded" -f branch=main >/dev/null
+            fi
+          }
+
+          windows_run=$(find_run release-windows-v0.7.2.yml)
+          android_run=$(find_run build-android-arm64.yml)
+          unix_run=$(find_run release-unix-v0.7.2.yml)
+
+          write_status running "platform runs discovered" queued "" queued "" queued ""
+
+          for _ in $(seq 1 600); do
+            windows_json=$(gh run view "$windows_run" --json status,conclusion)
+            android_json=$(gh run view "$android_run" --json status,conclusion)
+            unix_json=$(gh run view "$unix_run" --json status,conclusion)
+
+            windows_status=$(jq -r .status <<<"$windows_json")
+            windows_conclusion=$(jq -r '.conclusion // ""' <<<"$windows_json")
+            android_status=$(jq -r .status <<<"$android_json")
+            android_conclusion=$(jq -r '.conclusion // ""' <<<"$android_json")
+            unix_status=$(jq -r .status <<<"$unix_json")
+            unix_conclusion=$(jq -r '.conclusion // ""' <<<"$unix_json")
+
+            if [[ "$windows_status" == completed && "$android_status" == completed && "$unix_status" == completed ]]; then
+              break
+            fi
+            sleep 20
+          done
+
+          windows_json=$(gh run view "$windows_run" --json status,conclusion)
+          android_json=$(gh run view "$android_run" --json status,conclusion)
+          unix_json=$(gh run view "$unix_run" --json status,conclusion)
+          windows_status=$(jq -r .status <<<"$windows_json")
+          windows_conclusion=$(jq -r '.conclusion // ""' <<<"$windows_json")
+          android_status=$(jq -r .status <<<"$android_json")
+          android_conclusion=$(jq -r '.conclusion // ""' <<<"$android_json")
+          unix_status=$(jq -r .status <<<"$unix_json")
+          unix_conclusion=$(jq -r '.conclusion // ""' <<<"$unix_json")
+
+          if [[ "$windows_conclusion" == success && "$android_conclusion" == success && "$unix_conclusion" == success ]]; then
+            write_status success "all supported platform builds succeeded" "$windows_status" "$windows_conclusion" "$android_status" "$android_conclusion" "$unix_status" "$unix_conclusion"
+          else
+            write_status failure "one or more supported platform builds failed" "$windows_status" "$windows_conclusion" "$android_status" "$android_conclusion" "$unix_status" "$unix_conclusion"
+            exit 1
+          fi
