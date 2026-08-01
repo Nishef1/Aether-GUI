@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -20,6 +24,11 @@ FINAL_PREPARE = ROOT / "scripts/prepare-android-native-final.ps1"
 ICON_PREPARE = ROOT / "scripts/prepare-android-icons.ps1"
 ICON_MANIFEST = ROOT / "src-tauri/icons/android-icon-manifest.json"
 NOTIFICATION_ICON = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/res/drawable/ic_stat_aether.xml"
+CORE_PATCH_FILES = (
+    Path("vendor/aether/aether/src/prober.rs"),
+    Path("vendor/aether/aether/src/wg_prober.rs"),
+    Path("vendor/aether/aether/src/wireguard.rs"),
+)
 
 
 class AndroidTransportContractTest(unittest.TestCase):
@@ -52,10 +61,55 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn('"162.159.197.0/24"', patch)
         self.assertIn('"162.159.197.3"', patch)
         self.assertIn("Android bounded official WARP scan", patch)
+        self.assertIn("Android WireGuard transient receive policy", patch)
         self.assertIn("overall_deadline: Duration::from_secs(60)", patch)
         self.assertIn("pub const WG_PORTS: &[u16] = &[2408, 500, 1701, 4500]", patch)
         self.assertIn("wireGuardUsesBoundedIroncladHttpVerification", tests)
         self.assertIn("goolUsesBoundedIroncladOuterSelection", tests)
+
+    def test_mobile_core_patch_is_transactional_on_the_pinned_core(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            for relative in CORE_PATCH_FILES:
+                source = ROOT / relative
+                destination = workspace / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+
+            command = [sys.executable, str(MOBILE_NETWORK_PATCH), str(workspace)]
+            subprocess.run(
+                command,
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            first = {
+                relative: (workspace / relative).read_bytes()
+                for relative in CORE_PATCH_FILES
+            }
+            subprocess.run(
+                command,
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            second = {
+                relative: (workspace / relative).read_bytes()
+                for relative in CORE_PATCH_FILES
+            }
+            self.assertEqual(first, second)
+
+            prober = first[CORE_PATCH_FILES[0]].decode("utf-8")
+            wireguard = first[CORE_PATCH_FILES[2]].decode("utf-8")
+            cidrs = prober.split("pub const MASQUE_CIDRS_V4", 1)[1].split("];", 1)[0]
+            seeds = prober.split("pub const MASQUE_SEEDS", 1)[1].split("];", 1)[0]
+            self.assertLess(cidrs.index("162.159.197.0/24"), cidrs.index("162.159.198.0/24"))
+            self.assertLess(seeds.index("162.159.197.3"), seeds.index("162.159.198.2"))
+            self.assertIn("is_transient_socket_error", wireguard)
+            self.assertIn("TaskGuard(vec![", wireguard)
+            self.assertIn("transient_udp_errors_do_not_end_the_runtime", wireguard)
 
     def test_auto_prefers_h2_without_overriding_reconnect(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
