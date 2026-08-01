@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MARKER = "Android mobile efficiency policy"
 LOGGING_MARKER = "Android opt-in diagnostics"
+RUNTIME_RESILIENCE_MARKER = "Android runtime resilience policy"
 
 
 def replace_once(source: str, old: str, new: str, label: str) -> str:
@@ -118,6 +119,36 @@ if MARKER not in service:
     ):
         service = replace_once(service, old, new, label)
 
+if RUNTIME_RESILIENCE_MARKER not in service:
+    service = replace_once(
+        service,
+        '''        return Service.START_NOT_STICKY
+''',
+        '''        // Android runtime resilience policy: redeliver the complete
+        // start intent if an OEM kills the foreground-service process after the
+        // app task is removed. Explicit Stop still calls stopSelf and remains final.
+        return Service.START_REDELIVER_INTENT
+''',
+        "foreground VPN restart policy",
+    )
+    for old, new, label in (
+        ("    var quickReconnect: Boolean = true", "    var quickReconnect: Boolean = false", "quick reconnect invoke default"),
+        ("    var webrtcLeakProtection: Boolean = true", "    var webrtcLeakProtection: Boolean = false", "WebRTC invoke default"),
+        ("        val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, true)", "        val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, false)", "quick reconnect intent default"),
+        (
+            '''        val webrtcLeakProtection = intent.getBooleanExtra(
+            EXTRA_WEBRTC_LEAK_PROTECTION,
+            true
+        )''',
+            '''        val webrtcLeakProtection = intent.getBooleanExtra(
+            EXTRA_WEBRTC_LEAK_PROTECTION,
+            false
+        )''',
+            "WebRTC intent default",
+        ),
+    ):
+        service = replace_once(service, old, new, label)
+
 if LOGGING_MARKER not in service:
     service = replace_once(
         service,
@@ -219,9 +250,11 @@ if MARKER not in service:
     raise SystemExit("FinalAetherVpnPlugin.kt: efficiency marker is missing")
 if LOGGING_MARKER not in service:
     raise SystemExit("FinalAetherVpnPlugin.kt: opt-in logging marker is missing")
+if RUNTIME_RESILIENCE_MARKER not in service:
+    raise SystemExit("FinalAetherVpnPlugin.kt: runtime resilience marker is missing")
 if MARKER not in runtime:
     raise SystemExit("AndroidVpnRuntime.kt: efficiency marker is missing")
 
 service_path.write_text(service, encoding="utf-8")
 runtime_path.write_text(runtime, encoding="utf-8")
-print(f"Applied Android mobile efficiency and opt-in diagnostics policy in {java_dir}")
+print(f"Applied Android mobile efficiency, runtime resilience, and opt-in diagnostics policy in {java_dir}")

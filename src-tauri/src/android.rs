@@ -8,9 +8,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_aether_vpn::{AetherVpnExt, VpnProfile, VpnStatus};
 
-fn default_true() -> bool {
-    true
-}
+const CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION: u8 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionProfile {
@@ -19,14 +17,17 @@ pub struct ConnectionProfile {
     pub ip_version: String,
     pub connection_mode: String,
     pub tun_engine: String,
+    #[serde(default)]
     pub quick_reconnect: bool,
     pub masque_http2: bool,
     pub masque_noize: String,
     pub wg_noize: String,
     pub dns_server: String,
     pub bind_address: String,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub webrtc_leak_protection: bool,
+    #[serde(default)]
+    pub android_runtime_defaults_version: u8,
 }
 
 impl Default for ConnectionProfile {
@@ -37,13 +38,14 @@ impl Default for ConnectionProfile {
             ip_version: "v4".into(),
             connection_mode: "tunnel".into(),
             tun_engine: "xray".into(),
-            quick_reconnect: true,
+            quick_reconnect: false,
             masque_http2: false,
             masque_noize: "firewall".into(),
             wg_noize: "balanced".into(),
             dns_server: "1.1.1.1".into(),
             bind_address: "127.0.0.1:1819".into(),
-            webrtc_leak_protection: true,
+            webrtc_leak_protection: false,
+            android_runtime_defaults_version: CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION,
         }
     }
 }
@@ -79,12 +81,28 @@ fn profile_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|error| error.to_string())
 }
 
+fn normalize_runtime_defaults(mut profile: ConnectionProfile) -> (ConnectionProfile, bool) {
+    if profile.android_runtime_defaults_version >= CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION {
+        return (profile, false);
+    }
+
+    profile.quick_reconnect = false;
+    profile.webrtc_leak_protection = false;
+    profile.android_runtime_defaults_version = CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION;
+    (profile, true)
+}
+
 fn load_profile(app: &AppHandle) -> ConnectionProfile {
-    profile_path(app)
+    let loaded = profile_path(app)
         .ok()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let (profile, migrated) = normalize_runtime_defaults(loaded);
+    if migrated {
+        let _ = save_profile(app, &profile);
+    }
+    profile
 }
 
 fn save_profile(app: &AppHandle, profile: &ConnectionProfile) -> Result<(), String> {
@@ -151,7 +169,8 @@ async fn connect(
     state: State<'_, MobileState>,
     profile_override: Option<ConnectionProfile>,
 ) -> Result<(), String> {
-    let profile = profile_override.unwrap_or_else(|| state.profile.lock().unwrap().clone());
+    let requested = profile_override.unwrap_or_else(|| state.profile.lock().unwrap().clone());
+    let (profile, _) = normalize_runtime_defaults(requested);
     if profile.connection_mode != "proxy" {
         let permission = app
             .aether_vpn()
@@ -245,6 +264,7 @@ fn set_default_profile(
     state: State<'_, MobileState>,
     profile: ConnectionProfile,
 ) -> Result<(), String> {
+    let (profile, _) = normalize_runtime_defaults(profile);
     save_profile(&app, &profile)?;
     *state.profile.lock().unwrap() = profile;
     Ok(())

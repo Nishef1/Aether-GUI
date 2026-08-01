@@ -122,11 +122,12 @@ class AndroidPluginContractTest(unittest.TestCase):
         self.assertIn("Thread.currentThread().interrupt()", probe_loop)
         self.assertIn("return@execute", probe_loop)
 
-    def test_vpn_service_is_protected_and_final_service_is_registered(self) -> None:
+    def test_vpn_service_is_protected_and_survives_task_removal(self) -> None:
         manifest = PLUGIN_MANIFEST.read_text(encoding="utf-8")
         self.assertIn("android.permission.BIND_VPN_SERVICE", manifest)
         self.assertIn('<action android:name="android.net.VpnService" />', manifest)
         self.assertIn('android:exported="false"', manifest)
+        self.assertIn('android:stopWithTask="false"', manifest)
         self.assertIn("FinalAetherVpnService", manifest)
         self.assertNotIn("HardenedAetherVpnService", manifest)
 
@@ -146,16 +147,23 @@ class AndroidPluginContractTest(unittest.TestCase):
         button = CONNECT_BUTTON.read_text(encoding="utf-8")
         self.assertIn('invoke<AndroidNativeLogBatch>("get_android_logs"', store)
         self.assertIn('invoke<ConnectionStatus>("get_status")', store)
-        self.assertIn("ANDROID_RUNTIME_POLL_MS", store)
+        for constant in (
+            "ANDROID_RUNTIME_POLL_CONNECTING_MS",
+            "ANDROID_RUNTIME_POLL_ACTIVE_MS",
+            "ANDROID_RUNTIME_POLL_IDLE_MS",
+            "ANDROID_RUNTIME_POLL_HIDDEN_MS",
+        ):
+            self.assertIn(constant, store)
         self.assertIn("++connectionOperationRevision", store)
         self.assertIn("(!isAndroid && preparingCores)", button)
         self.assertIn("Cancel connecting", button)
 
-    def test_webrtc_protection_uses_supported_udp_in_tcp_mode(self) -> None:
+    def test_webrtc_option_uses_supported_udp_in_tcp_mode(self) -> None:
         source = PLUGIN_SOURCE.read_text(encoding="utf-8")
         self.assertIn('val udpRelayMode = if (webrtcLeakProtection) "tcp" else "udp"', source)
         self.assertIn("udp: '$udpRelayMode'", source)
-        self.assertIn("webrtcLeakProtection: Boolean = true", source)
+        # Defaults are applied by the transactional Android runtime patch and
+        # verified in test_android_runtime_resilience.py.
 
     def test_exit_probe_keeps_socket_open_through_write_and_read(self) -> None:
         probe = EGRESS_PROBE.read_text(encoding="utf-8")

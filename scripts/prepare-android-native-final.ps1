@@ -54,11 +54,22 @@ function Resolve-Python {
 }
 
 $python = Resolve-Python
+$contractRunner = Join-Path $repoRoot "scripts\tests\run_android_contracts.py"
+if (-not (Test-Path $contractRunner)) {
+    throw "Android source contract runner is missing: $contractRunner"
+}
+& $python.Command @($python.Prefix + @($contractRunner))
+if ($LASTEXITCODE -ne 0) {
+    throw "Android source contracts failed with exit code $LASTEXITCODE."
+}
+
 $patches = @(
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-resolver.py"),
     (Join-Path $repoRoot "scripts\ci\remove-aether-wg-core-readiness-gate.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-mobile-network-policy.py"),
+    (Join-Path $repoRoot "scripts\ci\patch-aether-wg-post-handshake-junk.py"),
+    (Join-Path $repoRoot "scripts\ci\patch-aether-h3-channel-lifecycle.py"),
     # Apply this last. It intentionally replaces the v1.4 retained-probe handoff
     # with the fresh runtime model used by v1.3 and the Android reference client.
     (Join-Path $repoRoot "scripts\ci\patch-aether-android-fresh-runtime.py")

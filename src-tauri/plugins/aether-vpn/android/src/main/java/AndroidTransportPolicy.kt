@@ -13,7 +13,6 @@ internal object AndroidTransportPolicy {
         "--stealth",
         "--ironclad",
     )
-    private val reconnectFlags = setOf("--quick-reconnect", "--no-quick-reconnect")
 
     fun isMasque(protocol: String): Boolean =
         protocol.equals("masque", ignoreCase = true) ||
@@ -81,15 +80,11 @@ internal object AndroidTransportPolicy {
             isMasque(protocol) -> {
                 if (isFastAuto(protocol)) {
                     // Do not leave the core in interactive protocol selection:
-                    // Android Auto is an explicit MASQUE route.
+                    // Android Auto is an explicit MASQUE route. The reconnect
+                    // flag already present in `command` remains user-controlled.
                     if (!command.contains("--masque")) command += "--masque"
-                    // Auto favors the route that succeeds fastest in Iran today:
-                    // H2/TCP, cached gateway reuse, and a brief verified latency
-                    // sample when a fresh scan is required.
                     command.removeAll { it in scanFlags }
                     command += "--turbo"
-                    command.removeAll { it in reconnectFlags }
-                    command += "--quick-reconnect"
                 }
                 command += listOf(
                     "--validate-secs", "12",

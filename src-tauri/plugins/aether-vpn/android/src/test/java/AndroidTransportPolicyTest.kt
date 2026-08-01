@@ -50,17 +50,22 @@ class AndroidTransportPolicyTest {
     }
 
     @Test
-    fun autoUsesFastH2FriendlyCorePolicy() {
-        val auto = mutableListOf("aether", "--balanced", "--no-quick-reconnect")
-        AndroidTransportPolicy.appendCoreArgs(auto, "auto", useMasqueHttp2 = true)
-        assertEquals(1, auto.count { it == "--masque" })
-        assertFalse(auto.contains("--balanced"))
-        assertFalse(auto.contains("--no-quick-reconnect"))
-        assertEquals(1, auto.count { it == "--turbo" })
-        assertEquals(1, auto.count { it == "--quick-reconnect" })
-        assertTrue(auto.contains("--fragment"))
-        assertTrue(auto.windowed(2).contains(listOf("--health-interval", "30")))
+    fun autoUsesFastH2PolicyWithoutOverridingReconnect() {
+        val disabled = mutableListOf("aether", "--balanced", "--no-quick-reconnect")
+        AndroidTransportPolicy.appendCoreArgs(disabled, "auto", useMasqueHttp2 = true)
+        assertEquals(1, disabled.count { it == "--masque" })
+        assertFalse(disabled.contains("--balanced"))
+        assertEquals(1, disabled.count { it == "--turbo" })
+        assertEquals(1, disabled.count { it == "--no-quick-reconnect" })
+        assertFalse(disabled.contains("--quick-reconnect"))
+        assertTrue(disabled.contains("--fragment"))
+        assertTrue(disabled.windowed(2).contains(listOf("--health-interval", "30")))
         assertTrue(AndroidTransportPolicy.isFastAuto("auto"))
+
+        val enabled = mutableListOf("aether", "--balanced", "--quick-reconnect")
+        AndroidTransportPolicy.appendCoreArgs(enabled, "auto", useMasqueHttp2 = true)
+        assertEquals(1, enabled.count { it == "--quick-reconnect" })
+        assertFalse(enabled.contains("--no-quick-reconnect"))
     }
 
     @Test
