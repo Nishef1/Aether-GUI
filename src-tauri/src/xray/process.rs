@@ -13,7 +13,7 @@ pub struct ProcessLog {
 enum XrayProcessKind {
     Local(Child),
     #[cfg(windows)]
-    Elevated(crate::tun_helper::ElevatedTunProcess),
+    Elevated(Box<crate::tun_helper::ElevatedTunProcess>),
 }
 
 pub struct XrayProcess {
@@ -116,7 +116,7 @@ pub fn spawn(
             helper_tx,
         )?;
         return Ok(XrayProcess {
-            inner: XrayProcessKind::Elevated(process),
+            inner: XrayProcessKind::Elevated(Box::new(process)),
         });
     }
 

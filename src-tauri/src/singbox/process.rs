@@ -13,7 +13,7 @@ pub struct ProcessLog {
 enum SingboxProcessKind {
     Local(Child),
     #[cfg(windows)]
-    Elevated(crate::tun_helper::ElevatedTunProcess),
+    Elevated(Box<crate::tun_helper::ElevatedTunProcess>),
 }
 
 pub struct SingboxProcess {
@@ -104,7 +104,7 @@ pub fn spawn(
             helper_tx,
         )?;
         return Ok(SingboxProcess {
-            inner: SingboxProcessKind::Elevated(process),
+            inner: SingboxProcessKind::Elevated(Box::new(process)),
         });
     }
 
