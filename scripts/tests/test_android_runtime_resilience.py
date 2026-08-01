@@ -60,12 +60,24 @@ class AndroidRuntimeResilienceTest(unittest.TestCase):
         manifest = MANIFEST.read_text(encoding="utf-8")
         self.assertIn('android:stopWithTask="false"', manifest)
 
-    def test_system_tunnel_keeps_quic_on_socks_udp_associate(self) -> None:
+    def test_quick_reconnect_and_udp_in_tcp_are_disabled_by_default(self) -> None:
+        service = self.apply_policy()
+        self.assertIn("var quickReconnect: Boolean = false", service)
+        self.assertIn("var webrtcLeakProtection: Boolean = false", service)
+        self.assertIn(
+            "getBooleanExtra(EXTRA_QUICK_RECONNECT, false)",
+            service,
+        )
+        self.assertIn(
+            "EXTRA_WEBRTC_LEAK_PROTECTION,\n            false",
+            service,
+        )
+
+    def test_webrtc_option_remains_an_explicit_opt_in(self) -> None:
         service = self.apply_policy()
         tunnel_call = service.split("tunnel = createSystemTunnel(", 1)[1].split(")", 1)[0]
-        self.assertIn("false", tunnel_call)
-        self.assertNotIn("webrtcLeakProtection", tunnel_call)
-        self.assertIn("UDP/QUIC relayed through SOCKS5", service)
+        self.assertIn("webrtcLeakProtection", tunnel_call)
+        self.assertIn('val udpRelayMode = if (webrtcLeakProtection) "tcp" else "udp"', service)
         self.assertIn("udp: '$udpRelayMode'", service)
 
 
