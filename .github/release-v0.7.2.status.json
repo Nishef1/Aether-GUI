@@ -3,10 +3,10 @@
   "tag": "v0.7.2",
   "state": "running",
   "stage": "windows",
-  "details": "starting corrected Windows release",
-  "windows_run": "",
+  "details": "watching corrected Windows release",
+  "windows_run": "30715558319",
   "android_run": "",
   "release_sha": "f26ba6e1c67e590d2996b74cea25b10134bd162c",
   "core_sha": "1d33f9f73d13af78cb2eaf1410494fe939e1aa4f",
-  "updated_at": "2026-08-01T19:47:54Z"
+  "updated_at": "2026-08-01T19:47:57Z"
 }
