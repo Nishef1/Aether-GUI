@@ -19,14 +19,15 @@ python3 "$workspace/scripts/tests/test_android_transport_contract.py"
 
 # Keep CI and the local PowerShell build on the same deterministic core source.
 # The baseline fresh-session migration runs first; the final patches then layer
-# Android's verified egress, runtime DNS, bounded discovery, and fresh runtime
-# policy in the same order as prepare-android-native-final.ps1.
+# Android's verified egress, runtime DNS, bounded discovery, H3 lifecycle, and
+# fresh runtime policy in the same order as prepare-android-native-final.ps1.
 patches=(
   "scripts/ci/patch-aether-wg-fresh-session.py"
   "scripts/ci/patch-aether-wg-real-egress.py"
   "scripts/ci/patch-aether-wg-runtime-resolver.py"
   "scripts/ci/remove-aether-wg-core-readiness-gate.py"
   "scripts/ci/patch-aether-mobile-network-policy.py"
+  "scripts/ci/patch-aether-h3-channel-lifecycle.py"
   "scripts/ci/patch-aether-android-fresh-runtime.py"
 )
 
