@@ -61,7 +61,16 @@ jobs:
               python3 scripts/tests/test_android_plugin_contract.py
               python3 scripts/tests/test_android_rust_plugin_dependency.py
               python3 scripts/tests/test_android_mobile_config.py
+              python3 scripts/tests/test_android_runtime_resilience.py
             '
+
+      - name: Apply tested Android mobile runtime policy
+        shell: bash
+        run: |
+          bash scripts/ci/run-with-diagnostics.sh \
+            "Apply tested Android mobile runtime policy" \
+            "android-runtime-policy.log" \
+            python3 scripts/ci/patch-android-mobile-efficiency.py
 
       - name: Install native build prerequisites
         shell: bash
