@@ -3,9 +3,9 @@
   "tag": "v0.7.2",
   "state": "running",
   "stage": "windows",
-  "details": "resuming or starting signed Windows release",
-  "windows_run": "",
+  "details": "watching Windows release workflow",
+  "windows_run": "30714501404",
   "android_run": "",
   "release_sha": "59a8f8742584f2ac3e4fa1a94665f479aa7d3fab",
-  "updated_at": "2026-08-01T19:19:08Z"
+  "updated_at": "2026-08-01T19:19:11Z"
 }
