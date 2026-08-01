@@ -131,40 +131,13 @@ if RUNTIME_RESILIENCE_MARKER not in service:
 ''',
         "foreground VPN restart policy",
     )
-    service = replace_once(
-        service,
-        '''                tunnel = createSystemTunnel(
-                    bindAddress,
-                    dnsServer,
-                    webrtcLeakProtection,
-                )
-''',
-        '''                // Android runtime resilience policy: the system VPN
-                // already carries SOCKS5 UDP ASSOCIATE inside Aether. Keeping
-                // QUIC datagrams native avoids TCP head-of-line stalls in media
-                // apps while preserving full-tunnel containment.
-                tunnel = createSystemTunnel(
-                    bindAddress,
-                    dnsServer,
-                    false,
-                )
-''',
-        "native UDP media compatibility",
-    )
-    service = replace_once(
-        service,
-        '''                log(
-                    "Android TUN active; SOCKS=$bindAddress; WebRTC protection=" +
-                        if (webrtcLeakProtection) "UDP-in-TCP" else "standard UDP relay"
-                )
-''',
-        '''                log(
-                    "Android TUN active; SOCKS=$bindAddress; " +
-                        "UDP/QUIC relayed through SOCKS5"
-                )
-''',
-        "accurate Android UDP status",
-    )
+    for old, new, label in (
+        ("    var quickReconnect: Boolean = true", "    var quickReconnect: Boolean = false", "quick reconnect invoke default"),
+        ("    var webrtcLeakProtection: Boolean = true", "    var webrtcLeakProtection: Boolean = false", "WebRTC invoke default"),
+        ("        val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, true)", "        val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, false)", "quick reconnect intent default"),
+        ("            true\n        )", "            false\n        )", "WebRTC intent default"),
+    ):
+        service = replace_once(service, old, new, label)
 
 if LOGGING_MARKER not in service:
     service = replace_once(
