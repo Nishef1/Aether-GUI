@@ -54,6 +54,15 @@ function Resolve-Python {
 }
 
 $python = Resolve-Python
+$contractRunner = Join-Path $repoRoot "scripts\tests\run_android_contracts.py"
+if (-not (Test-Path $contractRunner)) {
+    throw "Android source contract runner is missing: $contractRunner"
+}
+& $python.Command @($python.Prefix + @($contractRunner))
+if ($LASTEXITCODE -ne 0) {
+    throw "Android source contracts failed with exit code $LASTEXITCODE."
+}
+
 $patches = @(
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-real-egress.py"),
     (Join-Path $repoRoot "scripts\ci\patch-aether-wg-runtime-resolver.py"),
