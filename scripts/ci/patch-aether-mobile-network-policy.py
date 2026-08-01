@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MASQUE_MARKER = "Android auto H2 latency window"
 MASQUE_ORDER_MARKER = "Android documented MASQUE ingress order"
 WG_MARKER = "Android bounded official WARP scan"
+WG_RUNTIME_MARKER = "Android WireGuard transient receive policy"
 
 
 def target_root(argument: str | None) -> Path:
@@ -27,6 +28,15 @@ def replace_pattern(
     if count != 1:
         raise SystemExit(f"could not patch {label}; expected exactly one source block")
     return updated
+
+
+def replace_once(source: str, old: str, new: str, label: str) -> str:
+    if new in source:
+        return source
+    count = source.count(old)
+    if count != 1:
+        raise SystemExit(f"could not patch {label}; expected exactly one source block, found {count}")
+    return source.replace(old, new, 1)
 
 
 root = target_root(sys.argv[1] if len(sys.argv) > 1 else None)
@@ -118,6 +128,167 @@ if WG_MARKER not in wg_prober:
     )
 
 wireguard = wireguard_path.read_text(encoding="utf-8")
+if WG_RUNTIME_MARKER not in wireguard:
+    wireguard = replace_once(
+        wireguard,
+        '''const WG_MSG_TYPE_MIN: u8 = 1;
+const WG_MSG_TYPE_MAX: u8 = 4;
+''',
+        '''const WG_MSG_TYPE_MIN: u8 = 1;
+const WG_MSG_TYPE_MAX: u8 = 4;
+
+// Android WireGuard transient receive policy: connected UDP sockets can report
+// temporary ICMP/network errors during handoff. Keep the authenticated runtime
+// alive for a bounded retry window instead of tearing the whole VPN down.
+const MAX_TRANSIENT_RECV_ERRORS: u32 = 64;
+const TRANSIENT_RECV_BACKOFF: Duration = Duration::from_millis(50);
+
+pub fn is_transient_socket_error(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+
+    matches!(
+        error.kind(),
+        ErrorKind::ConnectionRefused
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::HostUnreachable
+            | ErrorKind::NetworkUnreachable
+            | ErrorKind::Interrupted
+            | ErrorKind::WouldBlock
+            | ErrorKind::TimedOut
+    )
+}
+
+struct TaskGuard(Vec<tokio::task::AbortHandle>);
+
+impl Drop for TaskGuard {
+    fn drop(&mut self) {
+        for handle in self.0.drain(..) {
+            handle.abort();
+        }
+    }
+}
+''',
+        "WireGuard transient error helpers",
+    )
+    wireguard = replace_once(
+        wireguard,
+        '''        let recv_task = tokio::spawn(async move {
+            let mut buffer = vec![0u8; MAX_PACKET];
+            let mut temporary = vec![0u8; MAX_PACKET];
+            loop {
+                let read = sock_r.recv(&mut buffer).await.map_err(|error| {
+                    AetherError::Other(format!("wireguard receive failed: {error}"))
+                })?;
+                strip_client_id(&mut buffer[..read]);
+''',
+        '''        let recv_task = tokio::spawn(async move {
+            let mut buffer = vec![0u8; MAX_PACKET];
+            let mut temporary = vec![0u8; MAX_PACKET];
+            let mut transient_errors = 0u32;
+            loop {
+                let read = match sock_r.recv(&mut buffer).await {
+                    Ok(read) => {
+                        transient_errors = 0;
+                        read
+                    }
+                    Err(error) if is_transient_socket_error(&error) => {
+                        transient_errors = transient_errors.saturating_add(1);
+                        if transient_errors > MAX_TRANSIENT_RECV_ERRORS {
+                            return Err(AetherError::Other(format!(
+                                "wireguard receive failed after {transient_errors} transient errors: {error}"
+                            )));
+                        }
+                        log::debug!(
+                            "wireguard transient receive error: {error}; retrying ({transient_errors}/{MAX_TRANSIENT_RECV_ERRORS})"
+                        );
+                        tokio::time::sleep(TRANSIENT_RECV_BACKOFF).await;
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(AetherError::Other(format!(
+                            "wireguard receive failed: {error}"
+                        )));
+                    }
+                };
+                strip_client_id(&mut buffer[..read]);
+''',
+        "WireGuard receive retry loop",
+    )
+    wireguard = replace_once(
+        wireguard,
+        '''        let recv_abort = recv_task.abort_handle();
+        let send_abort = send_task.abort_handle();
+        let timer_abort = timer_task.abort_handle();
+        let health_abort = health_task.abort_handle();
+
+        let result = tokio::select! {
+            result = recv_task => flatten_task_result("receive", result),
+            result = send_task => flatten_task_result("send", result),
+            result = timer_task => flatten_task_result("timer", result),
+            result = health_task => flatten_task_result("health", result),
+        };
+
+        recv_abort.abort();
+        send_abort.abort();
+        timer_abort.abort();
+        health_abort.abort();
+        result
+''',
+        '''        let _task_guard = TaskGuard(vec![
+            recv_task.abort_handle(),
+            send_task.abort_handle(),
+            timer_task.abort_handle(),
+            health_task.abort_handle(),
+        ]);
+
+        tokio::select! {
+            result = recv_task => flatten_task_result("receive", result),
+            result = send_task => flatten_task_result("send", result),
+            result = timer_task => flatten_task_result("timer", result),
+            result = health_task => flatten_task_result("health", result),
+        }
+''',
+        "WireGuard task cancellation guard",
+    )
+    if "transient_udp_errors_do_not_end_the_runtime" not in wireguard:
+        wireguard = replace_pattern(
+            wireguard,
+            r"\n}\s*$",
+            '''
+
+    #[test]
+    fn transient_udp_errors_do_not_end_the_runtime() {
+        for kind in [
+            std::io::ErrorKind::ConnectionRefused,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::HostUnreachable,
+            std::io::ErrorKind::NetworkUnreachable,
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::WouldBlock,
+            std::io::ErrorKind::TimedOut,
+        ] {
+            assert!(is_transient_socket_error(&std::io::Error::from(kind)));
+        }
+    }
+
+    #[test]
+    fn broken_or_invalid_sockets_remain_fatal() {
+        for kind in [
+            std::io::ErrorKind::NotConnected,
+            std::io::ErrorKind::AddrNotAvailable,
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::InvalidInput,
+        ] {
+            assert!(!is_transient_socket_error(&std::io::Error::from(kind)));
+        }
+    }
+}
+''',
+            "WireGuard transient error tests",
+        )
+
 if WG_MARKER not in wireguard:
     replacement = '''// Android bounded official WARP scan: consumer WARP uses the documented
 // ingress pool and the four documented WireGuard UDP ports. Compatibility
@@ -145,6 +316,7 @@ for name, source, marker in (
     ("prober.rs", prober, MASQUE_ORDER_MARKER),
     ("wg_prober.rs", wg_prober, WG_MARKER),
     ("wireguard.rs", wireguard, WG_MARKER),
+    ("wireguard.rs", wireguard, WG_RUNTIME_MARKER),
 ):
     if marker not in source:
         raise SystemExit(f"{name}: mobile network policy marker is missing")
@@ -161,8 +333,12 @@ if "188.114.96.0/24" in wireguard or "854," in wireguard:
     raise SystemExit("legacy WireGuard compatibility ranges or ports remain")
 if "pub const WG_PORTS: &[u16] = &[2408, 500, 1701, 4500];" not in wireguard:
     raise SystemExit("official WireGuard port set was not applied")
+if "is_transient_socket_error" not in wireguard or "TaskGuard(vec![" not in wireguard:
+    raise SystemExit("WireGuard runtime resilience policy was not applied")
+if "transient_udp_errors_do_not_end_the_runtime" not in wireguard:
+    raise SystemExit("WireGuard transient error tests were not added")
 
 prober_path.write_text(prober, encoding="utf-8")
 wg_prober_path.write_text(wg_prober, encoding="utf-8")
 wireguard_path.write_text(wireguard, encoding="utf-8")
-print(f"Applied Android mobile transport discovery policy in {core}")
+print(f"Applied Android mobile transport discovery and WireGuard runtime policy in {core}")
