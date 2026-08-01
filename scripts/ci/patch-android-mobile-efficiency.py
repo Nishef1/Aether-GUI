@@ -135,7 +135,17 @@ if RUNTIME_RESILIENCE_MARKER not in service:
         ("    var quickReconnect: Boolean = true", "    var quickReconnect: Boolean = false", "quick reconnect invoke default"),
         ("    var webrtcLeakProtection: Boolean = true", "    var webrtcLeakProtection: Boolean = false", "WebRTC invoke default"),
         ("        val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, true)", "        val quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, false)", "quick reconnect intent default"),
-        ("            true\n        )", "            false\n        )", "WebRTC intent default"),
+        (
+            '''        val webrtcLeakProtection = intent.getBooleanExtra(
+            EXTRA_WEBRTC_LEAK_PROTECTION,
+            true
+        )''',
+            '''        val webrtcLeakProtection = intent.getBooleanExtra(
+            EXTRA_WEBRTC_LEAK_PROTECTION,
+            false
+        )''',
+            "WebRTC intent default",
+        ),
     ):
         service = replace_once(service, old, new, label)
 
