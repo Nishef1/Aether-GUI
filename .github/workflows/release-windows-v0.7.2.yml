@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 120
     env:
       RELEASE_TAG: v0.7.2
+      TAURI_TARGET: x86_64-pc-windows-msvc
     steps:
       - name: Check out tagged source and pinned core
         uses: actions/checkout@v4
@@ -41,6 +42,21 @@ jobs:
 
       - name: Prepare and verify bundled core runtimes
         run: pnpm prepare:cores:windows && pnpm verify:bundled-cores:windows
+
+      - name: Stage Tauri target sidecars
+        shell: pwsh
+        run: |
+          foreach ($core in @('aether', 'sing-box', 'xray')) {
+            $source = "src-tauri/binaries/$core.exe"
+            $target = "src-tauri/binaries/$core-$env:TAURI_TARGET.exe"
+            if (-not (Test-Path -LiteralPath $source)) {
+              throw "Verified core alias is missing: $source"
+            }
+            Copy-Item -LiteralPath $source -Destination $target -Force
+            if ((Get-Item -LiteralPath $target).Length -le 0) {
+              throw "Tauri sidecar alias is empty: $target"
+            }
+          }
 
       - name: Validate tagged source after staging external binaries
         run: pnpm validate
