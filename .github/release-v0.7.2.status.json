@@ -1,12 +1,12 @@
 {
   "version": "0.7.2",
   "tag": "v0.7.2",
-  "state": "failure",
-  "stage": "failed",
-  "details": "finalizer exited with code 1",
-  "windows_run": "30715558319",
+  "state": "running",
+  "stage": "source-repaired",
+  "details": "fixed core pinned and source tag moved; dispatching fixed finalizer",
+  "windows_run": "",
   "android_run": "",
-  "release_sha": "f26ba6e1c67e590d2996b74cea25b10134bd162c",
+  "release_sha": "911887439011c0af66bfbcc12db85ef77f53e027",
   "core_sha": "1d33f9f73d13af78cb2eaf1410494fe939e1aa4f",
-  "updated_at": "2026-08-01T19:56:08Z"
+  "updated_at": "2026-08-01T19:58:03Z"
 }
