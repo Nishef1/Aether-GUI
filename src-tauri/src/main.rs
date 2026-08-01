@@ -2,9 +2,11 @@
 
 mod aether;
 mod commands;
+mod engine;
 mod error;
 mod events;
 mod focus;
+mod runtime_error;
 mod state;
 mod tray;
 
@@ -17,11 +19,8 @@ fn main() {
         .manage(AppState::default())
         .setup(|app| {
             let data_dir = app.handle().path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
-            // Reap any Aether process left running from a prior crash before
-            // the user can click Connect and spawn a second one onto the
-            // same port.
-            aether::orphan::reap_orphan(&data_dir);
+            let state = app.state::<AppState>();
+            state.runtime.prepare_all(&data_dir)?;
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
             Ok(())
@@ -33,6 +32,12 @@ fn main() {
             commands::get_status,
             commands::get_default_profile,
             commands::set_default_profile,
+            commands::list_engines,
+            commands::get_active_engine,
+            commands::connect_engine,
+            commands::get_engine_default_profile,
+            commands::set_engine_default_profile,
+            commands::submit_engine_interaction,
             commands::get_close_to_tray,
             commands::set_close_to_tray,
         ])
@@ -53,7 +58,7 @@ fn main() {
                     .path()
                     .app_data_dir()
                     .unwrap_or_else(|_| std::env::temp_dir());
-                aether::shutdown_blocking(&state.manager, &data_dir);
+                state.runtime.shutdown_all(&data_dir);
             }
         });
 }

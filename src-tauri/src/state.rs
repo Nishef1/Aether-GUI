@@ -1,18 +1,10 @@
-use crate::aether::AetherManager;
+use crate::engine::EngineRuntime;
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-/// Mirrors the state machine in the approved plan: Idle -> Launching (PTY
-/// spawned, answering prompts) -> Connecting (prompts done, waiting on the
-/// SOCKS5 port to come alive) -> Connected. Any abnormal exit or timeout
-/// from Launching/Connecting/Connected goes to Error rather than a separate
-/// Disconnected state — a clean user-requested stop returns to Idle instead.
-///
-/// `Reconnecting` is the one addition: an unexpected exit or timeout that
-/// wasn't user-requested retries automatically (see aether/mod.rs's
-/// `handle_unexpected_failure`) rather than dropping straight to Error —
-/// this is the brief backoff wait before a fresh Launching begins, shown
-/// distinctly so the user knows it's a retry, not a first attempt.
+/// Shared connection state emitted by every engine adapter. Keeping the state
+/// machine engine-neutral lets Android and future sidecars integrate without
+/// changing the frontend's lifecycle contract.
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "state")]
 pub enum ConnectionState {
@@ -29,13 +21,13 @@ pub enum ConnectionState {
 }
 
 pub struct AppState {
-    pub manager: Arc<Mutex<AetherManager>>,
+    pub runtime: Arc<EngineRuntime>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            manager: Arc::new(Mutex::new(AetherManager::new())),
+            runtime: Arc::new(EngineRuntime::default()),
         }
     }
 }

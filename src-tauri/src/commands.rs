@@ -1,42 +1,107 @@
-use crate::aether::{self, profiles::ConnectionProfile};
-use crate::error::AetherError;
+use crate::aether::profiles::ConnectionProfile;
+use crate::engine::EngineDescriptor;
+use crate::runtime_error::RuntimeError;
 use crate::state::{AppState, ConnectionState};
 use crate::tray;
+use serde_json::Value;
 use tauri::{AppHandle, State};
 
+// Compatibility commands used by Matin's upstream frontend. They remain
+// Aether-shaped so upstream UI updates can be merged without modification.
 #[tauri::command]
 pub fn connect(
     app: AppHandle,
     state: State<AppState>,
     profile_override: Option<ConnectionProfile>,
-) -> Result<(), AetherError> {
-    aether::start_connect(app, state.manager.clone(), profile_override)
+) -> Result<(), RuntimeError> {
+    state.runtime.connect_aether(app, profile_override)
 }
 
 #[tauri::command]
-pub fn disconnect(app: AppHandle, state: State<AppState>) -> Result<(), AetherError> {
-    aether::request_disconnect(&app, &state.manager)
+pub fn disconnect(app: AppHandle, state: State<AppState>) -> Result<(), RuntimeError> {
+    state.runtime.disconnect(&app)
 }
 
 #[tauri::command]
-pub fn submit_access_code(state: State<AppState>, code: String) -> Result<(), AetherError> {
-    aether::submit_access_code(&state.manager, code)
+pub fn submit_access_code(state: State<AppState>, code: String) -> Result<(), RuntimeError> {
+    state.runtime.submit_aether_access_code(code)
 }
 
 #[tauri::command]
 pub fn get_status(state: State<AppState>) -> ConnectionState {
-    state.manager.lock().unwrap().status()
+    state.runtime.status()
 }
 
 #[tauri::command]
-pub fn get_default_profile(app: AppHandle) -> ConnectionProfile {
-    aether::profiles::load(&app)
+pub fn get_default_profile(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<ConnectionProfile, RuntimeError> {
+    state.runtime.aether_default_profile(&app)
 }
 
 #[tauri::command]
-pub fn set_default_profile(app: AppHandle, profile: ConnectionProfile) -> Result<(), AetherError> {
-    aether::profiles::save(&app, &profile);
-    Ok(())
+pub fn set_default_profile(
+    app: AppHandle,
+    state: State<AppState>,
+    profile: ConnectionProfile,
+) -> Result<(), RuntimeError> {
+    state.runtime.set_aether_default_profile(&app, profile)
+}
+
+// Engine-neutral extension API. Android and future sidecars such as sing-box
+// use these commands instead of adding more Aether-specific IPC endpoints.
+#[tauri::command]
+pub fn list_engines(state: State<AppState>) -> Vec<EngineDescriptor> {
+    state.runtime.list()
+}
+
+#[tauri::command]
+pub fn get_active_engine(state: State<AppState>) -> String {
+    state.runtime.active_engine()
+}
+
+#[tauri::command]
+pub fn connect_engine(
+    app: AppHandle,
+    state: State<AppState>,
+    engine_id: String,
+    profile: Option<Value>,
+) -> Result<(), RuntimeError> {
+    state.runtime.connect(app, Some(&engine_id), profile)
+}
+
+#[tauri::command]
+pub fn get_engine_default_profile(
+    app: AppHandle,
+    state: State<AppState>,
+    engine_id: String,
+) -> Result<Value, RuntimeError> {
+    state.runtime.default_profile(&app, Some(&engine_id))
+}
+
+#[tauri::command]
+pub fn set_engine_default_profile(
+    app: AppHandle,
+    state: State<AppState>,
+    engine_id: String,
+    profile: Value,
+) -> Result<(), RuntimeError> {
+    state
+        .runtime
+        .set_default_profile(&app, Some(&engine_id), profile)
+}
+
+#[tauri::command]
+pub fn submit_engine_interaction(
+    state: State<AppState>,
+    engine_id: String,
+    interaction: String,
+    payload: Value,
+) -> Result<(), RuntimeError> {
+    state
+        .runtime
+        .submit_interaction(Some(&engine_id), &interaction, payload)
 }
 
 #[tauri::command]
