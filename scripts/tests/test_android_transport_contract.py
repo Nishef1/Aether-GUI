@@ -18,6 +18,7 @@ POLICY_TEST = ROOT / "src-tauri/plugins/aether-vpn/android/src/test/java/Android
 CORE_MAIN = ROOT / "vendor/aether/aether/src/main.rs"
 CORE_PROBER = ROOT / "vendor/aether/aether/src/prober.rs"
 MOBILE_NETWORK_PATCH = ROOT / "scripts/ci/patch-aether-mobile-network-policy.py"
+H3_LIFECYCLE_PATCH = ROOT / "scripts/ci/patch-aether-h3-channel-lifecycle.py"
 EFFICIENCY_PATCH = ROOT / "scripts/ci/patch-android-mobile-efficiency.py"
 CORE_BUILD = ROOT / "scripts/ci/build-aether-android.sh"
 FINAL_PREPARE = ROOT / "scripts/prepare-android-native-final.ps1"
@@ -29,6 +30,7 @@ CORE_PATCH_FILES = (
     Path("vendor/aether/aether/src/wg_prober.rs"),
     Path("vendor/aether/aether/src/wireguard.rs"),
 )
+QUIC_RELATIVE = Path("vendor/aether/aether/src/quic.rs")
 
 
 class AndroidTransportContractTest(unittest.TestCase):
@@ -111,6 +113,39 @@ class AndroidTransportContractTest(unittest.TestCase):
             self.assertIn("TaskGuard(vec![", wireguard)
             self.assertIn("transient_udp_errors_do_not_end_the_runtime", wireguard)
 
+    def test_h3_channel_patch_is_transactional_on_the_pinned_core(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            source = ROOT / QUIC_RELATIVE
+            destination = workspace / QUIC_RELATIVE
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+
+            command = [sys.executable, str(H3_LIFECYCLE_PATCH), str(workspace)]
+            subprocess.run(
+                command,
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            first = destination.read_bytes()
+            subprocess.run(
+                command,
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(first, destination.read_bytes())
+
+            quic = first.decode("utf-8")
+            self.assertIn("Android MASQUE H3 channel lifecycle", quic)
+            self.assertIn("ctrl = internals.ctrl_rx.recv(), if ctrl_open", quic)
+            self.assertIn("packet = internals.outbound_rx.recv(), if outbound_open", quic)
+            self.assertIn("ctrl_open = false", quic)
+            self.assertIn("outbound_open = false", quic)
+
     def test_auto_prefers_h2_without_overriding_reconnect(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
@@ -152,6 +187,7 @@ class AndroidTransportContractTest(unittest.TestCase):
             "patch-aether-wg-runtime-resolver.py",
             "remove-aether-wg-core-readiness-gate.py",
             "patch-aether-mobile-network-policy.py",
+            "patch-aether-h3-channel-lifecycle.py",
             "patch-aether-android-fresh-runtime.py",
         )
         previous_ci = -1
