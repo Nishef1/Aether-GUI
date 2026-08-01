@@ -8,10 +8,6 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_aether_vpn::{AetherVpnExt, VpnProfile, VpnStatus};
 
-fn default_true() -> bool {
-    true
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     pub protocol: String,
@@ -19,13 +15,14 @@ pub struct ConnectionProfile {
     pub ip_version: String,
     pub connection_mode: String,
     pub tun_engine: String,
+    #[serde(default)]
     pub quick_reconnect: bool,
     pub masque_http2: bool,
     pub masque_noize: String,
     pub wg_noize: String,
     pub dns_server: String,
     pub bind_address: String,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub webrtc_leak_protection: bool,
 }
 
@@ -37,13 +34,13 @@ impl Default for ConnectionProfile {
             ip_version: "v4".into(),
             connection_mode: "tunnel".into(),
             tun_engine: "xray".into(),
-            quick_reconnect: true,
+            quick_reconnect: false,
             masque_http2: false,
             masque_noize: "firewall".into(),
             wg_noize: "balanced".into(),
             dns_server: "1.1.1.1".into(),
             bind_address: "127.0.0.1:1819".into(),
-            webrtc_leak_protection: true,
+            webrtc_leak_protection: false,
         }
     }
 }
