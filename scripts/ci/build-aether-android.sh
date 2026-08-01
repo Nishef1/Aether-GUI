@@ -13,10 +13,27 @@ core="$crate_dir/target/aarch64-linux-android/release/aether"
   exit 2
 }
 
-# Prove the patch is deterministic against the pinned submodule, then apply it
-# to the actual source tree before Cargo reads metadata or compiles the core.
-python3 "$workspace/scripts/tests/test_aether_wg_fresh_session.py"
-python3 "$workspace/scripts/ci/patch-aether-wg-fresh-session.py" "$workspace"
+# Keep CI and the local PowerShell build on the same deterministic core source.
+# The baseline fresh-session migration runs first; the final patches then layer
+# Android's verified egress, runtime DNS, bounded discovery, and fresh runtime
+# policy in the same order as prepare-android-native-final.ps1.
+patches=(
+  "scripts/ci/patch-aether-wg-fresh-session.py"
+  "scripts/ci/patch-aether-wg-real-egress.py"
+  "scripts/ci/patch-aether-wg-runtime-resolver.py"
+  "scripts/ci/remove-aether-wg-core-readiness-gate.py"
+  "scripts/ci/patch-aether-mobile-network-policy.py"
+  "scripts/ci/patch-aether-android-fresh-runtime.py"
+)
+
+for relative_patch in "${patches[@]}"; do
+  patch="$workspace/$relative_patch"
+  [[ -f "$patch" ]] || {
+    echo "Required Android core patch is missing: $patch" >&2
+    exit 2
+  }
+  python3 "$patch" "$workspace"
+done
 
 # setup-android may expose its own default NDK through ANDROID_NDK_ROOT. Keep
 # cargo-ndk pinned to the exact NDK selected by the workflow.
