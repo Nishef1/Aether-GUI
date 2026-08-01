@@ -1,1 +1,1 @@
-retry fixed-source v0.7.2 retag with workflow-safe merge
+retag v0.7.2 with fixed core and bundled resource mappings
