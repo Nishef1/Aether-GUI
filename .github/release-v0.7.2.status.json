@@ -3,9 +3,9 @@
   "tag": "v0.7.2",
   "state": "running",
   "stage": "windows",
-  "details": "starting corrected signed Windows workflow",
-  "windows_run": "",
+  "details": "watching corrected Windows workflow",
+  "windows_run": "30714709805",
   "android_run": "",
   "release_sha": "59a8f8742584f2ac3e4fa1a94665f479aa7d3fab",
-  "updated_at": "2026-08-01T19:25:05Z"
+  "updated_at": "2026-08-01T19:25:09Z"
 }
