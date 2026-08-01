@@ -1,0 +1,107 @@
+name: Repair Aether-GUI v0.7.2 Source
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/release-v0.7.2.repair.trigger
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: repair-aether-gui-v0.7.2
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.7.2
+      FIXED_CORE_SHA: 1d33f9f73d13af78cb2eaf1410494fe939e1aa4f
+      OLD_CORE_SHA: d713c3e35ba84e7c0e8c45a701544feca4bbb63d
+    steps:
+      - name: Check out current main and submodules
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ github.token }}
+
+      - name: Pin the fixed core and move the source tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git -C vendor/aether fetch origin "$FIXED_CORE_SHA"
+          git -C vendor/aether checkout --detach "$FIXED_CORE_SHA"
+          git add vendor/aether
+
+          for workflow in \
+            .github/workflows/publish-v0.7.2.yml \
+            .github/workflows/resume-v0.7.2.yml \
+            .github/workflows/finalize-v0.7.2.yml; do
+            if [[ -f "$workflow" ]]; then
+              sed -i "s/$OLD_CORE_SHA/$FIXED_CORE_SHA/g" "$workflow"
+              git add "$workflow"
+            fi
+          done
+
+          if git diff --cached --quiet; then
+            echo "The fixed core is already pinned."
+          else
+            git commit -m "release: pin fixed MASQUE core for v0.7.2"
+            git push origin HEAD:main
+          fi
+
+          release_sha=$(git rev-parse HEAD)
+          git tag -fa "$RELEASE_TAG" "$release_sha" -m "Aether-GUI $RELEASE_TAG (fixed MASQUE core)"
+          git push origin "refs/tags/$RELEASE_TAG" --force
+
+          jq -n \
+            --arg version "0.7.2" \
+            --arg tag "$RELEASE_TAG" \
+            --arg state "running" \
+            --arg stage "source-repaired" \
+            --arg details "tag moved to fixed MASQUE core; finalizer dispatch pending" \
+            --arg windows_run "" \
+            --arg android_run "" \
+            --arg release_sha "$release_sha" \
+            --arg core_sha "$FIXED_CORE_SHA" \
+            --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version:$version,tag:$tag,state:$state,stage:$stage,details:$details,windows_run:$windows_run,android_run:$android_run,release_sha:$release_sha,core_sha:$core_sha,updated_at:$updated_at}' \
+            > /tmp/release-status.json
+
+          encoded=$(base64 -w0 /tmp/release-status.json)
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json?ref=main" --jq .sha 2>/dev/null || true)
+          if [[ -n "$existing" ]]; then
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json" \
+              -f message="release: record repaired v0.7.2 source" \
+              -f content="$encoded" \
+              -f branch=main \
+              -f sha="$existing" >/dev/null
+          else
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/.github/release-v0.7.2.status.json" \
+              -f message="release: record repaired v0.7.2 source" \
+              -f content="$encoded" \
+              -f branch=main >/dev/null
+          fi
+
+          for _ in $(seq 1 30); do
+            if gh workflow view finalize-v0.7.2.yml >/dev/null 2>&1; then
+              gh workflow run finalize-v0.7.2.yml --ref main
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Could not dispatch the v0.7.2 finalizer after repairing the tag" >&2
+          exit 1
