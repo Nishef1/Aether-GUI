@@ -1,0 +1,24 @@
+{
+  "version": "0.7.2",
+  "tag": "v0.7.2",
+  "release_sha": "2420aed673561d121cb2e0c09dfa6ab9512cd40f",
+  "state": "running",
+  "details": "platform runs discovered",
+  "windows": {
+    "run": "30717164103",
+    "status": "queued",
+    "conclusion": ""
+  },
+  "android": {
+    "run": "30717164829",
+    "status": "queued",
+    "conclusion": ""
+  },
+  "unix_desktop": {
+    "run": "30717165521",
+    "status": "queued",
+    "conclusion": ""
+  },
+  "assets": [],
+  "updated_at": "2026-08-01T20:34:45Z"
+}
