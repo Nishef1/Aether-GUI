@@ -24,7 +24,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: v0.7.2
       FIXED_CORE_SHA: 1d33f9f73d13af78cb2eaf1410494fe939e1aa4f
-      OLD_CORE_SHA: d713c3e35ba84e7c0e8c45a701544feca4bbb63d
     steps:
       - name: Check out the reviewed fixed-source commit
         uses: actions/checkout@v4
@@ -34,7 +33,7 @@ jobs:
           submodules: recursive
           token: ${{ github.token }}
 
-      - name: Fast-forward main, move tag, and dispatch finalizer
+      - name: Merge current main, move tag, and dispatch finalizer
         shell: bash
         run: |
           set -euo pipefail
@@ -48,23 +47,13 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          for workflow in \
-            .github/workflows/publish-v0.7.2.yml \
-            .github/workflows/resume-v0.7.2.yml \
-            .github/workflows/finalize-v0.7.2.yml; do
-            if [[ -f "$workflow" ]]; then
-              sed -i "s/$OLD_CORE_SHA/$FIXED_CORE_SHA/g" "$workflow"
-              git add "$workflow"
-            fi
-          done
-
-          if ! git diff --cached --quiet; then
-            git commit -m "release: validate fixed Aether core for v0.7.2"
-          fi
-
           git fetch origin main
-          git merge-base --is-ancestor origin/main HEAD
+          git merge --no-edit origin/main
+
+          tree_line=$(git ls-tree HEAD vendor/aether)
+          read -r _ _ core_sha _ <<<"$tree_line"
+          [[ "$core_sha" == "$FIXED_CORE_SHA" ]]
+
           git push origin HEAD:main
 
           release_sha=$(git rev-parse HEAD)
@@ -76,7 +65,7 @@ jobs:
             --arg tag "$RELEASE_TAG" \
             --arg state "running" \
             --arg stage "source-repaired" \
-            --arg details "fixed core pinned and source tag moved; dispatching finalizer" \
+            --arg details "fixed core pinned and source tag moved; dispatching fixed finalizer" \
             --arg windows_run "" \
             --arg android_run "" \
             --arg release_sha "$release_sha" \
@@ -101,12 +90,12 @@ jobs:
           fi
 
           for _ in $(seq 1 45); do
-            if gh workflow view finalize-v0.7.2.yml >/dev/null 2>&1; then
-              gh workflow run finalize-v0.7.2.yml --ref main
+            if gh workflow view finalize-fixed-v0.7.2.yml >/dev/null 2>&1; then
+              gh workflow run finalize-fixed-v0.7.2.yml --ref main
               exit 0
             fi
             sleep 2
           done
 
-          echo "Could not dispatch finalizer after moving the tag" >&2
+          echo "Could not dispatch the fixed v0.7.2 finalizer" >&2
           exit 1
