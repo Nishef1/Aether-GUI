@@ -1,0 +1,187 @@
+name: Release Linux and macOS v0.7.2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-unix-v0.7.2
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    env:
+      RELEASE_TAG: v0.7.2
+      GITHUB_TOKEN: ${{ github.token }}
+      TAURI_TARGET: ${{ matrix.tauri_target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-22.04
+            platform: linux
+            tauri_target: x86_64-unknown-linux-gnu
+            artifact: aether-gui-linux-x86_64
+          - name: macOS Apple Silicon
+            os: macos-15
+            platform: macos
+            tauri_target: aarch64-apple-darwin
+            artifact: aether-gui-macos-arm64
+          - name: macOS Intel
+            os: macos-15-intel
+            platform: macos
+            tauri_target: x86_64-apple-darwin
+            artifact: aether-gui-macos-x86_64
+
+    steps:
+      - name: Check out tagged source and pinned core
+        uses: actions/checkout@v4
+        with:
+          ref: v0.7.2
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Enable pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang libclang-dev cmake nasm curl wget file unzip \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf rpm libfuse2
+
+      - name: Install macOS native build dependencies
+        if: matrix.platform == 'macos'
+        run: |
+          brew install llvm cmake nasm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and stage pinned Aether fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path vendor/aether/aether/Cargo.toml
+          source_binary="vendor/aether/aether/target/release/aether"
+          test -s "$source_binary"
+
+          commit="$(git -C vendor/aether rev-parse --short=12 HEAD)"
+          version="dev-$commit"
+          mkdir -p src-tauri/binaries
+          rm -f src-tauri/binaries/aether src-tauri/binaries/aether-dev-*
+          install -m 0755 "$source_binary" "src-tauri/binaries/aether-$version"
+          cp "src-tauri/binaries/aether-$version" src-tauri/binaries/aether
+          chmod 0755 src-tauri/binaries/aether
+          printf '%s' "$version" > src-tauri/binaries/aether-version.txt
+
+      - name: Fetch and stage Unix TUN cores
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash src-tauri/binaries/fetch-singbox.sh --version v1.13.14
+          bash src-tauri/binaries/fetch-xray.sh --version v26.6.1
+          for core in aether sing-box xray; do
+            cp "src-tauri/binaries/$core" "src-tauri/binaries/$core-$TAURI_TARGET"
+            chmod 0755 "src-tauri/binaries/$core-$TAURI_TARGET"
+          done
+          file src-tauri/binaries/aether src-tauri/binaries/sing-box src-tauri/binaries/xray
+
+      - name: Create Unix bundle override
+        shell: bash
+        run: |
+          cat > src-tauri/tauri.conf.unix-release.json <<'JSON'
+          {
+            "bundle": {
+              "createUpdaterArtifacts": false,
+              "resources": {
+                "binaries/aether-*": "binaries/",
+                "binaries/sing-box-*": "binaries/",
+                "binaries/xray-*": "binaries/",
+                "binaries/*-version.txt": "binaries/",
+                "binaries/*.sh": "binaries/"
+              }
+            }
+          }
+          JSON
+
+      - name: Validate tagged source with staged sidecars
+        run: pnpm validate
+
+      - name: Build unsigned Linux bundles
+        if: matrix.platform == 'linux'
+        run: pnpm tauri build --bundles appimage,deb,rpm --config src-tauri/tauri.conf.unix-release.json
+
+      - name: Build ad-hoc signed macOS DMG
+        if: matrix.platform == 'macos'
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: pnpm tauri build --bundles dmg --config src-tauri/tauri.conf.unix-release.json
+
+      - name: Create SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/target/release/bundle"
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done < <(find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -print | sort)
+          test "${#files[@]}" -gt 0
+          checksum="$bundle_dir/${{ matrix.artifact }}-SHA256SUMS.txt"
+          : > "$checksum"
+          for file in "${files[@]}"; do
+            if command -v sha256sum >/dev/null 2>&1; then
+              hash="$(sha256sum "$file" | awk '{print $1}')"
+            else
+              hash="$(shasum -a 256 "$file" | awk '{print $1}')"
+            fi
+            printf '%s  %s\n' "$hash" "$(basename "$file")" >> "$checksum"
+          done
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/${{ matrix.artifact }}-SHA256SUMS.txt
+
+      - name: Publish release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/target/release/bundle"
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done < <(find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '${{ matrix.artifact }}-SHA256SUMS.txt' \) -print | sort)
+          test "${#files[@]}" -gt 0
+          gh release upload "$RELEASE_TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
