@@ -137,7 +137,7 @@ pub struct ConnectionProfile {
     /// the only persisted source of truth.
     #[serde(skip)]
     pub(crate) tun_enabled: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub quick_reconnect: bool,
     #[serde(default)]
     pub masque_http2: bool,
@@ -157,10 +157,6 @@ pub struct ConnectionProfile {
 }
 
 static ACTIVE_DNS_SERVER: OnceLock<RwLock<String>> = OnceLock::new();
-
-fn default_true() -> bool {
-    true
-}
 
 fn default_masque_noize() -> MasqueNoize {
     MasqueNoize::Firewall
@@ -310,7 +306,7 @@ impl Default for ConnectionProfile {
             connection_mode: ConnectionMode::Proxy,
             tun_engine: TunEngine::Xray,
             tun_enabled: false,
-            quick_reconnect: true,
+            quick_reconnect: false,
             masque_http2: false,
             masque_noize: MasqueNoize::Firewall,
             wg_noize: WgNoize::Balanced,
@@ -476,9 +472,11 @@ mod tests {
     }
 
     #[test]
-    fn default_emits_noize() {
+    fn default_emits_noize_and_disables_quick_reconnect() {
         let p = ConnectionProfile::default();
         let args = p.as_args_for_help(None);
+        assert!(args.iter().any(|arg| arg == "--no-quick-reconnect"));
+        assert!(!args.iter().any(|arg| arg == "--quick-reconnect"));
         let i = args
             .iter()
             .position(|a| a == "--noize")
