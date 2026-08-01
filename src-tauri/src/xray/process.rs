@@ -68,11 +68,7 @@ fn configure_command(binary: &Path) -> Command {
 
 pub fn check_config(binary: &Path, config_path: &Path) -> Result<(), AetherError> {
     let mut command = configure_command(binary);
-    command
-        .arg("run")
-        .arg("-test")
-        .arg("-c")
-        .arg(config_path);
+    command.arg("run").arg("-test").arg("-c").arg(config_path);
     no_window(&mut command);
     let output = command
         .output()
@@ -98,8 +94,7 @@ pub fn spawn(
 ) -> Result<XrayProcess, AetherError> {
     #[cfg(windows)]
     if crate::tun_helper::is_supported() && !crate::os_is_admin() {
-        let (helper_tx, helper_rx) =
-            std::sync::mpsc::channel::<crate::tun_helper::HelperLog>();
+        let (helper_tx, helper_rx) = std::sync::mpsc::channel::<crate::tun_helper::HelperLog>();
         let forwarded = log_tx.clone();
         std::thread::spawn(move || {
             for log in helper_rx {

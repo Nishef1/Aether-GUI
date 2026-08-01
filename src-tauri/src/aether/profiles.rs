@@ -440,7 +440,10 @@ mod tests {
     #[test]
     fn dns_server_defaults_to_cloudflare_and_rejects_invalid_values() {
         assert_eq!(sanitize_dns_server("8.8.8.8"), "8.8.8.8");
-        assert_eq!(sanitize_dns_server("2001:4860:4860::8888"), "2001:4860:4860::8888");
+        assert_eq!(
+            sanitize_dns_server("2001:4860:4860::8888"),
+            "2001:4860:4860::8888"
+        );
         assert_eq!(sanitize_dns_server("not-a-resolver"), "1.1.1.1");
         assert_eq!(sanitize_dns_server("0.0.0.0"), "1.1.1.1");
     }

@@ -86,8 +86,7 @@ pub fn spawn(
 ) -> Result<SingboxProcess, AetherError> {
     #[cfg(windows)]
     if crate::tun_helper::is_supported() && !crate::os_is_admin() {
-        let (helper_tx, helper_rx) =
-            std::sync::mpsc::channel::<crate::tun_helper::HelperLog>();
+        let (helper_tx, helper_rx) = std::sync::mpsc::channel::<crate::tun_helper::HelperLog>();
         let forwarded = log_tx.clone();
         std::thread::spawn(move || {
             for log in helper_rx {

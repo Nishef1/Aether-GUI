@@ -154,7 +154,10 @@ mod tests {
         assert_eq!(value["outbounds"][0]["settings"]["port"], 1819);
         assert_eq!(value["outbounds"][1]["protocol"], "dns");
         assert_eq!(value["outbounds"][1]["settings"]["rewriteNetwork"], "tcp");
-        assert_eq!(value["outbounds"][1]["settings"]["rewriteAddress"], "1.1.1.1");
+        assert_eq!(
+            value["outbounds"][1]["settings"]["rewriteAddress"],
+            "1.1.1.1"
+        );
         assert_eq!(value["outbounds"][1]["proxySettings"]["tag"], "proxy");
 
         let rules = value["routing"]["rules"].as_array().unwrap();
@@ -166,9 +169,6 @@ mod tests {
         assert_eq!(rules[2]["outboundTag"], "proxy");
         assert_eq!(rules[3]["outboundTag"], "direct");
         assert_eq!(rules[4]["outboundTag"], "proxy");
-        assert!(!rules[0]["process"][0]
-            .as_str()
-            .unwrap()
-            .contains('\\'));
+        assert!(!rules[0]["process"][0].as_str().unwrap().contains('\\'));
     }
 }

@@ -99,10 +99,8 @@ fn add_traffic_sample(app: &AppHandle, raw: TrafficStats) {
             .checked_sub(state.last_raw_traffic.sent_bytes)
             .unwrap_or(raw.sent_bytes);
 
-        state.snapshot.received_bytes = state
-            .snapshot
-            .received_bytes
-            .saturating_add(received_delta);
+        state.snapshot.received_bytes =
+            state.snapshot.received_bytes.saturating_add(received_delta);
         state.snapshot.sent_bytes = state.snapshot.sent_bytes.saturating_add(sent_delta);
         state.snapshot.sampled_at_ms = now_millis();
         state.last_raw_traffic = raw;
@@ -213,9 +211,7 @@ pub fn spawn_watcher(app: AppHandle, manager: Arc<Mutex<AetherManager>>) {
                 }
 
                 let now = Instant::now();
-                let should_probe = next_probe
-                    .map(|deadline| now >= deadline)
-                    .unwrap_or(true);
+                let should_probe = next_probe.map(|deadline| now >= deadline).unwrap_or(true);
                 if should_probe {
                     next_probe = Some(now + PROBE_INTERVAL);
                     if let Some(socks_addr) = socks_addr {
