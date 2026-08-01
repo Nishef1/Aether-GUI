@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -91,21 +90,28 @@ class AndroidRuntimeResilienceTest(unittest.TestCase):
         self.assertRegex(android, r"webrtc_leak_protection:\s*false")
         self.assertRegex(common, r"quick_reconnect:\s*false")
 
-    def test_legacy_android_profile_is_migrated_once(self) -> None:
+    def test_legacy_android_profile_is_normalized_once_at_every_boundary(self) -> None:
         android = ANDROID_BACKEND.read_text(encoding="utf-8")
         types = CONNECTION_TYPES.read_text(encoding="utf-8")
         self.assertIn("CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION: u8 = 1", android)
         self.assertIn("pub android_runtime_defaults_version: u8", android)
+        self.assertIn("fn normalize_runtime_defaults", android)
+
+        helper = android.split("fn normalize_runtime_defaults", 1)[1].split(
+            "fn load_profile", 1
+        )[0]
+        self.assertIn("profile.quick_reconnect = false", helper)
+        self.assertIn("profile.webrtc_leak_protection = false", helper)
         self.assertIn(
-            "profile.android_runtime_defaults_version < CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION",
-            android,
+            "profile.android_runtime_defaults_version = CURRENT_ANDROID_RUNTIME_DEFAULTS_VERSION",
+            helper,
         )
-        migration = android.split(
-            "if profile.android_runtime_defaults_version <", 1
-        )[1].split("profile\n}", 1)[0]
-        self.assertIn("profile.quick_reconnect = false", migration)
-        self.assertIn("profile.webrtc_leak_protection = false", migration)
-        self.assertIn("let _ = save_profile(app, &profile)", migration)
+
+        self.assertIn("normalize_runtime_defaults(loaded)", android)
+        self.assertIn("normalize_runtime_defaults(requested)", android)
+        self.assertIn("normalize_runtime_defaults(profile)", android)
+        self.assertIn("if migrated", android)
+        self.assertIn("let _ = save_profile(app, &profile)", android)
         self.assertIn("android_runtime_defaults_version?: number", types)
 
     def test_android_auto_does_not_override_quick_reconnect(self) -> None:
