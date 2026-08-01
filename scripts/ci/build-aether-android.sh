@@ -13,9 +13,9 @@ core="$crate_dir/target/aarch64-linux-android/release/aether"
   exit 2
 }
 
-# Validate the source contract before mutating the checked-out submodule. This
-# guards patch ordering, default flags, scanner bounds, MTUs, and egress gating.
-python3 "$workspace/scripts/tests/test_android_transport_contract.py"
+# Validate every Android source contract before mutating the checked-out
+# submodule. The same runner is used by local and manual workflow builds.
+python3 "$workspace/scripts/tests/run_android_contracts.py"
 
 # Keep CI and the local PowerShell build on the same deterministic core source.
 # The baseline fresh-session migration runs first; the final patches then layer
