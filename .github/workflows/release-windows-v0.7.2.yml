@@ -1,0 +1,71 @@
+name: Release Windows v0.7.2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows-v0.7.2
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      RELEASE_TAG: v0.7.2
+    steps:
+      - name: Check out tagged source and pinned core
+        uses: actions/checkout@v4
+        with:
+          ref: v0.7.2
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Enable pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare and verify bundled core runtimes
+        run: pnpm prepare:cores:windows && pnpm verify:bundled-cores:windows
+
+      - name: Validate tagged source after staging external binaries
+        run: pnpm validate
+
+      - name: Require updater signing configuration
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is required for the signed v0.7.2 release."
+          }
+
+      - name: Build and publish Windows NSIS and updater assets
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v0.7.2
+          releaseName: Aether-GUI v0.7.2
+          releaseDraft: false
+          args: --bundles nsis
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          uploadUpdaterSignatures: true
