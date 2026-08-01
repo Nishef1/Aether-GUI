@@ -42,7 +42,7 @@ jobs:
           release_sha=$(git rev-parse HEAD)
           package_version=$(jq -r .version package.json)
           tauri_version=$(jq -r .version src-tauri/tauri.conf.json)
-          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n1)
+          cargo_version=$(awk -F'"' '/^version = "/ {print $2; exit}' src-tauri/Cargo.toml)
           lock_version=$(awk '/^name = "aether-gui"$/{getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit}' src-tauri/Cargo.lock)
           core_sha=$(git ls-tree HEAD vendor/aether | awk '{print $3}')
 
