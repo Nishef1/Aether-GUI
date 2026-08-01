@@ -41,6 +41,8 @@ export interface ConnectionProfile {
   bind_address: string
   /** Encapsulates UDP through the SOCKS TCP control path to prevent direct STUN/WebRTC egress. */
   webrtc_leak_protection: boolean
+  /** Android-only one-time migration marker; ignored by desktop runtimes. */
+  android_runtime_defaults_version?: number
 }
 
 export interface TrafficStats {
