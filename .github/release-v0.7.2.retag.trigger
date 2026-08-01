@@ -1,1 +1,1 @@
-retag v0.7.2 to the fixed MASQUE core source and dispatch finalizer
+retry fixed-source v0.7.2 retag with workflow-safe merge
