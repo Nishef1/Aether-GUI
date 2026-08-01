@@ -15,6 +15,8 @@ CORE_MAIN = ROOT / "vendor/aether/aether/src/main.rs"
 CORE_PROBER = ROOT / "vendor/aether/aether/src/prober.rs"
 MOBILE_NETWORK_PATCH = ROOT / "scripts/ci/patch-aether-mobile-network-policy.py"
 EFFICIENCY_PATCH = ROOT / "scripts/ci/patch-android-mobile-efficiency.py"
+CORE_BUILD = ROOT / "scripts/ci/build-aether-android.sh"
+FINAL_PREPARE = ROOT / "scripts/prepare-android-native-final.ps1"
 ICON_PREPARE = ROOT / "scripts/prepare-android-icons.ps1"
 ICON_MANIFEST = ROOT / "src-tauri/icons/android-icon-manifest.json"
 NOTIFICATION_ICON = ROOT / "src-tauri/plugins/aether-vpn/android/src/main/res/drawable/ic_stat_aether.xml"
@@ -39,20 +41,23 @@ class AndroidTransportContractTest(unittest.TestCase):
             self.assertIn(timeout, policy)
         self.assertNotIn("510_000L", policy)
 
-    def test_mobile_scanners_are_fast_and_http_verified(self) -> None:
+    def test_mobile_scanners_are_fast_http_verified_and_correctly_ordered(self) -> None:
         masque = CORE_PROBER.read_text(encoding="utf-8")
         patch = MOBILE_NETWORK_PATCH.read_text(encoding="utf-8")
         tests = POLICY_TEST.read_text(encoding="utf-8")
         self.assertIn("overall_deadline: Duration::from_secs(140)", masque)
         self.assertIn("Android auto H2 latency window", patch)
         self.assertIn("Duration::from_millis(650)", patch)
+        self.assertIn("Android documented MASQUE ingress order", patch)
+        self.assertIn('"162.159.197.0/24"', patch)
+        self.assertIn('"162.159.197.3"', patch)
         self.assertIn("Android bounded official WARP scan", patch)
         self.assertIn("overall_deadline: Duration::from_secs(60)", patch)
         self.assertIn("pub const WG_PORTS: &[u16] = &[2408, 500, 1701, 4500]", patch)
         self.assertIn("wireGuardUsesBoundedIroncladHttpVerification", tests)
         self.assertIn("goolUsesBoundedIroncladOuterSelection", tests)
 
-    def test_auto_prefers_h2_and_low_power_runtime_args(self) -> None:
+    def test_auto_prefers_h2_without_overriding_reconnect(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
         policy = POLICY.read_text(encoding="utf-8")
         patch = EFFICIENCY_PATCH.read_text(encoding="utf-8")
@@ -61,10 +66,14 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn("getBooleanExtra(EXTRA_MASQUE_HTTP2, true)", service)
         self.assertIn("fun isFastAuto", policy)
         self.assertIn('command += "--turbo"', policy)
-        self.assertIn('command += "--quick-reconnect"', policy)
+        auto_block = policy.split("if (isFastAuto(protocol))", 1)[1].split(
+            "command += listOf", 1
+        )[0]
+        self.assertNotIn('command += "--quick-reconnect"', auto_block)
+        self.assertNotIn('command += "--no-quick-reconnect"', auto_block)
         self.assertIn('"--health-interval", "30"', policy)
         self.assertIn("Auto route: MASQUE HTTP/2", patch)
-        self.assertIn("autoUsesFastH2FriendlyCorePolicy", tests)
+        self.assertIn("autoUsesFastH2PolicyWithoutOverridingReconnect", tests)
 
     def test_wireguard_is_bounded_and_honors_noize(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
@@ -80,6 +89,28 @@ class AndroidTransportContractTest(unittest.TestCase):
         self.assertIn('"balanced" -> "balanced"', policy)
         self.assertIn('"aggressive", "heavy" -> "aggressive"', policy)
         self.assertIn("androidWireGuardHonorsRequestedNoize", tests)
+
+    def test_ci_and_local_build_apply_the_same_final_core_patches(self) -> None:
+        ci = CORE_BUILD.read_text(encoding="utf-8")
+        local = FINAL_PREPARE.read_text(encoding="utf-8")
+        final_patches = (
+            "patch-aether-wg-real-egress.py",
+            "patch-aether-wg-runtime-resolver.py",
+            "remove-aether-wg-core-readiness-gate.py",
+            "patch-aether-mobile-network-policy.py",
+            "patch-aether-android-fresh-runtime.py",
+        )
+        previous_ci = -1
+        previous_local = -1
+        for patch in final_patches:
+            self.assertEqual(ci.count(patch), 1, patch)
+            self.assertEqual(local.count(patch), 1, patch)
+            ci_index = ci.index(patch)
+            local_index = local.index(patch)
+            self.assertGreater(ci_index, previous_ci, patch)
+            self.assertGreater(local_index, previous_local, patch)
+            previous_ci = ci_index
+            previous_local = local_index
 
     def test_connected_is_gated_on_real_socks_dns_tcp_and_http(self) -> None:
         service = SERVICE.read_text(encoding="utf-8")
