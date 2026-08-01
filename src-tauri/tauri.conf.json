@@ -41,6 +41,12 @@
       "binaries/sing-box",
       "binaries/xray"
     ],
+    "resources": {
+      "binaries/*.exe": "binaries/",
+      "binaries/*.dll": "binaries/",
+      "binaries/*-version.txt": "binaries/",
+      "binaries/*.ps1": "binaries/"
+    },
     "windows": {
       "nsis": {
         "installMode": "perMachine"
