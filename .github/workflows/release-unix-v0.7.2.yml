@@ -2,6 +2,11 @@ name: Release Linux and macOS v0.7.2
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/release-v0.7.2.unix.trigger
 
 permissions:
   contents: write
@@ -114,13 +119,13 @@ jobs:
           {
             "bundle": {
               "createUpdaterArtifacts": false,
-              "resources": {
-                "binaries/aether-*": "binaries/",
-                "binaries/sing-box-*": "binaries/",
-                "binaries/xray-*": "binaries/",
-                "binaries/*-version.txt": "binaries/",
-                "binaries/*.sh": "binaries/"
-              }
+              "resources": [
+                "binaries/aether-*",
+                "binaries/sing-box-*",
+                "binaries/xray-*",
+                "binaries/*-version.txt",
+                "binaries/*.sh"
+              ]
             }
           }
           JSON
