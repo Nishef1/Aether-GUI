@@ -1,0 +1,49 @@
+name: Apply Rust formatting for v0.7.2
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/release-v0.7.2.rustfmt.trigger]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-v0.7.2-rustfmt
+  cancel-in-progress: true
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Install Rust formatter
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format Rust sources and publish repair branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+          if git diff --quiet -- '*.rs'; then
+            echo 'Rust sources already formatted.'
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B fix/v0.7.2-rustfmt
+          git add -- '*.rs'
+          git commit -m 'style(rust): format v0.7.2 sources'
+          git push origin fix/v0.7.2-rustfmt --force
