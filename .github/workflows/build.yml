@@ -1,97 +1,192 @@
 name: build
 
-# Tauri can't cross-bundle from one OS to another, so each platform builds on
-# its own runner. Manual dispatch uploads the bundles as run artifacts (for
-# testing); pushing a v* tag additionally attaches them to a draft release.
 on:
-  workflow_dispatch:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
+  cleanup-obsolete-release:
+    name: remove obsolete v0.7.2 release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Delete obsolete release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for tag in v0.7.2 0.7.2; do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
+            fi
+          done
+
+  desktop:
+    needs: cleanup-obsolete-release
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: linux-x86_64
-            os: ubuntu-22.04
-            target: ""
-            aether_asset: ""
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            aether_asset: aether-linux-x86_64.tar.gz
+          - name: windows-x86_64
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+            aether_asset: aether-windows-x86_64.zip
           - name: macos-arm64
-            os: macos-latest
+            os: macos-15
             target: aarch64-apple-darwin
-            aether_asset: ""
+            aether_asset: aether-macos-arm64.tar.gz
           - name: macos-x86_64
-            os: macos-latest
+            os: macos-15-intel
             target: x86_64-apple-darwin
             aether_asset: aether-macos-x86_64.tar.gz
-          - name: windows-x86_64
-            os: windows-latest
-            target: ""
-            aether_asset: ""
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: rustfmt
 
-      - name: Install Linux system dependencies
+      - name: Install Linux packages
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
 
-      - name: Fetch Aether core (Linux/macOS)
+      - run: npm ci
+
+      - name: Fetch official Aether core
         if: runner.os != 'Windows'
         env:
           AETHER_ASSET: ${{ matrix.aether_asset }}
         run: bash src-tauri/binaries/fetch-aether.sh
 
-      # fetch-aether.sh is unix-only (tar.gz assets); the Windows asset is a
-      # zip, fetched here with the same version pin and checksum verification.
-      - name: Fetch Aether core (Windows)
+      - name: Fetch official Aether core
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $pin = (Select-String -Path src-tauri/binaries/fetch-aether.sh -Pattern 'AETHER_VERSION="(.+)"').Matches[0].Groups[1].Value
-          $base = "https://github.com/CluvexStudio/Aether/releases/download/$pin"
-          curl.exe -sL -o aether.zip "$base/aether-windows-x86_64.zip"
-          curl.exe -sL -o SHA256SUMS.txt "$base/SHA256SUMS.txt"
-          $expected = ((Get-Content SHA256SUMS.txt | Select-String 'aether-windows-x86_64.zip') -split '\s+')[0]
-          $actual = (Get-FileHash aether.zip -Algorithm SHA256).Hash.ToLower()
-          if ($actual -ne $expected) { throw "Checksum mismatch: $actual != $expected" }
-          Expand-Archive aether.zip -DestinationPath aether-extract
-          Move-Item aether-extract/aether.exe src-tauri/binaries/aether.exe
+          $version = "v1.5.0"
+          $asset = "${{ matrix.aether_asset }}"
+          $base = "https://github.com/CluvexStudio/Aether/releases/download/$version"
+          Invoke-WebRequest "$base/$asset" -OutFile $asset
+          Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile SHA256SUMS.txt
+          $line = Get-Content SHA256SUMS.txt | Where-Object { $_ -match [regex]::Escape($asset) } | Select-Object -First 1
+          if (-not $line) { throw "Aether checksum entry was not found" }
+          $expected = ($line -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Aether checksum mismatch" }
+          Expand-Archive $asset -DestinationPath aether-extract
+          Copy-Item aether-extract/aether.exe src-tauri/binaries/aether.exe
 
-      - run: npm ci
-
-      - uses: tauri-apps/tauri-action@v0
+      - name: Prepare pinned sing-box sidecar
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseDraft: true
-          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run prepare:sidecars
+
+      - name: Verify source contracts
+        if: runner.os == 'Linux'
+        run: |
+          npm run typecheck
+          python3 scripts/tests/test_android_feature_parity.py
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Build desktop bundle
+        run: npm run tauri -- build --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bundles-${{ matrix.name }}
+          name: aether-${{ matrix.name }}
+          if-no-files-found: error
           path: |
-            src-tauri/target/**/bundle/**/*.dmg
-            src-tauri/target/**/bundle/**/*.AppImage
-            src-tauri/target/**/bundle/**/*.deb
-            src-tauri/target/**/bundle/**/*.rpm
-            src-tauri/target/**/bundle/**/*setup.exe
-            src-tauri/target/**/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.rpm
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*setup.exe
+
+  android:
+    needs: cleanup-obsolete-release
+    name: android-arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      ANDROID_MIN_API: 29
+      NDK_VERSION: 28.2.13676358
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install Android SDK and pinned NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      - name: Initialize generated Android project
+        run: npm run android:init
+
+      - name: Prepare verified Aether and HEV ARM64 libraries
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run prepare:android-native
+
+      - name: Run Android unit tests
+        working-directory: src-tauri/gen/android
+        run: ./gradlew test --no-daemon
+
+      - name: Build ARM64 APK
+        run: npm run android:build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aether-android-arm64
+          if-no-files-found: error
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
