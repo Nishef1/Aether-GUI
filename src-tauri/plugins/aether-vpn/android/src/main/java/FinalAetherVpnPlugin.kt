@@ -189,8 +189,7 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
-    fun telemetry(invoke: Invoke) =
-        invoke.resolve(FinalAetherVpnService.telemetrySnapshot().toJsObject())
+    fun telemetry(invoke: Invoke) = invoke.resolve(FinalAetherVpnService.telemetrySnapshot().toJsObject())
 
     @Command
     fun logs(invoke: Invoke) {
@@ -339,10 +338,18 @@ class FinalAetherVpnService : VpnService() {
 
     override fun onDestroy() {
         sessionGate.cancel()
-        AndroidVpnRuntime.updateSnapshot(AndroidVpnRuntime.idleSnapshot())
-        AndroidVpnRuntime.resetTelemetry()
+        AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
         val resources = detachAllResources()
-        runCatching { cleanupExecutor.submit { cleanupResources(resources, "service destroy") } }
+        runCatching {
+            cleanupExecutor.submit {
+                cleanupResources(resources, "service destroy")
+                AndroidVpnRuntime.resetTelemetry()
+                AndroidVpnRuntime.updateSnapshot(AndroidVpnRuntime.idleSnapshot())
+            }
+        }.onFailure {
+            AndroidVpnRuntime.resetTelemetry()
+            AndroidVpnRuntime.updateSnapshot(AndroidVpnRuntime.idleSnapshot())
+        }
         startExecutor.shutdownNow()
         probeExecutor.shutdownNow()
         cleanupExecutor.shutdown()
@@ -377,9 +384,7 @@ class FinalAetherVpnService : VpnService() {
             masqueNoize = intent.getStringExtra(EXTRA_MASQUE_NOIZE) ?: "firewall",
             wgNoize = intent.getStringExtra(EXTRA_WG_NOIZE) ?: "balanced",
             webrtcLeakProtection = intent.getBooleanExtra(EXTRA_WEBRTC_LEAK_PROTECTION, false),
-            mtu = AndroidTransportPolicy.sanitizeMtu(
-                intent.getIntExtra(EXTRA_MTU, AndroidTransportPolicy.DEFAULT_MTU)
-            ),
+            mtu = AndroidTransportPolicy.sanitizeMtu(intent.getIntExtra(EXTRA_MTU, AndroidTransportPolicy.DEFAULT_MTU)),
             peer = intent.getStringExtra(EXTRA_PEER).orEmpty(),
             wgPeer = intent.getStringExtra(EXTRA_WG_PEER).orEmpty(),
             h2Peer = intent.getStringExtra(EXTRA_H2_PEER).orEmpty(),
@@ -443,10 +448,7 @@ class FinalAetherVpnService : VpnService() {
             processAttached = true
             AndroidVpnRuntime.attachProcessInput(writer)
             startCoreLogReader(process)
-            updateSnapshotIfActive(
-                token,
-                FinalServiceSnapshot("Connecting", socksAddr = profile.bindAddress),
-            )
+            updateSnapshotIfActive(token, FinalServiceSnapshot("Connecting", socksAddr = profile.bindAddress))
             updateNotification("Finding a working route…")
 
             val startupTimeoutMs = AndroidTransportPolicy.startupTimeoutMs(profile.protocol, profile.scanMode)
@@ -471,19 +473,13 @@ class FinalAetherVpnService : VpnService() {
             val connectedAt = System.currentTimeMillis()
 
             if (profile.connectionMode == "proxy") {
-                updateSnapshotIfActive(
-                    token,
-                    FinalServiceSnapshot("Connected", socksAddr = profile.bindAddress, connectedAtMs = connectedAt)
-                )
+                updateSnapshotIfActive(token, FinalServiceSnapshot("Connected", socksAddr = profile.bindAddress, connectedAtMs = connectedAt))
                 updateNotification("Connected · SOCKS ${profile.bindAddress}")
             } else {
                 updateSnapshotIfActive(token, FinalServiceSnapshot("StartingTunnel", socksAddr = profile.bindAddress))
                 tunnel = createSystemTunnel(profile)
                 if (!attachTunnel(token, tunnel)) {
-                    cleanupResources(
-                        RuntimeResources(descriptor = tunnel.descriptor, bridge = tunnel.bridge),
-                        "cancel before TUN attach"
-                    )
+                    cleanupResources(RuntimeResources(descriptor = tunnel.descriptor, bridge = tunnel.bridge), "cancel before TUN attach")
                     tunnel = null
                     throw CancellationException("Connection cancelled before TUN attachment")
                 }
@@ -792,12 +788,7 @@ class FinalAetherVpnService : VpnService() {
         }
     }
 
-    private fun waitForSocks(
-        token: Long,
-        bindAddress: String,
-        process: Process,
-        timeoutMs: Long,
-    ): Boolean {
+    private fun waitForSocks(token: Long, bindAddress: String, process: Process, timeoutMs: Long): Boolean {
         val (host, port) = splitHostPort(bindAddress)
         var deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < deadline && process.isAlive && sessionGate.isActive(token)) {
@@ -944,13 +935,11 @@ class FinalAetherVpnService : VpnService() {
         private const val PROCESS_FORCE_TIMEOUT_SECONDS = 1L
         private const val SOCKS_POLL_CONNECT_TIMEOUT_MS = 300
         private const val SOCKS_POLL_INTERVAL_MS = 200L
-        private const val EGRESS_PROBE_INTERVAL_MS = 120_000L
+        private const val EGRESS_PROBE_INTERVAL_MS = 300_000L
 
         fun markStartRequested() = AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Launching"))
         fun markStopRequested() = AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
-        fun markStartFailed(error: Throwable) = AndroidVpnRuntime.updateSnapshot(
-            FinalServiceSnapshot("Error", error.message ?: error.toString())
-        )
+        fun markStartFailed(error: Throwable) = AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Error", error.message ?: error.toString()))
         fun snapshot(): FinalServiceSnapshot = AndroidVpnRuntime.snapshot()
         fun trafficSnapshot(): FinalNativeTraffic = AndroidVpnRuntime.trafficSnapshot()
         fun telemetrySnapshot(): FinalRuntimeTelemetry = AndroidVpnRuntime.telemetrySnapshot()

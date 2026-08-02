@@ -192,7 +192,10 @@ internal object AndroidVpnRuntime {
             writer.write("\n")
             writer.flush()
         }
-        synchronized(parserLock) { accessCodePromptVisible = false }
+        synchronized(parserLock) {
+            accessCodePromptVisible = false
+            partialOutput = ""
+        }
         val current = status.get()
         updateSnapshot(
             FinalServiceSnapshot(

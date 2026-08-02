@@ -56,6 +56,14 @@ class AndroidFeatureParityTest(unittest.TestCase):
         self.assertIn("log-level: warn", service)
         self.assertIn("set_logging(false)", rust)
 
+    def test_android_teardown_and_otp_parser_do_not_leave_stale_state(self) -> None:
+        service = self.read("src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt")
+        runtime = self.read("src-tauri/plugins/aether-vpn/android/src/main/java/AndroidVpnRuntime.kt")
+        self.assertIn('FinalServiceSnapshot("Disconnecting")', service)
+        self.assertIn('AndroidVpnRuntime.updateSnapshot(AndroidVpnRuntime.idleSnapshot())', service)
+        self.assertIn('partialOutput = ""', runtime)
+        self.assertIn('EGRESS_PROBE_INTERVAL_MS = 300_000L', service)
+
     def test_android_mtu_is_shared_by_vpn_and_hev(self) -> None:
         service = self.read("src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt")
         panel = self.read("src/components/AdvancedPanel.tsx")
