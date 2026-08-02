@@ -135,13 +135,21 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run prepare:sidecars
 
-      - name: Verify source contracts
+      - name: TypeScript typecheck
         if: runner.os == 'Linux'
-        run: |
-          npm run typecheck
-          python3 scripts/tests/test_android_feature_parity.py
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-          cargo test --manifest-path src-tauri/Cargo.toml --locked
+        run: npm run typecheck
+
+      - name: Android feature-parity contracts
+        if: runner.os == 'Linux'
+        run: python3 scripts/tests/test_android_feature_parity.py
+
+      - name: Rust formatting check
+        if: runner.os == 'Linux'
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Rust unit tests
+        if: runner.os == 'Linux'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
       - name: Build desktop bundle
         run: npm run tauri -- build --target ${{ matrix.target }}
