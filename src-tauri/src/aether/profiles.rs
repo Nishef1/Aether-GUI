@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-/// `Auto` resolves to Aether's own default (MASQUE). Aether's own `scan_mode`
-/// already performs multi-route discovery internally (confirmed by manually
-/// running the real binary), so Aether-GUI does not implement a client-side
-/// protocol-fallback retry loop on top of this.
+/// `Auto` is the GUI's recommended one-click choice and currently resolves to
+/// MASQUE. It is still passed explicitly as `--masque` so Aether never opens
+/// the protocol prompt and waits for PTY interaction during normal launches.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
@@ -110,10 +109,9 @@ pub struct ConnectionProfile {
     pub protocol: Protocol,
     pub scan_mode: ScanMode,
     pub ip_version: IpVersion,
-    /// Aether ≥1.1.1: reuse the last known-working gateway with a quick
-    /// recheck instead of a full scan. `serde(default)` keeps profiles saved
-    /// by older versions of this app loading cleanly.
-    #[serde(default = "default_true")]
+    /// Reuse the last known-working gateway before a full scan. This is kept
+    /// off by default so a stale route cannot silently dominate fresh scans.
+    #[serde(default)]
     pub quick_reconnect: bool,
     /// Aether ≥1.2.0: run the MASQUE tunnel over HTTP/2 (TCP) instead of the
     /// default HTTP/3 (QUIC) — for networks that block or throttle UDP.
@@ -183,10 +181,6 @@ pub enum ZeroTrustAuth {
     Token,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 fn default_masque_noize() -> MasqueNoize {
     MasqueNoize::Firewall
 }
@@ -203,14 +197,12 @@ impl ConnectionProfile {
     /// CLI flags for Aether ≥1.1.1 — the whole profile is passed up front so
     /// the interactive prompts never appear (the PTY prompt-answering in
     /// pty.rs stays as a fallback). One of the two quick-reconnect flags is
-    /// ALWAYS passed: without either, 1.1.1 asks its own interactive
-    /// "reconnect with last gateway?" question, which the GUI must never
-    /// leave unanswered.
+    /// ALWAYS passed: without either, Aether asks an interactive reconnect
+    /// question that a GUI launch must never leave unanswered.
     pub fn as_args(&self) -> Vec<String> {
         let mut args = Vec::with_capacity(20);
         match self.protocol {
-            Protocol::Auto => {}
-            Protocol::Masque => args.push("--masque".into()),
+            Protocol::Auto | Protocol::Masque => args.push("--masque".into()),
             Protocol::Wireguard => args.push("--wg".into()),
             Protocol::Gool => args.push("--gool".into()),
         }
@@ -231,7 +223,6 @@ impl ConnectionProfile {
         } else {
             "--no-quick-reconnect".into()
         });
-        // Noize profile — pick the value matching the active protocol family.
         args.push("--noize".into());
         args.push(
             match self.protocol {
@@ -240,7 +231,6 @@ impl ConnectionProfile {
             }
             .into(),
         );
-        // Only forward --bind when non-default and parseable.
         if self.bind_address != default_bind_address()
             && self.bind_address.parse::<std::net::SocketAddr>().is_ok()
         {
@@ -289,9 +279,6 @@ impl ConnectionProfile {
                 if !self.access_client_id.trim().is_empty()
                     && !self.access_client_secret.trim().is_empty() =>
             {
-                // The id and secret need separate variables, so this method
-                // cannot represent service credentials. pty.rs handles that
-                // pair directly after consulting `zero_trust_auth`.
                 None
             }
             ZeroTrustAuth::Token if !self.access_token.trim().is_empty() => {
@@ -311,6 +298,19 @@ mod tests {
         let p = ConnectionProfile::default();
         let args = p.as_args();
         assert!(!args.iter().any(|a| a == "--bind"), "args={args:?}");
+    }
+
+    #[test]
+    fn auto_explicitly_selects_masque() {
+        let args = ConnectionProfile::default().as_args();
+        assert_eq!(args.first().map(String::as_str), Some("--masque"));
+    }
+
+    #[test]
+    fn defaults_disable_quick_reconnect() {
+        let profile = ConnectionProfile::default();
+        assert!(!profile.quick_reconnect);
+        assert!(profile.as_args().iter().any(|arg| arg == "--no-quick-reconnect"));
     }
 
     #[test]
@@ -366,6 +366,13 @@ mod tests {
     }
 
     #[test]
+    fn missing_quick_reconnect_defaults_off() {
+        let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4"}"#;
+        let p: ConnectionProfile = serde_json::from_str(json).unwrap();
+        assert!(!p.quick_reconnect);
+    }
+
+    #[test]
     fn default_emits_noize() {
         let p = ConnectionProfile::default();
         let args = p.as_args();
@@ -390,9 +397,10 @@ mod tests {
         assert_eq!(
             p.as_args(),
             vec![
+                "--masque",
                 "--balanced",
                 "-4",
-                "--quick-reconnect",
+                "--no-quick-reconnect",
                 "--noize",
                 "firewall",
                 "--dns",
@@ -427,12 +435,11 @@ mod tests {
 
 impl Default for ConnectionProfile {
     fn default() -> Self {
-        // Mirrors Aether's own defaults.
         Self {
             protocol: Protocol::Auto,
             scan_mode: ScanMode::Balanced,
             ip_version: IpVersion::V4,
-            quick_reconnect: true,
+            quick_reconnect: false,
             masque_http2: false,
             masque_noize: MasqueNoize::Firewall,
             wg_noize: WgNoize::Balanced,
@@ -458,23 +465,19 @@ const STORE_KEY: &str = "last_successful_profile";
 /// Loads the last profile that reached `Connected`, or the hardcoded default
 /// on first run. Only ever written by `save()` at the moment a connection
 /// actually succeeds (see aether/mod.rs) — never on a mere attempt, so a bad
-/// guess can't poison future one-click connects.
+/// guess cannot poison future one-click connects.
 pub fn load(app: &tauri::AppHandle) -> ConnectionProfile {
     use tauri_plugin_store::StoreExt;
     app.store(STORE_FILE)
         .ok()
-        .and_then(|s| s.get(STORE_KEY))
-        .and_then(|v| serde_json::from_value(v).ok())
+        .and_then(|store| store.get(STORE_KEY))
+        .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default()
 }
 
 pub fn save(app: &tauri::AppHandle, profile: &ConnectionProfile) {
     use tauri_plugin_store::StoreExt;
     if let Ok(store) = app.store(STORE_FILE) {
-        // A successful connection profile is useful to remember, but Access
-        // credentials are not. Leave them in process memory only; the next
-        // app launch will ask for them again rather than writing a JWT,
-        // service secret or email address into profile.json.
         let mut persisted = profile.clone();
         persisted.access_email.clear();
         persisted.access_client_id.clear();
