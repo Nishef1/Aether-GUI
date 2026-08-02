@@ -168,6 +168,7 @@ class AndroidFeatureParityTest(unittest.TestCase):
         self.assertIn("enableV2Signing = true", self.read("scripts/ci/configure-android-release-signing.mjs"))
         self.assertIn("enableV3Signing = true", self.read("scripts/ci/configure-android-release-signing.mjs"))
         self.assertIn('const modernSchemes = ["v2", "v3"]', verifier)
+        self.assertIn('replaceAll(":", "")', verifier)
         self.assertIn("Replace release assets with current platform builds", workflow)
 
 

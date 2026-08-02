@@ -3,7 +3,10 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 
 const expectedCertificate =
-  "AA:5D:45:F0:12:4A:61:E7:5B:3D:66:04:5F:6A:18:96:0D:3B:33:5E:73:5B:33:96:EF:9C:1C:04:72:E8:9F:7B"
+  "AA:5D:45:F0:12:4A:61:E7:5B:3D:66:04:5F:6A:18:96:0D:3B:33:5E:73:5B:33:96:EF:9C:1C:04:72:E8:9F:7B".replaceAll(
+    ":",
+    ""
+  )
 const expectedAbis = new Set(["arm64-v8a"])
 const expectedLibraries = new Set([
   "lib/arm64-v8a/libaether_exec.so",
@@ -90,7 +93,7 @@ const certificateMatch = signature.match(
 )
 if (!certificateMatch)
   fail("signer certificate SHA-256 fingerprint was not reported")
-const certificate = certificateMatch[1].toUpperCase()
+const certificate = certificateMatch[1].replaceAll(":", "").toUpperCase()
 if (certificate !== expectedCertificate)
   fail(`unexpected signer certificate SHA-256 fingerprint (${certificate})`)
 
