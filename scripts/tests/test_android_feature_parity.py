@@ -82,10 +82,25 @@ class AndroidFeatureParityTest(unittest.TestCase):
         orphan = self.read("src-tauri/src/aether/orphan.rs")
         pty = self.read("src-tauri/src/aether/pty.rs")
         sing_box = self.read("src-tauri/src/system_tunnel/sing_box/process.rs")
+        adapter = self.read("src-tauri/src/system_tunnel/sing_box/mod.rs")
         self.assertIn('"/T"', orphan)
         self.assertIn('"/F"', orphan)
         self.assertIn("terminate_process_tree(self.pid())", pty)
         self.assertIn("terminate_process_tree(child.id())", sing_box)
+        self.assertIn("controller_pid", sing_box)
+        self.assertIn("request_controller_stop", sing_box)
+        self.assertIn("stop_file", sing_box)
+        self.assertIn("if !owned_process.kill()", adapter)
+        self.assertIn("state.process = Some(owned_process)", adapter)
+
+    def test_traffic_baseline_is_not_counted_as_session_usage(self) -> None:
+        telemetry = self.read("src-tauri/src/telemetry.rs")
+        traffic = self.read("src-tauri/src/traffic.rs")
+        self.assertIn("last_raw_traffic: Option<TrafficStats>", telemetry)
+        self.assertIn("traffic_delta(None, Some(current))", telemetry)
+        self.assertIn("reset_session(&app, None)", telemetry)
+        self.assertIn("saturating_sub(previous.received_bytes)", telemetry)
+        self.assertIn("pub fn current(interface_name: &str) -> Option<TrafficStats>", traffic)
 
     def test_disconnect_owns_and_drains_the_session(self) -> None:
         manager = self.read("src-tauri/src/aether/mod.rs")
@@ -152,6 +167,8 @@ class AndroidFeatureParityTest(unittest.TestCase):
         self.assertIn("enableV1Signing = true", self.read("scripts/ci/configure-android-release-signing.mjs"))
         self.assertIn("enableV2Signing = true", self.read("scripts/ci/configure-android-release-signing.mjs"))
         self.assertIn("enableV3Signing = true", self.read("scripts/ci/configure-android-release-signing.mjs"))
+        self.assertIn('for (const scheme of ["v2", "v3"])', verifier)
+        self.assertIn("Replace release assets with current platform builds", workflow)
 
 
 if __name__ == "__main__":

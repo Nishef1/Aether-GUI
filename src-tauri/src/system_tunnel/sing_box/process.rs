@@ -1,8 +1,11 @@
 use crate::runtime_error::RuntimeError;
+use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::Sender;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct ProcessLog {
@@ -37,13 +40,13 @@ impl SingBoxProcess {
         }
     }
 
-    pub fn kill(&mut self) {
+    pub fn kill(&mut self) -> bool {
         match &mut self.inner {
             ProcessKind::Local(child) => {
-                #[cfg(windows)]
-                crate::aether::orphan::terminate_process_tree(child.id());
+                let tree_stopped = crate::aether::orphan::terminate_process_tree(child.id());
                 let _ = child.kill();
-                let _ = child.wait();
+                let child_stopped = child.wait().is_ok();
+                tree_stopped || child_stopped
             }
             #[cfg(windows)]
             ProcessKind::Elevated(process) => process.kill(),
@@ -84,13 +87,20 @@ pub fn spawn(
     binary: &Path,
     config_path: &Path,
     log_tx: Sender<ProcessLog>,
+    pid_file: &Path,
+    stop_file: &Path,
 ) -> Result<SingBoxProcess, RuntimeError> {
     #[cfg(windows)]
     if !is_elevated() {
-        return spawn_elevated(binary, config_path).map(|process| SingBoxProcess {
-            inner: ProcessKind::Elevated(process),
+        return spawn_elevated(binary, config_path, pid_file, stop_file).map(|process| {
+            SingBoxProcess {
+                inner: ProcessKind::Elevated(process),
+            }
         });
     }
+
+    #[cfg(not(windows))]
+    let _ = (pid_file, stop_file);
 
     #[cfg(target_os = "linux")]
     if !is_elevated() {
@@ -185,7 +195,7 @@ fn is_elevated() -> bool {
     #[cfg(windows)]
     {
         use windows_sys::Win32::UI::Shell::IsUserAnAdmin;
-        return unsafe { IsUserAnAdmin() != 0 };
+        unsafe { IsUserAnAdmin() != 0 }
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -200,6 +210,8 @@ fn is_elevated() -> bool {
 #[cfg(windows)]
 struct ElevatedProcess {
     pid: u32,
+    controller_pid: u32,
+    stop_file: PathBuf,
     exit_code: Option<u32>,
 }
 
@@ -210,19 +222,32 @@ impl ElevatedProcess {
         if let Some(code) = self.exit_code {
             return Ok(Some(ExitStatus::from_raw(code)));
         }
-        if process_is_alive(self.pid) {
+        if process_is_alive(self.pid) || process_is_alive(self.controller_pid) {
             return Ok(None);
         }
         self.exit_code = Some(0);
         Ok(Some(ExitStatus::from_raw(0)))
     }
 
-    fn kill(&mut self) {
+    fn kill(&mut self) -> bool {
         if self.exit_code.is_some() {
-            return;
+            return true;
         }
-        crate::aether::orphan::terminate_process_tree(self.pid);
-        self.exit_code = Some(0);
+        // The elevated controller owns the elevated sing-box child. Asking it
+        // to stop avoids a second UAC prompt on every normal disconnect.
+        request_controller_stop(self.controller_pid, &self.stop_file);
+        let stopped = wait_until_stopped(&[self.pid, self.controller_pid], Duration::from_secs(3));
+        if !stopped {
+            // This is only an emergency path for a crashed/unresponsive
+            // controller. It may require administrator consent, but we never
+            // claim the TUN is gone unless both processes are actually dead.
+            let _ = terminate_elevated_process_tree(self.controller_pid);
+        }
+        let stopped = wait_until_stopped(&[self.pid, self.controller_pid], Duration::from_secs(2));
+        if stopped {
+            self.exit_code = Some(0);
+        }
+        stopped
     }
 }
 
@@ -232,11 +257,31 @@ fn escape_powershell_literal(value: &str) -> String {
 }
 
 #[cfg(windows)]
-fn spawn_elevated(binary: &Path, config_path: &Path) -> Result<ElevatedProcess, RuntimeError> {
+fn spawn_elevated(
+    binary: &Path,
+    config_path: &Path,
+    pid_file: &Path,
+    stop_file: &Path,
+) -> Result<ElevatedProcess, RuntimeError> {
+    let pid_path = pid_file.to_path_buf();
+    let stop_path = stop_file.to_path_buf();
+    let working_dir = binary
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_string_lossy()
+        .to_string();
+    let working_dir = escape_powershell_literal(&working_dir);
     let binary = escape_powershell_literal(&binary.to_string_lossy());
     let config = escape_powershell_literal(&config_path.to_string_lossy());
+    let pid_file = escape_powershell_literal(&pid_file.to_string_lossy());
+    let stop_file = escape_powershell_literal(&stop_file.to_string_lossy());
+    let parent_pid = std::process::id();
+    let controller = format!(
+        "$ErrorActionPreference = 'Stop'; $child = $null; $exitCode = 0; try {{ $child = Start-Process -FilePath '{binary}' -ArgumentList @('run','-c','{config}') -WorkingDirectory '{working_dir}' -WindowStyle Hidden -PassThru; Set-Content -LiteralPath '{pid_file}' -Value $child.Id -NoNewline; while ($true) {{ if (Test-Path -LiteralPath '{stop_file}') {{ break }}; if ($child.HasExited) {{ $exitCode = $child.ExitCode; break }}; if (-not (Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue)) {{ break }}; Start-Sleep -Milliseconds 200 }} }} catch {{ $exitCode = 1 }} finally {{ if ($child -and -not $child.HasExited) {{ & taskkill.exe /PID $child.Id /T /F | Out-Null; $child.WaitForExit() }}; Remove-Item -LiteralPath '{pid_file}' -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '{stop_file}' -Force -ErrorAction SilentlyContinue }}; exit $exitCode"
+    );
+    let controller = escape_powershell_literal(&controller);
     let script = format!(
-        "$p = Start-Process -FilePath '{binary}' -ArgumentList @('run','-c','{config}') -Verb RunAs -WindowStyle Hidden -PassThru; $p.Id"
+        "$p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command','{controller}') -Verb RunAs -WindowStyle Hidden -PassThru; $p.Id"
     );
     let mut command = Command::new("powershell.exe");
     command.args([
@@ -259,15 +304,83 @@ fn spawn_elevated(binary: &Path, config_path: &Path) -> Result<ElevatedProcess, 
             detail
         }));
     }
-    let pid = String::from_utf8_lossy(&output.stdout)
+    let controller_pid = String::from_utf8_lossy(&output.stdout)
         .lines()
         .rev()
         .find_map(|line| line.trim().parse::<u32>().ok())
-        .ok_or_else(|| RuntimeError::SystemTunnel("elevated sing-box returned no PID".into()))?;
+        .ok_or_else(|| {
+            RuntimeError::SystemTunnel("elevated sing-box controller returned no PID".into())
+        })?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let pid = loop {
+        if let Ok(value) = fs::read_to_string(&pid_path) {
+            if let Ok(pid) = value.trim().parse::<u32>() {
+                if process_is_alive(pid) {
+                    break pid;
+                }
+            }
+        }
+        if !process_is_alive(controller_pid) {
+            return Err(RuntimeError::SystemTunnel(
+                "elevated sing-box controller exited before starting sing-box".into(),
+            ));
+        }
+        if Instant::now() >= deadline {
+            request_controller_stop(controller_pid, &stop_path);
+            return Err(RuntimeError::SystemTunnel(
+                "elevated sing-box did not report its PID".into(),
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
     Ok(ElevatedProcess {
         pid,
+        controller_pid,
+        stop_file: stop_path,
         exit_code: None,
     })
+}
+
+#[cfg(windows)]
+fn request_controller_stop(controller_pid: u32, stop_file: &Path) {
+    let _ = fs::write(stop_file, b"stop");
+    if !wait_until_stopped(&[controller_pid], Duration::from_secs(3)) {
+        let _ = terminate_elevated_process_tree(controller_pid);
+    }
+}
+
+#[cfg(windows)]
+fn wait_until_stopped(pids: &[u32], timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if pids.iter().all(|pid| !process_is_alive(*pid)) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    pids.iter().all(|pid| !process_is_alive(*pid))
+}
+
+#[cfg(windows)]
+fn terminate_elevated_process_tree(pid: u32) -> bool {
+    if pid == 0 || !process_is_alive(pid) {
+        return true;
+    }
+    let script = format!(
+        "$p = Start-Process -FilePath 'taskkill.exe' -ArgumentList @('/PID','{pid}','/T','/F') -Verb RunAs -WindowStyle Hidden -PassThru; $p.WaitForExit(); exit $p.ExitCode"
+    );
+    let mut command = Command::new("powershell.exe");
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        &script,
+    ]);
+    no_window(&mut command);
+    let _ = command.status();
+    wait_until_stopped(&[pid], Duration::from_secs(3))
 }
 
 #[cfg(windows)]

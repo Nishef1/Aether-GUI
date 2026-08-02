@@ -28,7 +28,7 @@ pub struct RuntimeTelemetry {
 #[derive(Debug, Default)]
 struct TelemetryState {
     snapshot: RuntimeTelemetry,
-    last_raw_traffic: TrafficStats,
+    last_raw_traffic: Option<TrafficStats>,
 }
 
 #[derive(Debug)]
@@ -56,7 +56,7 @@ fn emit_snapshot(app: &AppHandle, snapshot: RuntimeTelemetry) {
     let _ = app.emit(TELEMETRY_EVENT, snapshot);
 }
 
-fn reset_session(app: &AppHandle, raw_traffic: TrafficStats) {
+fn reset_session(app: &AppHandle, raw_traffic: Option<TrafficStats>) {
     SESSION_TOKEN.fetch_add(1, Ordering::SeqCst);
     let snapshot = RuntimeTelemetry {
         sampled_at_ms: now_millis(),
@@ -69,31 +69,31 @@ fn reset_session(app: &AppHandle, raw_traffic: TrafficStats) {
     emit_snapshot(app, snapshot);
 }
 
-fn add_traffic_sample(app: &AppHandle, raw: TrafficStats) {
-    let payload = telemetry_state().lock().ok().map(|mut state| {
-        let received_delta = raw
+fn traffic_delta(previous: Option<TrafficStats>, current: Option<TrafficStats>) -> TrafficStats {
+    let (Some(previous), Some(current)) = (previous, current) else {
+        return TrafficStats::default();
+    };
+
+    TrafficStats {
+        // A missing interface or a recreated adapter must establish a new
+        // baseline. Never treat a counter reset as a full-session download.
+        received_bytes: current
             .received_bytes
-            .checked_sub(state.last_raw_traffic.received_bytes)
-            .unwrap_or(raw.received_bytes);
-        let sent_delta = raw
-            .sent_bytes
-            .checked_sub(state.last_raw_traffic.sent_bytes)
-            .unwrap_or(raw.sent_bytes);
-        state.snapshot.received_bytes =
-            state.snapshot.received_bytes.saturating_add(received_delta);
-        state.snapshot.sent_bytes = state.snapshot.sent_bytes.saturating_add(sent_delta);
-        state.snapshot.sampled_at_ms = now_millis();
-        state.last_raw_traffic = raw;
-        state.snapshot.clone()
-    });
-    if let Some(payload) = payload {
-        emit_snapshot(app, payload);
+            .saturating_sub(previous.received_bytes),
+        sent_bytes: current.sent_bytes.saturating_sub(previous.sent_bytes),
     }
 }
 
-fn touch_clock(app: &AppHandle) {
+fn add_traffic_sample(app: &AppHandle, raw: Option<TrafficStats>) {
     let payload = telemetry_state().lock().ok().map(|mut state| {
+        let delta = traffic_delta(state.last_raw_traffic, raw);
+        state.snapshot.received_bytes = state
+            .snapshot
+            .received_bytes
+            .saturating_add(delta.received_bytes);
+        state.snapshot.sent_bytes = state.snapshot.sent_bytes.saturating_add(delta.sent_bytes);
         state.snapshot.sampled_at_ms = now_millis();
+        state.last_raw_traffic = raw;
         state.snapshot.clone()
     });
     if let Some(payload) = payload {
@@ -154,16 +154,13 @@ pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
         loop {
             let status = runtime.status();
             if let Some((socks_addr, connected_at_ms)) = connected_details(&status) {
-                let interface = runtime.traffic_interface();
-                let raw = interface.map(traffic::current).unwrap_or_default();
+                let raw = runtime.traffic_interface().and_then(traffic::current);
                 if active_session != Some(connected_at_ms) {
                     active_session = Some(connected_at_ms);
                     reset_session(&app, raw);
                     next_probe = None;
-                } else if interface.is_some() {
-                    add_traffic_sample(&app, raw);
                 } else {
-                    touch_clock(&app);
+                    add_traffic_sample(&app, raw);
                 }
 
                 let now = Instant::now();
@@ -174,7 +171,7 @@ pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
                 }
             } else if active_session.take().is_some() {
                 next_probe = None;
-                reset_session(&app, TrafficStats::default());
+                reset_session(&app, None);
             }
             std::thread::sleep(SAMPLE_INTERVAL);
         }
@@ -276,5 +273,49 @@ mod tests {
     #[test]
     fn rejects_trace_without_valid_ip() {
         assert!(parse_trace("ip=not-an-ip\nloc=US\n__aether_time_total=0.1\n").is_err());
+    }
+
+    #[test]
+    fn delayed_interface_start_establishes_a_baseline_without_backfilling_old_bytes() {
+        let current = TrafficStats {
+            received_bytes: 2_000_000_000,
+            sent_bytes: 500_000_000,
+        };
+        assert_eq!(traffic_delta(None, Some(current)), TrafficStats::default());
+    }
+
+    #[test]
+    fn counter_reset_establishes_a_new_baseline_without_a_spike() {
+        let previous = TrafficStats {
+            received_bytes: 8_000,
+            sent_bytes: 4_000,
+        };
+        let current = TrafficStats {
+            received_bytes: 100,
+            sent_bytes: 50,
+        };
+        assert_eq!(
+            traffic_delta(Some(previous), Some(current)),
+            TrafficStats::default()
+        );
+    }
+
+    #[test]
+    fn normal_counter_growth_is_reported_as_session_delta() {
+        let previous = TrafficStats {
+            received_bytes: 1_000,
+            sent_bytes: 400,
+        };
+        let current = TrafficStats {
+            received_bytes: 1_250,
+            sent_bytes: 475,
+        };
+        assert_eq!(
+            traffic_delta(Some(previous), Some(current)),
+            TrafficStats {
+                received_bytes: 250,
+                sent_bytes: 75,
+            }
+        );
     }
 }

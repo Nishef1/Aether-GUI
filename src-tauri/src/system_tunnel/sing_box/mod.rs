@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const PID_FILE: &str = "sing-box.pid";
+const STOP_FILE: &str = "sing-box.stop";
 const CONFIG_FILE: &str = "sing-box.json";
 
 #[derive(Default)]
@@ -22,6 +23,7 @@ struct SingBoxState {
     process: Option<SingBoxProcess>,
     active: bool,
     pid_file: Option<PathBuf>,
+    stop_file: Option<PathBuf>,
     config_file: Option<PathBuf>,
 }
 
@@ -130,28 +132,43 @@ impl SingBoxTunnel {
         if let Some(path) = state.pid_file.take() {
             let _ = fs::remove_file(path);
         }
+        if let Some(path) = state.stop_file.take() {
+            let _ = fs::remove_file(path);
+        }
+        if let Some(path) = state.config_file.take() {
+            let _ = fs::remove_file(path);
+        }
         Ok(Some(format!("sing-box exited unexpectedly ({exit})")))
     }
 
-    fn reap_orphan(data_dir: &Path) {
-        let pid_file = data_dir
-            .join("system-tunnel")
-            .join("sing-box")
-            .join(PID_FILE);
+    fn reap_orphan(data_dir: &Path) -> Result<(), RuntimeError> {
+        let runtime_dir = data_dir.join("system-tunnel").join("sing-box");
+        let pid_file = runtime_dir.join(PID_FILE);
+        let stop_file = runtime_dir.join(STOP_FILE);
+        let _ = fs::write(&stop_file, b"orphan-recovery");
         let Some(pid) = fs::read_to_string(&pid_file)
             .ok()
             .and_then(|value| value.trim().parse::<u32>().ok())
         else {
             let _ = fs::remove_file(pid_file);
-            return;
+            let _ = fs::remove_file(stop_file);
+            return Ok(());
         };
         if process_name(pid)
             .map(|name| name.to_ascii_lowercase().contains("sing-box"))
             .unwrap_or(false)
         {
             terminate_pid(pid);
+            if !wait_for_process_exit(pid, Duration::from_secs(3)) {
+                return Err(RuntimeError::SystemTunnel(
+                    "a previous sing-box system tunnel is still running; refusing to start another TUN"
+                        .into(),
+                ));
+            }
         }
         let _ = fs::remove_file(pid_file);
+        let _ = fs::remove_file(stop_file);
+        Ok(())
     }
 }
 
@@ -173,8 +190,7 @@ impl SystemTunnelAdapter for SingBoxTunnel {
     }
 
     fn prepare(&self, _app: &AppHandle, data_dir: &Path) -> Result<(), RuntimeError> {
-        Self::reap_orphan(data_dir);
-        Ok(())
+        Self::reap_orphan(data_dir)
     }
 
     fn start(&self, app: &AppHandle, context: &TunnelContext) -> Result<(), RuntimeError> {
@@ -198,12 +214,17 @@ impl SystemTunnelAdapter for SingBoxTunnel {
             format!("validated configuration with {}", binary.display()),
         );
 
-        let (log_tx, log_rx) = mpsc::channel::<process::ProcessLog>();
-        let process = process::spawn(&binary, &config_file, log_tx)?;
-        let pid = process.pid();
         let pid_file = Self::runtime_dir(app).join(PID_FILE);
-        fs::write(&pid_file, pid.to_string())
-            .map_err(|error| RuntimeError::SystemTunnel(error.to_string()))?;
+        let stop_file = Self::runtime_dir(app).join(STOP_FILE);
+        let _ = fs::remove_file(&pid_file);
+        let _ = fs::remove_file(&stop_file);
+        let (log_tx, log_rx) = mpsc::channel::<process::ProcessLog>();
+        let mut process = process::spawn(&binary, &config_file, log_tx, &pid_file, &stop_file)?;
+        let pid = process.pid();
+        if let Err(error) = fs::write(&pid_file, pid.to_string()) {
+            let _ = process.kill();
+            return Err(RuntimeError::SystemTunnel(error.to_string()));
+        }
 
         {
             let mut state = self
@@ -213,6 +234,7 @@ impl SystemTunnelAdapter for SingBoxTunnel {
             state.process = Some(process);
             state.active = false;
             state.pid_file = Some(pid_file);
+            state.stop_file = Some(stop_file);
             state.config_file = Some(config_file);
         }
         Self::emit_log(app, format!("system tunnel process started (pid {pid})"));
@@ -258,29 +280,53 @@ impl SystemTunnelAdapter for SingBoxTunnel {
     }
 
     fn stop(&self, app: &AppHandle) {
-        let (mut process, pid_file, config_file) = match self.state.lock() {
+        let (process, pid_file, stop_file, config_file) = match self.state.lock() {
             Ok(mut state) => {
                 state.active = false;
                 (
                     state.process.take(),
                     state.pid_file.take(),
+                    state.stop_file.take(),
                     state.config_file.take(),
                 )
             }
             Err(_) => return,
         };
-        if let Some(process) = process.as_mut() {
-            process.kill();
+        let Some(mut owned_process) = process else {
+            if let Some(path) = pid_file {
+                let _ = fs::remove_file(path);
+            }
+            if let Some(path) = stop_file {
+                let _ = fs::remove_file(path);
+            }
+            if let Some(path) = config_file {
+                let _ = fs::remove_file(path);
+            }
+            return;
+        };
+        if !owned_process.kill() {
+            if let Ok(mut state) = self.state.lock() {
+                state.process = Some(owned_process);
+                state.pid_file = pid_file;
+                state.stop_file = stop_file;
+                state.config_file = config_file;
+            }
+            Self::emit_log(
+                app,
+                "could not prove system tunnel process stopped; keeping cleanup ownership",
+            );
+            return;
         }
         if let Some(path) = pid_file {
+            let _ = fs::remove_file(path);
+        }
+        if let Some(path) = stop_file {
             let _ = fs::remove_file(path);
         }
         if let Some(path) = config_file {
             let _ = fs::remove_file(path);
         }
-        if process.is_some() {
-            Self::emit_log(app, "system tunnel stopped");
-        }
+        Self::emit_log(app, "system tunnel stopped");
     }
 
     fn is_running(&self) -> bool {
@@ -323,11 +369,20 @@ fn process_name(pid: u32) -> Option<String> {
         command.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
         no_window(&mut command);
         let output = command.output().ok()?;
-        let line = String::from_utf8_lossy(&output.stdout);
-        return line
-            .split(',')
-            .next()
-            .map(|value| value.trim().trim_matches('"').to_string());
+        let expected = pid.to_string();
+        return String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find(|line| {
+                line.split(',')
+                    .nth(1)
+                    .map(|value| value.trim().trim_matches('"'))
+                    == Some(expected.as_str())
+            })
+            .and_then(|line| {
+                line.split(',')
+                    .next()
+                    .map(|value| value.trim().trim_matches('"').to_string())
+            });
     }
     #[cfg(target_os = "linux")]
     {
@@ -361,4 +416,15 @@ fn terminate_pid(pid: u32) {
             .args(["-TERM", &pid.to_string()])
             .status();
     }
+}
+
+fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if process_name(pid).is_none() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    process_name(pid).is_none()
 }

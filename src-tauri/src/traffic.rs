@@ -1,12 +1,12 @@
 use serde::Serialize;
 
-#[derive(Serialize, Clone, Copy, Debug, Default)]
+#[derive(Serialize, Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TrafficStats {
     pub received_bytes: u64,
     pub sent_bytes: u64,
 }
 
-pub fn current(interface_name: &str) -> TrafficStats {
+pub fn current(interface_name: &str) -> Option<TrafficStats> {
     #[cfg(windows)]
     {
         return windows_current(interface_name);
@@ -20,11 +20,11 @@ pub fn current(interface_name: &str) -> TrafficStats {
         return macos_current(interface_name);
     }
     #[allow(unreachable_code)]
-    TrafficStats::default()
+    None
 }
 
 #[cfg(windows)]
-fn windows_current(interface_name: &str) -> TrafficStats {
+fn windows_current(interface_name: &str) -> Option<TrafficStats> {
     use std::ptr::{null_mut, slice_from_raw_parts};
     use windows_sys::Win32::NetworkManagement::IpHelper::{
         FreeMibTable, GetIfTable2, MIB_IF_TABLE2,
@@ -32,7 +32,7 @@ fn windows_current(interface_name: &str) -> TrafficStats {
 
     let mut table: *mut MIB_IF_TABLE2 = null_mut();
     if unsafe { GetIfTable2(&mut table) } != 0 || table.is_null() {
-        return TrafficStats::default();
+        return None;
     }
     let stats = unsafe {
         let table_ref = &*table;
@@ -50,57 +50,53 @@ fn windows_current(interface_name: &str) -> TrafficStats {
                 received_bytes: row.InOctets,
                 sent_bytes: row.OutOctets,
             })
-            .unwrap_or_default()
     };
     unsafe { FreeMibTable(table.cast()) };
     stats
 }
 
 #[cfg(target_os = "linux")]
-fn linux_current(interface_name: &str) -> TrafficStats {
+fn linux_current(interface_name: &str) -> Option<TrafficStats> {
     let Ok(content) = std::fs::read_to_string("/proc/net/dev") else {
-        return TrafficStats::default();
+        return None;
     };
-    content
-        .lines()
-        .find_map(|line| {
-            let (interface, values) = line.split_once(':')?;
-            if interface.trim() != interface_name {
-                return None;
-            }
-            let values = values
-                .split_whitespace()
-                .map(str::parse::<u64>)
-                .collect::<Result<Vec<_>, _>>()
-                .ok()?;
-            Some(TrafficStats {
-                received_bytes: *values.first()?,
-                sent_bytes: *values.get(8)?,
-            })
+    content.lines().find_map(|line| {
+        let (interface, values) = line.split_once(':')?;
+        if interface.trim() != interface_name {
+            return None;
+        }
+        let values = values
+            .split_whitespace()
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        Some(TrafficStats {
+            received_bytes: *values.first()?,
+            sent_bytes: *values.get(8)?,
         })
-        .unwrap_or_default()
+    })
 }
 
 #[cfg(target_os = "macos")]
-fn macos_current(interface_name: &str) -> TrafficStats {
+fn macos_current(interface_name: &str) -> Option<TrafficStats> {
     let output = std::process::Command::new("netstat")
         .args(["-ibn", "-I", interface_name])
         .output();
     let Ok(output) = output else {
-        return TrafficStats::default();
+        return None;
     };
     let text = String::from_utf8_lossy(&output.stdout);
     let mut lines = text.lines();
     let Some(header) = lines.find(|line| line.split_whitespace().any(|field| field == "Ibytes"))
     else {
-        return TrafficStats::default();
+        return None;
     };
     let columns = header.split_whitespace().collect::<Vec<_>>();
     let Some(received_index) = columns.iter().position(|field| *field == "Ibytes") else {
-        return TrafficStats::default();
+        return None;
     };
     let Some(sent_index) = columns.iter().position(|field| *field == "Obytes") else {
-        return TrafficStats::default();
+        return None;
     };
 
     lines
@@ -115,5 +111,4 @@ fn macos_current(interface_name: &str) -> TrafficStats {
             })
         })
         .max_by_key(|stats| stats.received_bytes.saturating_add(stats.sent_bytes))
-        .unwrap_or_default()
 }

@@ -38,7 +38,9 @@ The desktop adapter is isolated under `src-tauri/src/system_tunnel/sing_box/`. I
 - strict dual-stack TUN routing and DNS hijacking;
 - direct process bypass for Aether and sing-box to prevent loops;
 - end-to-end route verification before `Tunneling`;
-- cancellation epochs, PID ownership and orphan cleanup.
+- cancellation epochs, PID ownership and orphan cleanup;
+- on Windows, an elevated controller owns normal stop requests and watches GUI
+  liveness so Wintun is not left behind when the UI exits.
 
 ## Shared connection telemetry
 
@@ -48,7 +50,8 @@ The UI receives one platform-neutral contract for:
 - public tunnel exit IP;
 - country code rendered as a flag;
 - end-to-end latency through Aether;
-- upload/download totals from the active TUN dataplane;
+- upload/download totals from the active TUN dataplane, baseline-relative to
+  the first valid interface sample for each session;
 - authoritative connection duration from `connected_at_ms`.
 
 Telemetry is supplementary and cannot mark an unverified connection as successful.

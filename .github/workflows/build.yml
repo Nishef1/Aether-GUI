@@ -265,7 +265,7 @@ jobs:
           grep -q '^version = "0.7.2"$' src-tauri/Cargo.toml
           grep -q '"version": "0.7.2"' src-tauri/tauri.conf.json
 
-      - name: Preserve current release assets and add verified Android APK
+      - name: Replace release assets with current platform builds
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -278,13 +278,31 @@ jobs:
               *) test -f "release/$asset" || { echo "Existing release asset was not preserved: $asset" >&2; exit 1; } ;;
             esac
           done < <(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-          find release -maxdepth 1 -type f \( -iname '*unsigned*.apk' -o -iname '*debug*.apk' \) -delete
-          rm -f release/SHA256SUMS.txt "release/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
+          find release -maxdepth 1 -type f \( -name 'aether-*' -o -name 'Aether-GUI-v*.apk' -o -name 'SHA256SUMS.txt' \) -delete
+          while IFS= read -r -d '' file; do
+            relative="${file#artifacts/}"
+            artifact="${relative%%/*}"
+            base="$(basename "$file")"
+            case "$artifact" in
+              aether-android-arm64)
+                test "$base" = "Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
+                cp "$file" "release/$base"
+                ;;
+              aether-linux-x86_64|aether-windows-x86_64|aether-macos-arm64|aether-macos-x86_64)
+                cp "$file" "release/${artifact}-${base}"
+                ;;
+              *)
+                echo "Unexpected workflow artifact: $file" >&2
+                exit 1
+                ;;
+            esac
+          done < <(find artifacts -mindepth 2 -type f -print0)
           signed="artifacts/aether-android-arm64/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
           test -f "$signed"
           node scripts/ci/verify-android-release.mjs "$signed"
-          cp "$signed" "release/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
-          apk_count="$(find release -maxdepth 1 -type f -name '*.apk' | wc -l)"
+          desktop_count="$(find release -maxdepth 1 -type f \( -name 'aether-linux-*' -o -name 'aether-windows-*' -o -name 'aether-macos-*' \) | wc -l)"
+          test "$desktop_count" -ge 5
+          apk_count="$(find release -maxdepth 1 -type f -name "Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk" | wc -l)"
           test "$apk_count" -eq 1
           ! find release -maxdepth 1 -type f -iname '*unsigned*' | grep -q .
           (cd release && sha256sum * > SHA256SUMS.txt)

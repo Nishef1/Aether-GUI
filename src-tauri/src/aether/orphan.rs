@@ -35,9 +35,9 @@ pub fn reap_orphan(data_dir: &Path) {
 
 /// Best-effort, bounded process-tree termination shared by disconnect, normal
 /// application shutdown and orphan recovery.
-pub fn terminate_process_tree(pid: u32) {
+pub fn terminate_process_tree(pid: u32) -> bool {
     if pid == 0 {
-        return;
+        return true;
     }
 
     #[cfg(windows)]
@@ -46,7 +46,7 @@ pub fn terminate_process_tree(pid: u32) {
         command.args(taskkill_args(pid));
         no_window(&mut command);
         let _ = command.status();
-        wait_until_dead(pid, Duration::from_secs(2));
+        return wait_until_dead(pid, Duration::from_secs(2));
     }
 
     #[cfg(unix)]
@@ -55,9 +55,13 @@ pub fn terminate_process_tree(pid: u32) {
         let _ = Command::new("kill").args(["-TERM", &pid_string]).status();
         if !wait_until_dead(pid, Duration::from_millis(750)) {
             let _ = Command::new("kill").args(["-KILL", &pid_string]).status();
-            wait_until_dead(pid, Duration::from_millis(750));
+            return wait_until_dead(pid, Duration::from_millis(750));
         }
+        return true;
     }
+
+    #[allow(unreachable_code)]
+    true
 }
 
 fn wait_until_dead(pid: u32, timeout: Duration) -> bool {
