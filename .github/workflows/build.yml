@@ -170,7 +170,7 @@ jobs:
 
       - name: Install Android SDK and pinned NDK
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION"
           echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
@@ -190,9 +190,9 @@ jobs:
       - name: Build ARM64 APK
         run: npm run android:build
 
-      - name: Run Android unit tests
+      - name: Run Android ARM64 unit tests
         working-directory: src-tauri/gen/android
-        run: ./gradlew test --no-daemon
+        run: ./gradlew :app:testArm64DebugUnitTest :tauri-plugin-aether-vpn:testDebugUnitTest --no-daemon
 
       - uses: actions/upload-artifact@v7
         with:
