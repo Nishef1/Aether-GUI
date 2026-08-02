@@ -19,7 +19,18 @@ jobs:
     permissions:
       actions: write
       contents: write
+      statuses: write
     steps:
+      - name: Mark platform build pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=pending \
+            -f context=aether/build \
+            -f description='Building desktop and Android artifacts' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
       - name: Delete obsolete release and tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -205,3 +216,31 @@ jobs:
           name: aether-android-arm64
           if-no-files-found: error
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+
+  report:
+    name: publish build result
+    if: always()
+    needs: [cleanup-obsolete-release, desktop, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish aggregate commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLEANUP_RESULT: ${{ needs.cleanup-obsolete-release.result }}
+          DESKTOP_RESULT: ${{ needs.desktop.result }}
+          ANDROID_RESULT: ${{ needs.android.result }}
+        run: |
+          set -euo pipefail
+          state=success
+          description='All desktop and Android builds completed'
+          if [ "$CLEANUP_RESULT" != success ] || [ "$DESKTOP_RESULT" != success ] || [ "$ANDROID_RESULT" != success ]; then
+            state=failure
+            description="Build failed: cleanup=$CLEANUP_RESULT desktop=$DESKTOP_RESULT android=$ANDROID_RESULT"
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$state" \
+            -f context=aether/build \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
