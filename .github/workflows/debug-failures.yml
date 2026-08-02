@@ -10,9 +10,24 @@ concurrency:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
+  mark:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish diagnostic run link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=pending \
+            -f context=aether/debug \
+            -f description='Capturing Rust and Android test failures' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
   rust-tests:
+    needs: mark
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -38,6 +53,7 @@ jobs:
           if-no-files-found: error
 
   android-tests:
+    needs: mark
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
