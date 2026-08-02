@@ -7,7 +7,7 @@ pub mod status;
 use crate::error::AetherError;
 use crate::events::{now_millis, LogEvent, LOG_EVENT, STATUS_EVENT};
 use crate::state::ConnectionState;
-use profiles::ConnectionProfile;
+use profiles::{ConnectionProfile, ScanMode};
 use pty::PtySession;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -19,11 +19,12 @@ pub struct AetherManager {
     session: Option<PtySession>,
     state: ConnectionState,
     user_requested_stop: bool,
-    /// Consecutive auto-retry attempts for the current connection lineage.
-    /// Reset to 0 on a fresh user-initiated connect, on reaching Connected
-    /// (a proven-working connection earns a full retry budget for whatever
-    /// drops it next), and on a user-requested disconnect.
+    /// Retry count within the current connection lineage. Before the first
+    /// proven connection it is used only for the single Turbo -> Balanced
+    /// fallback. After Connected it counts transient recovery attempts.
     retry_count: u32,
+    /// Distinguishes an initial scan failure from a drop after a proven tunnel.
+    connected_once: bool,
 }
 
 impl AetherManager {
@@ -33,6 +34,7 @@ impl AetherManager {
             state: ConnectionState::Idle,
             user_requested_stop: false,
             retry_count: 0,
+            connected_once: false,
         }
     }
 
@@ -51,7 +53,7 @@ fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
     let dir = app
         .path()
         .resource_dir()
-        .map_err(|e| AetherError::Internal(e.to_string()))?;
+        .map_err(|error| AetherError::Internal(error.to_string()))?;
     let name = if cfg!(windows) {
         "aether.exe"
     } else {
@@ -61,8 +63,6 @@ fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
     if !path.exists() {
         return Err(AetherError::BinaryMissing(path.display().to_string()));
     }
-    // Bundlers don't reliably preserve the exec bit on resource files, and a
-    // non-executable core binary would fail every spawn with a cryptic error.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -80,57 +80,49 @@ fn set_state_and_emit(
     let _ = app.emit(STATUS_EVENT, &new_state);
 }
 
-/// Kicks off a connection attempt and returns as soon as Aether is spawned
-/// (or a synchronous precondition fails: already running / port already
-/// bound / binary missing). The actual Launching -> Connecting -> Connected
-/// transitions happen on a background thread and reach the frontend via the
-/// `aether://status` event, matching the IPC contract in the approved plan.
+fn initial_fallback_profile(
+    profile: &ConnectionProfile,
+    retry_count: u32,
+) -> Option<ConnectionProfile> {
+    if retry_count != 0 || !matches!(profile.scan_mode, ScanMode::Turbo) {
+        return None;
+    }
+    let mut fallback = profile.clone();
+    fallback.scan_mode = ScanMode::Balanced;
+    Some(fallback)
+}
+
 pub fn start_connect(
     app: AppHandle,
     manager: Arc<Mutex<AetherManager>>,
     profile_override: Option<ConnectionProfile>,
 ) -> Result<(), AetherError> {
-    // Resolve everything fallible that doesn't touch AetherManager's state
-    // first, so that once we transition to Launching below, the only
-    // remaining failure mode is pty::spawn itself — which is handled
-    // explicitly inside spawn_and_monitor rather than ever leaving the
-    // state machine stuck in Launching with no process behind it.
     let profile = profile_override.unwrap_or_else(|| profiles::load(&app));
     let binary = resolve_binary(&app)?;
     let data_dir = app_data_dir(&app);
-    std::fs::create_dir_all(&data_dir).map_err(|e| AetherError::Internal(e.to_string()))?;
+    std::fs::create_dir_all(&data_dir).map_err(|error| AetherError::Internal(error.to_string()))?;
 
     {
-        let mut mgr = manager.lock().unwrap();
+        let mut manager = manager.lock().unwrap();
         if !matches!(
-            mgr.state,
+            manager.state,
             ConnectionState::Idle | ConnectionState::Error { .. }
         ) {
             return Err(AetherError::AlreadyRunning);
         }
-        // Defensive guard independent of the pid-file mechanism in orphan.rs
-        // (covers a manually-started Aether or a missing/corrupted pid file),
-        // checked under the same lock as the state check above so a rapid
-        // double-click can't race two connect() calls past this guard before
-        // the first transitions to Launching.
         let socks = status::parse_bind_address(&profile.bind_address);
         if status::port_is_live(&socks) {
             return Err(AetherError::PortInUse(socks.port()));
         }
-        mgr.state = ConnectionState::Launching;
-        // A fresh user-initiated connect always gets a full retry budget,
-        // independent of whatever happened on a previous, unrelated attempt.
-        mgr.retry_count = 0;
+        manager.state = ConnectionState::Launching;
+        manager.retry_count = 0;
+        manager.connected_once = false;
     }
     let _ = app.emit(STATUS_EVENT, &ConnectionState::Launching);
 
     spawn_and_monitor(app, manager, binary, data_dir, profile)
 }
 
-/// Spawns the PTY session and the log-forwarding + monitor threads. Shared
-/// by the initial user-initiated connect and by `handle_unexpected_failure`'s
-/// auto-retry — both start from the same place (a fresh PTY, `Launching`
-/// already set by the caller) and only differ in what led here.
 fn spawn_and_monitor(
     app: AppHandle,
     manager: Arc<Mutex<AetherManager>>,
@@ -139,35 +131,28 @@ fn spawn_and_monitor(
     profile: ConnectionProfile,
 ) -> Result<(), AetherError> {
     let (log_tx, log_rx) = mpsc::channel::<LogEvent>();
-    let session_or_err = pty::spawn(&binary, &data_dir, profile.clone(), log_tx);
-    let session = match session_or_err {
+    let session = match pty::spawn(&binary, &data_dir, profile.clone(), log_tx) {
         Ok(session) => session,
-        Err(e) => {
-            // Must not leave the state machine stuck in Launching with no
-            // process behind it. A spawn failure is an OS/environment-level
-            // problem (not a network drop), so it is not auto-retried —
-            // retrying blindly here would just mask a real setup issue.
+        Err(error) => {
             set_state_and_emit(
                 &app,
                 &manager,
                 ConnectionState::Error {
-                    message: e.to_string(),
+                    message: error.to_string(),
                     phase: "launching".into(),
                 },
             );
-            return Err(e);
+            return Err(error);
         }
     };
     orphan::write_pid(&data_dir, session.pid());
 
     {
-        let mut mgr = manager.lock().unwrap();
-        mgr.session = Some(session);
-        mgr.user_requested_stop = false;
+        let mut manager = manager.lock().unwrap();
+        manager.session = Some(session);
+        manager.user_requested_stop = false;
     }
 
-    // Forward every log line to the frontend's advanced/log panel as it
-    // arrives, independent of whether status classification succeeds.
     {
         let app_for_logs = app.clone();
         std::thread::spawn(move || {
@@ -188,14 +173,17 @@ fn spawn_and_monitor(
     Ok(())
 }
 
-/// Common landing spot for every unexpected failure (process exit before
-/// connecting, scan timeout, or process exit after being connected) that
-/// was NOT a user-requested disconnect. Retries with backoff up to
-/// `status::MAX_AUTO_RETRIES` before giving up with a real `Error` — this
-/// is what turns a mid-session drop (the "stops all of a sudden" case,
-/// worst on gool since it's two nested tunnels, but not exclusive to it)
-/// into a brief, visible "Reconnecting" instead of dumping the user back to
-/// Idle every time.
+enum RetryDecision {
+    Fail(String),
+    Retry {
+        attempt: u32,
+        max_attempts: u32,
+        profile: ConnectionProfile,
+        backoff: Duration,
+        note: Option<String>,
+    },
+}
+
 fn handle_unexpected_failure(
     app: AppHandle,
     manager: Arc<Mutex<AetherManager>>,
@@ -205,57 +193,103 @@ fn handle_unexpected_failure(
     failure_message: String,
     phase: &'static str,
 ) {
-    let attempt = {
-        let mut mgr = manager.lock().unwrap();
-        if mgr.user_requested_stop {
-            // request_disconnect is already handling this exit; don't race
-            // it with a retry or an Error state it didn't ask for.
+    let decision = {
+        let mut manager = manager.lock().unwrap();
+        if manager.user_requested_stop {
             return;
         }
-        mgr.session = None;
-        mgr.retry_count += 1;
-        mgr.retry_count
+        manager.session = None;
+
+        if !manager.connected_once {
+            if let Some(fallback) = initial_fallback_profile(&profile, manager.retry_count) {
+                manager.retry_count = 1;
+                RetryDecision::Retry {
+                    attempt: 1,
+                    max_attempts: 1,
+                    profile: fallback,
+                    backoff: status::INITIAL_TURBO_FALLBACK_BACKOFF,
+                    note: Some(
+                        "[gui] Turbo scan did not connect; retrying once with Balanced scan"
+                            .into(),
+                    ),
+                }
+            } else {
+                let message = if manager.retry_count > 0 {
+                    format!("{failure_message} (Balanced fallback also failed)")
+                } else {
+                    failure_message
+                };
+                RetryDecision::Fail(message)
+            }
+        } else {
+            manager.retry_count += 1;
+            let attempt = manager.retry_count;
+            if attempt > status::MAX_POST_CONNECT_RETRIES {
+                RetryDecision::Fail(format!(
+                    "{failure_message} (gave up after {} recovery retries)",
+                    status::MAX_POST_CONNECT_RETRIES
+                ))
+            } else {
+                RetryDecision::Retry {
+                    attempt,
+                    max_attempts: status::MAX_POST_CONNECT_RETRIES,
+                    profile,
+                    backoff: status::POST_CONNECT_RETRY_BACKOFF[(attempt - 1) as usize],
+                    note: None,
+                }
+            }
+        }
     };
     orphan::clear_pid(&data_dir);
 
-    if attempt > status::MAX_AUTO_RETRIES {
-        set_state_and_emit(
-            &app,
-            &manager,
-            ConnectionState::Error {
-                message: format!(
-                    "{failure_message} (gave up after {} retries)",
-                    status::MAX_AUTO_RETRIES
-                ),
-                phase: phase.into(),
-            },
-        );
-        return;
-    }
-
-    set_state_and_emit(
-        &app,
-        &manager,
-        ConnectionState::Reconnecting {
-            attempt,
-            max_attempts: status::MAX_AUTO_RETRIES,
-        },
-    );
-
-    let backoff = status::RETRY_BACKOFF[(attempt - 1) as usize];
-    std::thread::spawn(move || {
-        std::thread::sleep(backoff);
-        {
-            let mgr = manager.lock().unwrap();
-            if mgr.user_requested_stop {
-                return;
-            }
+    match decision {
+        RetryDecision::Fail(message) => {
+            set_state_and_emit(
+                &app,
+                &manager,
+                ConnectionState::Error {
+                    message,
+                    phase: phase.into(),
+                },
+            );
         }
-        set_state_and_emit(&app, &manager, ConnectionState::Launching);
-        // spawn_and_monitor already lands its own failure in Error/retry —
-        // nothing further to do with its Result here.
-        let _ = spawn_and_monitor(app, manager, binary, data_dir, profile);
-    });
+        RetryDecision::Retry {
+            attempt,
+            max_attempts,
+            profile,
+            backoff,
+            note,
+        } => {
+            if let Some(line) = note {
+                let _ = app.emit(
+                    LOG_EVENT,
+                    &LogEvent {
+                        line,
+                        timestamp: now_millis(),
+                    },
+                );
+            }
+            set_state_and_emit(
+                &app,
+                &manager,
+                ConnectionState::Reconnecting {
+                    attempt,
+                    max_attempts,
+                },
+            );
+            std::thread::spawn(move || {
+                std::thread::sleep(backoff);
+                {
+                    let manager = manager.lock().unwrap();
+                    if manager.user_requested_stop {
+                        return;
+                    }
+                }
+                set_state_and_emit(&app, &manager, ConnectionState::Launching);
+                let _ = spawn_and_monitor(app, manager, binary, data_dir, profile);
+            });
+        }
+    }
 }
 
 fn monitor_connect(
@@ -271,14 +305,14 @@ fn monitor_connect(
 
     loop {
         std::thread::sleep(Duration::from_millis(400));
-        let mut mgr = manager.lock().unwrap();
-        if mgr.user_requested_stop {
+        let mut manager_guard = manager.lock().unwrap();
+        if manager_guard.user_requested_stop {
             return;
         }
 
-        if let Some(exit) = mgr.session.as_mut().and_then(|s| s.try_wait()) {
-            mgr.session = None;
-            drop(mgr);
+        if let Some(exit) = manager_guard.session.as_mut().and_then(|session| session.try_wait()) {
+            manager_guard.session = None;
+            drop(manager_guard);
             handle_unexpected_failure(
                 app,
                 manager,
@@ -292,15 +326,15 @@ fn monitor_connect(
         }
 
         if !announced_connecting {
-            let done = mgr
+            let prompts_done = manager_guard
                 .session
                 .as_ref()
-                .map(|s| s.prompts_done())
+                .map(|session| session.prompts_done())
                 .unwrap_or(false);
-            if done {
-                mgr.state = ConnectionState::Connecting;
-                let new_state = mgr.state.clone();
-                drop(mgr);
+            if prompts_done {
+                manager_guard.state = ConnectionState::Connecting;
+                let new_state = manager_guard.state.clone();
+                drop(manager_guard);
                 let _ = app.emit(STATUS_EVENT, &new_state);
                 announced_connecting = true;
                 continue;
@@ -312,25 +346,22 @@ fn monitor_connect(
                 socks_addr: profile.bind_address.clone(),
                 connected_at_ms: now_millis(),
             };
-            mgr.state = new_state.clone();
-            // Proven working — a future drop earns a fresh full retry budget
-            // rather than inheriting whatever it took to get here.
-            mgr.retry_count = 0;
-            drop(mgr);
+            manager_guard.state = new_state.clone();
+            manager_guard.retry_count = 0;
+            manager_guard.connected_once = true;
+            drop(manager_guard);
             let _ = app.emit(STATUS_EVENT, &new_state);
-            // Only persisted as "last successful" once actually proven to
-            // work, never on a mere attempt (see profiles::save's doc-comment).
             profiles::save(&app, &profile);
             monitor_connected(app, manager, binary, data_dir, profile);
             return;
         }
 
         if Instant::now() >= deadline {
-            if let Some(session) = mgr.session.as_mut() {
+            if let Some(session) = manager_guard.session.as_mut() {
                 session.kill();
             }
-            mgr.session = None;
-            drop(mgr);
+            manager_guard.session = None;
+            drop(manager_guard);
             handle_unexpected_failure(
                 app,
                 manager,
@@ -345,8 +376,6 @@ fn monitor_connect(
     }
 }
 
-/// Watches an established connection purely for an unexpected process exit —
-/// there is no polling needed beyond that once `Connected` is reached.
 fn monitor_connected(
     app: AppHandle,
     manager: Arc<Mutex<AetherManager>>,
@@ -356,13 +385,13 @@ fn monitor_connected(
 ) {
     loop {
         std::thread::sleep(Duration::from_millis(500));
-        let mut mgr = manager.lock().unwrap();
-        if mgr.user_requested_stop {
+        let mut manager_guard = manager.lock().unwrap();
+        if manager_guard.user_requested_stop {
             return;
         }
-        if let Some(exit) = mgr.session.as_mut().and_then(|s| s.try_wait()) {
-            mgr.session = None;
-            drop(mgr);
+        if let Some(exit) = manager_guard.session.as_mut().and_then(|session| session.try_wait()) {
+            manager_guard.session = None;
+            drop(manager_guard);
             handle_unexpected_failure(
                 app,
                 manager,
@@ -382,26 +411,21 @@ pub fn request_disconnect(
     manager: &Arc<Mutex<AetherManager>>,
 ) -> Result<(), AetherError> {
     let had_session = {
-        let mut mgr = manager.lock().unwrap();
-        // Reconnecting has no live session (the old one already exited; the
-        // retry's replacement hasn't spawned yet) — still a valid thing to
-        // cancel, it just means there's nothing to send Ctrl-C to.
-        let reconnecting = matches!(mgr.state, ConnectionState::Reconnecting { .. });
-        if mgr.session.is_none() && !reconnecting {
+        let mut manager = manager.lock().unwrap();
+        let reconnecting = matches!(manager.state, ConnectionState::Reconnecting { .. });
+        if manager.session.is_none() && !reconnecting {
             return Err(AetherError::NotConnected);
         }
-        mgr.user_requested_stop = true;
-        mgr.retry_count = 0;
-        if let Some(session) = mgr.session.as_ref() {
+        manager.user_requested_stop = true;
+        manager.retry_count = 0;
+        manager.connected_once = false;
+        if let Some(session) = manager.session.as_ref() {
             session.send_ctrl_c();
         }
-        mgr.session.is_some()
+        manager.session.is_some()
     };
 
     if !had_session {
-        // Mid-backoff: the retry thread checks user_requested_stop (just set
-        // above) before respawning, so setting the flag is enough — there is
-        // no process to wait on, so reflect Idle immediately.
         set_state_and_emit(app, manager, ConnectionState::Idle);
         return Ok(());
     }
@@ -414,17 +438,21 @@ pub fn request_disconnect(
         let deadline = Instant::now() + status::GRACEFUL_SHUTDOWN_GRACE;
         loop {
             std::thread::sleep(Duration::from_millis(200));
-            let mut mgr = manager.lock().unwrap();
-            let exited = mgr.session.as_mut().and_then(|s| s.try_wait()).is_some();
+            let mut manager_guard = manager.lock().unwrap();
+            let exited = manager_guard
+                .session
+                .as_mut()
+                .and_then(|session| session.try_wait())
+                .is_some();
             if exited || Instant::now() >= deadline {
                 if !exited {
-                    if let Some(session) = mgr.session.as_mut() {
+                    if let Some(session) = manager_guard.session.as_mut() {
                         session.kill();
                     }
                 }
-                mgr.session = None;
-                mgr.user_requested_stop = false;
-                drop(mgr);
+                manager_guard.session = None;
+                manager_guard.user_requested_stop = false;
+                drop(manager_guard);
                 orphan::clear_pid(&app_data_dir(&app));
                 set_state_and_emit(&app, &manager, ConnectionState::Idle);
                 return;
@@ -435,10 +463,6 @@ pub fn request_disconnect(
     Ok(())
 }
 
-/// Supplies the Cloudflare Access one-time code requested by Aether 1.5.0
-/// during a Zero Trust email enrolment. It is deliberately a narrow command
-/// instead of a generic PTY write endpoint, so the webview can never inject
-/// arbitrary terminal input into the bundled core.
 pub fn submit_access_code(
     manager: &Arc<Mutex<AetherManager>>,
     code: String,
@@ -450,17 +474,34 @@ pub fn submit_access_code(
     session.send_access_code(&code)
 }
 
-/// Called from `RunEvent::Exit` — the app is quitting regardless, so this
-/// blocks briefly rather than spawning a thread, and skips emitting events
-/// nobody is left to receive.
 pub fn shutdown_blocking(manager: &Arc<Mutex<AetherManager>>, data_dir: &Path) {
-    let mut mgr = manager.lock().unwrap();
-    if let Some(session) = mgr.session.as_mut() {
+    let mut manager = manager.lock().unwrap();
+    if let Some(session) = manager.session.as_mut() {
         session.send_ctrl_c();
         std::thread::sleep(Duration::from_millis(500));
         session.kill();
     }
-    mgr.session = None;
-    drop(mgr);
+    manager.session = None;
+    drop(manager);
     orphan::clear_pid(data_dir);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turbo_has_exactly_one_balanced_initial_fallback() {
+        let mut profile = ConnectionProfile::default();
+        profile.scan_mode = ScanMode::Turbo;
+        let fallback = initial_fallback_profile(&profile, 0).expect("missing fallback");
+        assert_eq!(fallback.scan_mode, ScanMode::Balanced);
+        assert!(initial_fallback_profile(&profile, 1).is_none());
+    }
+
+    #[test]
+    fn non_turbo_initial_scans_do_not_loop() {
+        let profile = ConnectionProfile::default();
+        assert!(initial_fallback_profile(&profile, 0).is_none());
+    }
 }
