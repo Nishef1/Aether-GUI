@@ -17,6 +17,7 @@ jobs:
     name: remove obsolete v0.7.2 release
     runs-on: ubuntu-24.04
     permissions:
+      actions: write
       contents: write
     steps:
       - name: Delete obsolete release and tag
@@ -31,6 +32,20 @@ jobs:
               gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
             fi
           done
+
+      - name: Delete obsolete build artifacts and workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq '.artifacts[].id' | while read -r artifact_id; do
+              [ -n "$artifact_id" ] && gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
+            done
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
+            --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id" | while read -r run_id; do
+              [ -n "$run_id" ] && gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/runs/$run_id"
+            done
 
   desktop:
     needs: cleanup-obsolete-release
