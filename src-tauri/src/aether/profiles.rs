@@ -310,7 +310,10 @@ mod tests {
     fn defaults_disable_quick_reconnect() {
         let profile = ConnectionProfile::default();
         assert!(!profile.quick_reconnect);
-        assert!(profile.as_args().iter().any(|arg| arg == "--no-quick-reconnect"));
+        assert!(profile
+            .as_args()
+            .iter()
+            .any(|arg| arg == "--no-quick-reconnect"));
     }
 
     #[test]

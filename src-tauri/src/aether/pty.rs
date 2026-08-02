@@ -363,9 +363,7 @@ mod tests {
     #[test]
     fn strips_windows_terminal_title_osc() {
         assert_eq!(
-            strip_terminal_sequences(
-                "\u{1b}]0;C:\\Users\\PC\\aether.exe\u{7}[time] INFO aether"
-            ),
+            strip_terminal_sequences("\u{1b}]0;C:\\Users\\PC\\aether.exe\u{7}[time] INFO aether"),
             "[time] INFO aether"
         );
     }

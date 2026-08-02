@@ -209,8 +209,7 @@ fn handle_unexpected_failure(
                     profile: fallback,
                     backoff: status::INITIAL_TURBO_FALLBACK_BACKOFF,
                     note: Some(
-                        "[gui] Turbo scan did not connect; retrying once with Balanced scan"
-                            .into(),
+                        "[gui] Turbo scan did not connect; retrying once with Balanced scan".into(),
                     ),
                 }
             } else {
@@ -310,7 +309,11 @@ fn monitor_connect(
             return;
         }
 
-        if let Some(exit) = manager_guard.session.as_mut().and_then(|session| session.try_wait()) {
+        if let Some(exit) = manager_guard
+            .session
+            .as_mut()
+            .and_then(|session| session.try_wait())
+        {
             manager_guard.session = None;
             drop(manager_guard);
             handle_unexpected_failure(
@@ -389,7 +392,11 @@ fn monitor_connected(
         if manager_guard.user_requested_stop {
             return;
         }
-        if let Some(exit) = manager_guard.session.as_mut().and_then(|session| session.try_wait()) {
+        if let Some(exit) = manager_guard
+            .session
+            .as_mut()
+            .and_then(|session| session.try_wait())
+        {
             manager_guard.session = None;
             drop(manager_guard);
             handle_unexpected_failure(
