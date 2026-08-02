@@ -19,6 +19,9 @@ pub struct AetherManager {
     session: Option<PtySession>,
     state: ConnectionState,
     user_requested_stop: bool,
+    /// Invalidates every monitor, retry and delayed launch from an older
+    /// connection lineage when Disconnect or a new Connect is requested.
+    generation: u64,
     /// Retry count within the current connection lineage. Before the first
     /// proven connection it is used only for the single Turbo -> Balanced
     /// fallback. After Connected it counts transient recovery attempts.
@@ -33,6 +36,7 @@ impl AetherManager {
             session: None,
             state: ConnectionState::Idle,
             user_requested_stop: false,
+            generation: 0,
             retry_count: 0,
             connected_once: false,
         }
@@ -71,13 +75,25 @@ fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
     Ok(path)
 }
 
-fn set_state_and_emit(
+fn is_current(manager: &AetherManager, generation: u64) -> bool {
+    manager.generation == generation && !manager.user_requested_stop
+}
+
+fn set_state_and_emit_if_current(
     app: &AppHandle,
     manager: &Arc<Mutex<AetherManager>>,
+    generation: u64,
     new_state: ConnectionState,
-) {
-    manager.lock().unwrap().state = new_state.clone();
+) -> bool {
+    {
+        let mut manager = manager.lock().unwrap();
+        if !is_current(&manager, generation) {
+            return false;
+        }
+        manager.state = new_state.clone();
+    }
     let _ = app.emit(STATUS_EVENT, &new_state);
+    true
 }
 
 fn initial_fallback_profile(
@@ -102,7 +118,7 @@ pub fn start_connect(
     let data_dir = app_data_dir(&app);
     std::fs::create_dir_all(&data_dir).map_err(|error| AetherError::Internal(error.to_string()))?;
 
-    {
+    let generation = {
         let mut manager = manager.lock().unwrap();
         if !matches!(
             manager.state,
@@ -114,13 +130,16 @@ pub fn start_connect(
         if status::port_is_live(&socks) {
             return Err(AetherError::PortInUse(socks.port()));
         }
+        manager.generation = manager.generation.wrapping_add(1);
+        manager.user_requested_stop = false;
         manager.state = ConnectionState::Launching;
         manager.retry_count = 0;
         manager.connected_once = false;
-    }
+        manager.generation
+    };
     let _ = app.emit(STATUS_EVENT, &ConnectionState::Launching);
 
-    spawn_and_monitor(app, manager, binary, data_dir, profile)
+    spawn_and_monitor(app, manager, binary, data_dir, profile, generation)
 }
 
 fn spawn_and_monitor(
@@ -129,14 +148,23 @@ fn spawn_and_monitor(
     binary: PathBuf,
     data_dir: PathBuf,
     profile: ConnectionProfile,
+    generation: u64,
 ) -> Result<(), AetherError> {
+    {
+        let manager = manager.lock().unwrap();
+        if !is_current(&manager, generation) {
+            return Ok(());
+        }
+    }
+
     let (log_tx, log_rx) = mpsc::channel::<LogEvent>();
-    let session = match pty::spawn(&binary, &data_dir, profile.clone(), log_tx) {
+    let mut session = match pty::spawn(&binary, &data_dir, profile.clone(), log_tx) {
         Ok(session) => session,
         Err(error) => {
-            set_state_and_emit(
+            set_state_and_emit_if_current(
                 &app,
                 &manager,
+                generation,
                 ConnectionState::Error {
                     message: error.to_string(),
                     phase: "launching".into(),
@@ -145,12 +173,16 @@ fn spawn_and_monitor(
             return Err(error);
         }
     };
-    orphan::write_pid(&data_dir, session.pid());
 
     {
         let mut manager = manager.lock().unwrap();
+        if !is_current(&manager, generation) {
+            drop(manager);
+            session.kill();
+            return Ok(());
+        }
+        orphan::write_pid(&data_dir, session.pid());
         manager.session = Some(session);
-        manager.user_requested_stop = false;
     }
 
     {
@@ -167,7 +199,9 @@ fn spawn_and_monitor(
         let manager = Arc::clone(&manager);
         let binary = binary.clone();
         let data_dir = data_dir.clone();
-        std::thread::spawn(move || monitor_connect(app, manager, binary, data_dir, profile));
+        std::thread::spawn(move || {
+            monitor_connect(app, manager, binary, data_dir, profile, generation)
+        });
     }
 
     Ok(())
@@ -192,10 +226,11 @@ fn handle_unexpected_failure(
     profile: ConnectionProfile,
     failure_message: String,
     phase: &'static str,
+    generation: u64,
 ) {
     let decision = {
         let mut manager = manager.lock().unwrap();
-        if manager.user_requested_stop {
+        if !is_current(&manager, generation) {
             return;
         }
         manager.session = None;
@@ -243,9 +278,10 @@ fn handle_unexpected_failure(
 
     match decision {
         RetryDecision::Fail(message) => {
-            set_state_and_emit(
+            set_state_and_emit_if_current(
                 &app,
                 &manager,
+                generation,
                 ConnectionState::Error {
                     message,
                     phase: phase.into(),
@@ -268,24 +304,41 @@ fn handle_unexpected_failure(
                     },
                 );
             }
-            set_state_and_emit(
+            if !set_state_and_emit_if_current(
                 &app,
                 &manager,
+                generation,
                 ConnectionState::Reconnecting {
                     attempt,
                     max_attempts,
                 },
-            );
+            ) {
+                return;
+            }
             std::thread::spawn(move || {
                 std::thread::sleep(backoff);
                 {
                     let manager = manager.lock().unwrap();
-                    if manager.user_requested_stop {
+                    if !is_current(&manager, generation) {
                         return;
                     }
                 }
-                set_state_and_emit(&app, &manager, ConnectionState::Launching);
-                let _ = spawn_and_monitor(app, manager, binary, data_dir, profile);
+                if !set_state_and_emit_if_current(
+                    &app,
+                    &manager,
+                    generation,
+                    ConnectionState::Launching,
+                ) {
+                    return;
+                }
+                let _ = spawn_and_monitor(
+                    app,
+                    manager,
+                    binary,
+                    data_dir,
+                    profile,
+                    generation,
+                );
             });
         }
     }
@@ -297,6 +350,7 @@ fn monitor_connect(
     binary: PathBuf,
     data_dir: PathBuf,
     profile: ConnectionProfile,
+    generation: u64,
 ) {
     let deadline = Instant::now() + status::connect_timeout(&profile.scan_mode);
     let socks = status::parse_bind_address(&profile.bind_address);
@@ -305,7 +359,7 @@ fn monitor_connect(
     loop {
         std::thread::sleep(Duration::from_millis(400));
         let mut manager_guard = manager.lock().unwrap();
-        if manager_guard.user_requested_stop {
+        if !is_current(&manager_guard, generation) {
             return;
         }
 
@@ -324,6 +378,7 @@ fn monitor_connect(
                 profile,
                 format!("Aether exited before connecting ({exit})"),
                 "connecting",
+                generation,
             );
             return;
         }
@@ -355,7 +410,14 @@ fn monitor_connect(
             drop(manager_guard);
             let _ = app.emit(STATUS_EVENT, &new_state);
             profiles::save(&app, &profile);
-            monitor_connected(app, manager, binary, data_dir, profile);
+            monitor_connected(
+                app,
+                manager,
+                binary,
+                data_dir,
+                profile,
+                generation,
+            );
             return;
         }
 
@@ -373,6 +435,7 @@ fn monitor_connect(
                 profile,
                 "Timed out waiting for Aether to find a working route".into(),
                 "connecting",
+                generation,
             );
             return;
         }
@@ -385,11 +448,12 @@ fn monitor_connected(
     binary: PathBuf,
     data_dir: PathBuf,
     profile: ConnectionProfile,
+    generation: u64,
 ) {
     loop {
         std::thread::sleep(Duration::from_millis(500));
         let mut manager_guard = manager.lock().unwrap();
-        if manager_guard.user_requested_stop {
+        if !is_current(&manager_guard, generation) {
             return;
         }
         if let Some(exit) = manager_guard
@@ -407,6 +471,7 @@ fn monitor_connected(
                 profile,
                 format!("Lost connection unexpectedly ({exit})"),
                 "connected",
+                generation,
             );
             return;
         }
@@ -431,6 +496,7 @@ pub fn request_disconnect(
 ) -> Result<(), AetherError> {
     let mut session = {
         let mut manager = manager.lock().unwrap();
+        manager.generation = manager.generation.wrapping_add(1);
         manager.user_requested_stop = true;
         manager.retry_count = 0;
         manager.connected_once = false;
@@ -439,12 +505,10 @@ pub fn request_disconnect(
     };
 
     if session.is_none() {
-        orphan::clear_pid(&app_data_dir(app));
-        {
-            let mut manager = manager.lock().unwrap();
-            manager.user_requested_stop = false;
-            manager.state = ConnectionState::Idle;
-        }
+        let data_dir = app_data_dir(app);
+        orphan::reap_orphan(&data_dir);
+        orphan::clear_pid(&data_dir);
+        manager.lock().unwrap().state = ConnectionState::Idle;
         let _ = app.emit(STATUS_EVENT, &ConnectionState::Idle);
         return Ok(());
     }
@@ -459,12 +523,7 @@ pub fn request_disconnect(
         let data_dir = app_data_dir(&app);
         orphan::reap_orphan(&data_dir);
         orphan::clear_pid(&data_dir);
-        {
-            let mut manager = manager.lock().unwrap();
-            manager.session = None;
-            manager.user_requested_stop = false;
-            manager.state = ConnectionState::Idle;
-        }
+        manager.lock().unwrap().state = ConnectionState::Idle;
         let _ = app.emit(STATUS_EVENT, &ConnectionState::Idle);
     });
 
@@ -485,6 +544,7 @@ pub fn submit_access_code(
 pub fn shutdown_blocking(manager: &Arc<Mutex<AetherManager>>, data_dir: &Path) {
     let mut session = {
         let mut manager = manager.lock().unwrap();
+        manager.generation = manager.generation.wrapping_add(1);
         manager.user_requested_stop = true;
         manager.retry_count = 0;
         manager.connected_once = false;
@@ -500,7 +560,6 @@ pub fn shutdown_blocking(manager: &Arc<Mutex<AetherManager>>, data_dir: &Path) {
 
     let mut manager = manager.lock().unwrap();
     manager.session = None;
-    manager.user_requested_stop = false;
     manager.state = ConnectionState::Idle;
 }
 
@@ -521,5 +580,16 @@ mod tests {
     fn non_turbo_initial_scans_do_not_loop() {
         let profile = ConnectionProfile::default();
         assert!(initial_fallback_profile(&profile, 0).is_none());
+    }
+
+    #[test]
+    fn generation_invalidates_stale_workers() {
+        let mut manager = AetherManager::new();
+        manager.generation = 7;
+        assert!(is_current(&manager, 7));
+        manager.generation = 8;
+        assert!(!is_current(&manager, 7));
+        manager.user_requested_stop = true;
+        assert!(!is_current(&manager, 8));
     }
 }
