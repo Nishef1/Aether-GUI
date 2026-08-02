@@ -9,6 +9,10 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  RELEASE_VERSION: 0.7.2
+  RELEASE_TAG: v0.7.2
+
 permissions:
   contents: read
 
@@ -200,10 +204,92 @@ jobs:
           if-no-files-found: error
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
 
+  release:
+    name: publish v0.7.2 release
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release v0.7.2]')
+    needs: [desktop, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Verify release version
+        run: |
+          node -e 'const p=require("./package.json"); if (p.version !== process.env.RELEASE_VERSION) { throw new Error(`package.json is ${p.version}, expected ${process.env.RELEASE_VERSION}`) }'
+          grep -q '^version = "0.7.2"$' src-tauri/Cargo.toml
+          grep -q '"version": "0.7.2"' src-tauri/tauri.conf.json
+
+      - name: Normalize release assets and checksums
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          while IFS= read -r -d '' file; do
+            relative="${file#artifacts/}"
+            artifact="${relative%%/*}"
+            cp "$file" "release/${artifact}-$(basename "$file")"
+          done < <(find artifacts -type f -print0)
+          asset_count="$(find release -maxdepth 1 -type f | wc -l)"
+          if [ "$asset_count" -lt 5 ]; then
+            echo "Expected release assets for five platform targets; found $asset_count" >&2
+            exit 1
+          fi
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          find release -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Write release notes
+        run: |
+          cat > RELEASE_NOTES.md <<'EOF'
+          ## Aether-GUI v0.7.2
+
+          Cross-platform release built from the same validated `main` commit.
+
+          ### Included platforms
+          - Windows x86_64
+          - Linux x86_64
+          - macOS Apple Silicon (ARM64)
+          - macOS Intel (x86_64)
+          - Android ARM64 (`arm64-v8a`)
+
+          ### Highlights
+          - Updated to Aether core v1.5.0.
+          - Bounded initial connection scans and one-time Turbo-to-Balanced fallback.
+          - Stronger disconnect, shutdown, stale-retry, and process-tree cleanup.
+          - Restored live-log controls with copy, clear, enable/disable, and line limits.
+          - Removed ANSI and terminal-title control sequences from diagnostics.
+          - Added practical DNS, Iran-direct, LAN-direct, and advertisement-blocking routing presets.
+          - Fixed Android native-library packaging, VPN lifecycle behavior, and launcher icon parity.
+
+          `SHA256SUMS.txt` is included for integrity verification.
+          EOF
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for tag in "$RELEASE_TAG" "${RELEASE_TAG#v}"; do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
+            fi
+          done
+          gh release create "$RELEASE_TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Aether-GUI v$RELEASE_VERSION" \
+            --notes-file RELEASE_NOTES.md \
+            --latest
+
   report:
     name: publish build result
     if: always()
-    needs: [mark, desktop, android]
+    needs: [mark, desktop, android, release]
     runs-on: ubuntu-24.04
     permissions:
       statuses: write
@@ -214,13 +300,17 @@ jobs:
           MARK_RESULT: ${{ needs.mark.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
           ANDROID_RESULT: ${{ needs.android.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
         run: |
           set -euo pipefail
           state=success
           description='All desktop and Android builds completed'
-          if [ "$MARK_RESULT" != success ] || [ "$DESKTOP_RESULT" != success ] || [ "$ANDROID_RESULT" != success ]; then
+          if [ "$RELEASE_RESULT" = success ]; then
+            description='All builds completed and v0.7.2 was published'
+          fi
+          if [ "$MARK_RESULT" != success ] || [ "$DESKTOP_RESULT" != success ] || [ "$ANDROID_RESULT" != success ] || { [ "$RELEASE_RESULT" != success ] && [ "$RELEASE_RESULT" != skipped ]; }; then
             state=failure
-            description="Build failed: mark=$MARK_RESULT desktop=$DESKTOP_RESULT android=$ANDROID_RESULT"
+            description="Build failed: mark=$MARK_RESULT desktop=$DESKTOP_RESULT android=$ANDROID_RESULT release=$RELEASE_RESULT"
           fi
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state="$state" \
