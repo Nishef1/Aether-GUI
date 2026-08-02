@@ -1,0 +1,35 @@
+name: cargo-lock-once
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: cargo-lock-once
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+      - name: Commit lockfile
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- src-tauri/Cargo.lock; then
+            echo "Cargo.lock is current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/Cargo.lock
+          git commit -m "chore: refresh Cargo lockfile"
+          git push origin HEAD:main
