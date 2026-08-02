@@ -1,3 +1,4 @@
+use super::orphan;
 use super::profiles::{ConnectionProfile, ZeroTrustAuth};
 use super::prompts::{looks_like_choice_prompt, PROMPT_TABLE};
 use crate::error::AetherError;
@@ -58,7 +59,9 @@ impl PtySession {
     }
 
     pub fn kill(&mut self) {
+        orphan::terminate_process_tree(self.pid());
         let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
