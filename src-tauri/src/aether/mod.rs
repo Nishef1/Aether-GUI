@@ -331,14 +331,7 @@ fn handle_unexpected_failure(
                 ) {
                     return;
                 }
-                let _ = spawn_and_monitor(
-                    app,
-                    manager,
-                    binary,
-                    data_dir,
-                    profile,
-                    generation,
-                );
+                let _ = spawn_and_monitor(app, manager, binary, data_dir, profile, generation);
             });
         }
     }
@@ -410,14 +403,7 @@ fn monitor_connect(
             drop(manager_guard);
             let _ = app.emit(STATUS_EVENT, &new_state);
             profiles::save(&app, &profile);
-            monitor_connected(
-                app,
-                manager,
-                binary,
-                data_dir,
-                profile,
-                generation,
-            );
+            monitor_connected(app, manager, binary, data_dir, profile, generation);
             return;
         }
 
