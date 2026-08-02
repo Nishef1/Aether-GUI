@@ -4,6 +4,7 @@ dist-ssr/
 *.local
 src-tauri/target/
 src-tauri/gen/
+src-tauri/icons/icon.png
 src-tauri/binaries/aether
 src-tauri/binaries/aether.exe
 src-tauri/binaries/sing-box
