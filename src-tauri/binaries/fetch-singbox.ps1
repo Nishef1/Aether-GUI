@@ -60,6 +60,105 @@ function Sha256([string]$Path) {
     }
 }
 
+function Test-TrustedAuthenticode([string]$Path, [string]$ExpectedSignerPattern) {
+    if (-not ("AetherWinTrustVerifier" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class AetherWinTrustVerifier
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private sealed class WinTrustFileInfo : IDisposable
+    {
+        public uint cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo));
+        public IntPtr pcwszFilePath;
+        public IntPtr hFile = IntPtr.Zero;
+        public IntPtr pgKnownSubject = IntPtr.Zero;
+
+        public WinTrustFileInfo(string filePath)
+        {
+            pcwszFilePath = Marshal.StringToCoTaskMemUni(filePath);
+        }
+
+        public void Dispose()
+        {
+            if (pcwszFilePath != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(pcwszFilePath);
+                pcwszFilePath = IntPtr.Zero;
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private sealed class WinTrustData : IDisposable
+    {
+        public uint cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustData));
+        public IntPtr pPolicyCallbackData = IntPtr.Zero;
+        public IntPtr pSIPClientData = IntPtr.Zero;
+        public uint dwUIChoice = 2;
+        public uint fdwRevocationChecks = 0;
+        public uint dwUnionChoice = 1;
+        public IntPtr pFile;
+        public uint dwStateAction = 0;
+        public IntPtr hWVTStateData = IntPtr.Zero;
+        public IntPtr pwszURLReference = IntPtr.Zero;
+        public uint dwProvFlags = 0x00001000;
+        public uint dwUIContext = 0;
+
+        public WinTrustData(WinTrustFileInfo fileInfo)
+        {
+            pFile = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(WinTrustFileInfo)));
+            Marshal.StructureToPtr(fileInfo, pFile, false);
+        }
+
+        public void Dispose()
+        {
+            if (pFile != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(pFile);
+                pFile = IntPtr.Zero;
+            }
+        }
+    }
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = false, CharSet = CharSet.Unicode)]
+    private static extern uint WinVerifyTrust(
+        IntPtr hwnd,
+        [MarshalAs(UnmanagedType.LPStruct)] Guid actionId,
+        WinTrustData trustData);
+
+    public static int Verify(string filePath)
+    {
+        Guid action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+        using (var fileInfo = new WinTrustFileInfo(filePath))
+        using (var trustData = new WinTrustData(fileInfo))
+        {
+            return unchecked((int)WinVerifyTrust(new IntPtr(-1), action, trustData));
+        }
+    }
+}
+"@
+    }
+
+    $Result = [AetherWinTrustVerifier]::Verify($Path)
+    if ($Result -ne 0) {
+        $UnsignedResult = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$Result), 0)
+        throw ("WinVerifyTrust rejected {0} with status 0x{1:X8}" -f $Path, $UnsignedResult)
+    }
+
+    $RawCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate]::CreateFromSignedFile($Path)
+    $Certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($RawCertificate)
+    try {
+        if ($Certificate.Subject -notmatch $ExpectedSignerPattern) {
+            throw "Authenticode signer '$($Certificate.Subject)' does not match '$ExpectedSignerPattern'"
+        }
+    } finally {
+        $Certificate.Dispose()
+    }
+}
+
 $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$Version" -Headers $Headers -TimeoutSec 45
 if ([string]$Release.tag_name -ne $Version) { throw "Unexpected sing-box release tag" }
 $NumericVersion = $Version.TrimStart("v")
@@ -97,11 +196,7 @@ try {
     if (-not $DownloadedWintun) { throw "amd64 wintun.dll missing" }
     if (-not $WintunLicense) { throw "Wintun prebuilt-binaries license missing" }
 
-    Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
-    $Signature = Get-AuthenticodeSignature -FilePath $DownloadedWintun.FullName
-    if ($Signature.Status -ne "Valid" -or $Signature.SignerCertificate.Subject -notmatch "WireGuard") {
-        throw "Wintun Authenticode signature is not valid"
-    }
+    Test-TrustedAuthenticode $DownloadedWintun.FullName "WireGuard"
 
     Copy-Item $Downloaded.FullName "$Target.new" -Force
     Copy-Item $SingBoxLicense.FullName "$SingBoxLicenseTarget.new" -Force
