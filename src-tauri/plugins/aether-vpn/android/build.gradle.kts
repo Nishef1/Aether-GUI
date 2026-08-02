@@ -20,7 +20,14 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            keepDebugSymbols += setOf("**/libaether_exec.so")
+            // All three artifacts are release binaries prepared by the pinned
+            // native build. Re-stripping them is unnecessary and can fail for
+            // the executable-shaped core and the HEV/JNI shared libraries.
+            keepDebugSymbols += setOf(
+                "**/libaether_exec.so",
+                "**/libaethertun.so",
+                "**/libhev-socks5-tunnel.so",
+            )
         }
     }
 
