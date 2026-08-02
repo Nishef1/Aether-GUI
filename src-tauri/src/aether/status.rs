@@ -23,45 +23,33 @@ pub fn port_is_live(addr: &SocketAddr) -> bool {
     TcpStream::connect_timeout(&probe_addr(addr), Duration::from_millis(300)).is_ok()
 }
 
-/// The GUI's connect timeout must exceed Aether's own per-mode scan deadline
-/// (`overall_deadline` in upstream v1.3.0 prober.rs / wg_prober.rs — MASQUE:
-/// 45/120/300/180/180s, WireGuard: 30/80/250/150/180s) or it would kill
-/// Aether while it's still legitimately scanning. Each value below is the
-/// larger of the two probers' deadlines plus margin for tunnel establishment
-/// and data-plane validation. Noize profiles don't factor in: their delays
-/// are per-handshake milliseconds, and the scan deadline is a fixed
-/// wall-clock cap upstream regardless of profile.
-/// ponytail: WG retries up to 4 noize profiles back to back on failure, which
-/// can legitimately exceed any sane timeout — this stays a backstop for the
-/// common first-scan path, and the auto-retry policy below covers the rest.
+/// Aether v1.5 scan budgets are 45/120/300/180/180 seconds. The GUI waits
+/// only a small fixed establishment margin beyond each core budget, preventing
+/// a dead process or prompt regression from leaving the UI spinning for
+/// several extra minutes.
 pub fn connect_timeout(scan_mode: &ScanMode) -> Duration {
     Duration::from_secs(match scan_mode {
-        ScanMode::Turbo => 90,
-        ScanMode::Balanced => 150,
-        ScanMode::Thorough => 330,
-        ScanMode::Stealth => 210,
-        ScanMode::Ironclad => 240,
+        ScanMode::Turbo => 60,
+        ScanMode::Balanced => 135,
+        ScanMode::Thorough => 315,
+        ScanMode::Stealth => 195,
+        ScanMode::Ironclad => 195,
     })
 }
 
-/// How long to wait after sending Ctrl-C before force-killing. Manually
-/// testing shutdown against the real binary showed it does NOT exit quickly
-/// on SIGINT (still alive 10+ seconds later) — but since v1 never elevates
-/// or opens a TUN device, there is nothing at the OS level a hard kill would
-/// leave dangling, so a short grace period followed by SIGKILL is the
-/// expected common path here, not a rare fallback.
+/// How long to wait after sending Ctrl-C before force-killing. Aether does not
+/// consistently exit quickly on SIGINT, and this GUI process owns no elevated
+/// TUN resource that would make a hard kill unsafe.
 pub const GRACEFUL_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 
-/// Auto-retry policy for unexpected drops/timeouts (never for a
-/// user-requested disconnect) — applies uniformly to every protocol, since
-/// a sudden mid-session drop (observed in practice with gool, the most
-/// fragile of the three: two nested WireGuard tunnels) is exactly as
-/// disruptive on MASQUE or plain WireGuard. Backoff increases per attempt
-/// rather than retrying immediately, on the theory that whatever caused the
-/// drop (a flaky relay, a momentary network hiccup) is more likely to have
-/// cleared given a moment, and to avoid hammering the same dead endpoint.
-pub const MAX_AUTO_RETRIES: u32 = 3;
-pub const RETRY_BACKOFF: [Duration; MAX_AUTO_RETRIES as usize] = [
+/// A failed first Turbo scan gets one safer Balanced fallback. Other initial
+/// scans fail visibly instead of repeating the same long scan in a loop.
+pub const INITIAL_TURBO_FALLBACK_BACKOFF: Duration = Duration::from_secs(1);
+
+/// Once a connection has actually worked, transient drops may be retried with
+/// backoff. This budget is deliberately separate from initial scan failure.
+pub const MAX_POST_CONNECT_RETRIES: u32 = 3;
+pub const POST_CONNECT_RETRY_BACKOFF: [Duration; MAX_POST_CONNECT_RETRIES as usize] = [
     Duration::from_secs(2),
     Duration::from_secs(5),
     Duration::from_secs(10),
@@ -136,13 +124,18 @@ mod tests {
     }
 
     #[test]
-    fn connect_timeout_exceeds_upstream_scan_deadlines() {
-        // Each right-hand value is the larger of upstream v1.3.0's MASQUE/WG
-        // prober overall_deadline for that mode — the GUI must outlast it.
-        assert!(connect_timeout(&ScanMode::Turbo) > Duration::from_secs(45));
-        assert!(connect_timeout(&ScanMode::Balanced) > Duration::from_secs(120));
-        assert!(connect_timeout(&ScanMode::Thorough) > Duration::from_secs(300));
-        assert!(connect_timeout(&ScanMode::Stealth) > Duration::from_secs(180));
-        assert!(connect_timeout(&ScanMode::Ironclad) > Duration::from_secs(180));
+    fn connect_timeout_exceeds_core_scan_budgets_without_large_slack() {
+        let budgets = [
+            (ScanMode::Turbo, 45),
+            (ScanMode::Balanced, 120),
+            (ScanMode::Thorough, 300),
+            (ScanMode::Stealth, 180),
+            (ScanMode::Ironclad, 180),
+        ];
+        for (mode, budget) in budgets {
+            let timeout = connect_timeout(&mode);
+            assert!(timeout > Duration::from_secs(budget));
+            assert!(timeout <= Duration::from_secs(budget + 15));
+        }
     }
 }
