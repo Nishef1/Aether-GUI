@@ -3,6 +3,7 @@ name: npm-lock-once
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: npm-lock-once
