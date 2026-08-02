@@ -413,58 +413,59 @@ fn monitor_connected(
     }
 }
 
+fn stop_session_blocking(session: &mut PtySession, grace: Duration) {
+    session.send_ctrl_c();
+    let deadline = Instant::now() + grace;
+    while Instant::now() < deadline {
+        if session.try_wait().is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    session.kill();
+}
+
 pub fn request_disconnect(
     app: &AppHandle,
     manager: &Arc<Mutex<AetherManager>>,
 ) -> Result<(), AetherError> {
-    let had_session = {
+    let mut session = {
         let mut manager = manager.lock().unwrap();
-        let reconnecting = matches!(manager.state, ConnectionState::Reconnecting { .. });
-        if manager.session.is_none() && !reconnecting {
-            return Err(AetherError::NotConnected);
-        }
         manager.user_requested_stop = true;
         manager.retry_count = 0;
         manager.connected_once = false;
-        if let Some(session) = manager.session.as_ref() {
-            session.send_ctrl_c();
-        }
-        manager.session.is_some()
+        manager.state = ConnectionState::Disconnecting;
+        manager.session.take()
     };
 
-    if !had_session {
-        set_state_and_emit(app, manager, ConnectionState::Idle);
+    if session.is_none() {
+        orphan::clear_pid(&app_data_dir(app));
+        {
+            let mut manager = manager.lock().unwrap();
+            manager.user_requested_stop = false;
+            manager.state = ConnectionState::Idle;
+        }
+        let _ = app.emit(STATUS_EVENT, &ConnectionState::Idle);
         return Ok(());
     }
 
-    set_state_and_emit(app, manager, ConnectionState::Disconnecting);
-
+    let _ = app.emit(STATUS_EVENT, &ConnectionState::Disconnecting);
     let app = app.clone();
     let manager = Arc::clone(manager);
     std::thread::spawn(move || {
-        let deadline = Instant::now() + status::GRACEFUL_SHUTDOWN_GRACE;
-        loop {
-            std::thread::sleep(Duration::from_millis(200));
-            let mut manager_guard = manager.lock().unwrap();
-            let exited = manager_guard
-                .session
-                .as_mut()
-                .and_then(|session| session.try_wait())
-                .is_some();
-            if exited || Instant::now() >= deadline {
-                if !exited {
-                    if let Some(session) = manager_guard.session.as_mut() {
-                        session.kill();
-                    }
-                }
-                manager_guard.session = None;
-                manager_guard.user_requested_stop = false;
-                drop(manager_guard);
-                orphan::clear_pid(&app_data_dir(&app));
-                set_state_and_emit(&app, &manager, ConnectionState::Idle);
-                return;
-            }
+        if let Some(session) = session.as_mut() {
+            stop_session_blocking(session, status::GRACEFUL_SHUTDOWN_GRACE);
         }
+        let data_dir = app_data_dir(&app);
+        orphan::reap_orphan(&data_dir);
+        orphan::clear_pid(&data_dir);
+        {
+            let mut manager = manager.lock().unwrap();
+            manager.session = None;
+            manager.user_requested_stop = false;
+            manager.state = ConnectionState::Idle;
+        }
+        let _ = app.emit(STATUS_EVENT, &ConnectionState::Idle);
     });
 
     Ok(())
@@ -482,15 +483,25 @@ pub fn submit_access_code(
 }
 
 pub fn shutdown_blocking(manager: &Arc<Mutex<AetherManager>>, data_dir: &Path) {
-    let mut manager = manager.lock().unwrap();
-    if let Some(session) = manager.session.as_mut() {
-        session.send_ctrl_c();
-        std::thread::sleep(Duration::from_millis(500));
-        session.kill();
+    let mut session = {
+        let mut manager = manager.lock().unwrap();
+        manager.user_requested_stop = true;
+        manager.retry_count = 0;
+        manager.connected_once = false;
+        manager.state = ConnectionState::Disconnecting;
+        manager.session.take()
+    };
+
+    if let Some(session) = session.as_mut() {
+        stop_session_blocking(session, status::GRACEFUL_SHUTDOWN_GRACE);
     }
-    manager.session = None;
-    drop(manager);
+    orphan::reap_orphan(data_dir);
     orphan::clear_pid(data_dir);
+
+    let mut manager = manager.lock().unwrap();
+    manager.session = None;
+    manager.user_requested_stop = false;
+    manager.state = ConnectionState::Idle;
 }
 
 #[cfg(test)]
