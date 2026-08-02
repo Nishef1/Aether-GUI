@@ -14,8 +14,6 @@ pub struct PtySession {
     child: Box<dyn Child + Send + Sync>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     prompts_done: Arc<AtomicBool>,
-    // Keeps the pty master (and thus the slave/child's controlling tty) alive
-    // for the life of the session; never read from directly after spawn.
     _master: Box<dyn MasterPty + Send>,
 }
 
@@ -32,18 +30,13 @@ impl PtySession {
         self.child.try_wait().ok().flatten()
     }
 
-    /// Ctrl-C (ETX) — the same byte a real terminal sends for SIGINT. See
-    /// aether/status.rs::GRACEFUL_SHUTDOWN_GRACE for why callers should
-    /// follow this with only a short wait before `kill()`, not a long one.
     pub fn send_ctrl_c(&self) {
-        if let Ok(mut w) = self.writer.lock() {
-            let _ = w.write_all(&[0x03]);
-            let _ = w.flush();
+        if let Ok(mut writer) = self.writer.lock() {
+            let _ = writer.write_all(&[0x03]);
+            let _ = writer.flush();
         }
     }
 
-    /// Feeds the one-time code requested by Cloudflare Access during a Zero
-    /// Trust email enrolment. The code never enters the log stream.
     pub fn send_access_code(&self, code: &str) -> Result<(), AetherError> {
         let code = code.trim();
         if code.is_empty() || code.len() > 512 || code.contains(['\r', '\n']) {
@@ -59,7 +52,9 @@ impl PtySession {
             .write_all(code.as_bytes())
             .and_then(|_| writer.write_all(b"\r\n"))
             .and_then(|_| writer.flush())
-            .map_err(|e| AetherError::Internal(format!("sending Zero Trust access code: {e}")))
+            .map_err(|error| {
+                AetherError::Internal(format!("sending Zero Trust access code: {error}"))
+            })
     }
 
     pub fn kill(&mut self) {
@@ -67,16 +62,6 @@ impl PtySession {
     }
 }
 
-/// Spawns Aether in a real PTY (not a plain piped subprocess) and answers its
-/// known interactive prompts as they appear. A PTY is required because
-/// interactive-prompt libraries typically check `isatty()` and behave
-/// differently — or refuse to prompt at all — over a plain pipe.
-///
-/// `cwd` should be a stable, dedicated directory (the app's data dir): Aether
-/// writes its provisioned identity (`aether-masque.toml` / `aether.toml`)
-/// into its working directory, so this must stay consistent across launches
-/// for that identity to persist rather than being silently re-provisioned
-/// every run.
 pub fn spawn(
     binary: &Path,
     cwd: &Path,
@@ -91,64 +76,49 @@ pub fn spawn(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
+        .map_err(|error| AetherError::SpawnFailed(error.to_string()))?;
 
-    let mut cmd = CommandBuilder::new(binary);
-    cmd.cwd(cwd);
-    // Aether ≥1.1.1 takes the whole profile as flags, so the interactive
-    // prompts below normally never appear — read_loop's prompt answering is
-    // kept as a fallback for output-format drift.
+    let mut command = CommandBuilder::new(binary);
+    command.cwd(cwd);
     for arg in profile.as_args() {
-        cmd.arg(arg);
+        command.arg(arg);
     }
-    // Env var, not a flag (see ConnectionProfile::masque_http2's doc-comment):
-    // any value suppresses Aether 1.2.0's interactive "MASQUE transport"
-    // prompt, and only a truthy one selects HTTP/2.
-    cmd.env(
+    command.env(
         "AETHER_MASQUE_HTTP2",
         if profile.masque_http2 { "1" } else { "0" },
     );
-    // Keep Access credentials out of the process command line. Aether's
-    // flags and environment variables are equivalent, but command arguments
-    // are trivially visible to other local processes on several platforms.
     match profile.zero_trust_auth {
         ZeroTrustAuth::Service
             if !profile.access_client_id.trim().is_empty()
                 && !profile.access_client_secret.trim().is_empty() =>
         {
-            cmd.env("AETHER_ACCESS_CLIENT_ID", profile.access_client_id.trim());
-            cmd.env(
+            command.env("AETHER_ACCESS_CLIENT_ID", profile.access_client_id.trim());
+            command.env(
                 "AETHER_ACCESS_CLIENT_SECRET",
                 profile.access_client_secret.trim(),
             );
         }
         _ => {
             if let Some((key, value)) = profile.zero_trust_env() {
-                cmd.env(key, value);
+                command.env(key, value);
             }
         }
     }
 
     let child = pair
         .slave
-        .spawn_command(cmd)
-        .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
-    // Drop our end of the slave once the child has it; on Unix this matters
-    // so that the child (not us) is the last holder of that side of the pty.
+        .spawn_command(command)
+        .map_err(|error| AetherError::SpawnFailed(error.to_string()))?;
     drop(pair.slave);
 
     let mut reader = pair
         .master
         .try_clone_reader()
-        .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
-
-    // portable-pty's take_writer() may only be called once per master, so we
-    // grab it a single time here and share it (reader thread answers prompts;
-    // PtySession::send_ctrl_c is called from other threads on disconnect).
+        .map_err(|error| AetherError::SpawnFailed(error.to_string()))?;
     let raw_writer = pair
         .master
         .take_writer()
-        .map_err(|e| AetherError::SpawnFailed(e.to_string()))?;
+        .map_err(|error| AetherError::SpawnFailed(error.to_string()))?;
     let writer = Arc::new(Mutex::new(raw_writer));
     let writer_for_thread = Arc::clone(&writer);
 
@@ -187,27 +157,21 @@ fn read_loop(
     let mut code_prompt_visible = false;
 
     loop {
-        let n = match reader.read(&mut byte_buf) {
-            Ok(0) => break, // EOF: process exited or pty closed
-            Ok(n) => n,
+        let read = match reader.read(&mut byte_buf) {
+            Ok(0) => break,
+            Ok(read) => read,
             Err(_) => break,
         };
-        line_buf.push_str(&String::from_utf8_lossy(&byte_buf[..n]));
+        line_buf.push_str(&String::from_utf8_lossy(&byte_buf[..read]));
 
-        // Emit every complete line, tracking which known prompt "section"
-        // we're currently in (the last recognized header line wins — plain
-        // log lines in between don't reset it).
         for raw_line in drain_lines(&mut line_buf) {
-            let line = strip_ansi(&raw_line);
+            let line = strip_terminal_sequences(&raw_line);
             if line.is_empty() {
                 continue;
             }
             for rule in PROMPT_TABLE {
                 if (rule.header_matches)(&line) {
                     current_section = Some(rule.id);
-                    // Seeing a header again means Aether restarted its prompt
-                    // sequence (its own stdin read timed out — see
-                    // prompts.rs) — allow re-answering, or it blocks forever.
                     answered.remove(rule.id);
                 }
             }
@@ -217,17 +181,7 @@ fn read_loop(
             });
         }
 
-        // Whatever remains (no newline yet) is either more output still
-        // arriving, or Aether blocking on stdin for the current section's
-        // answer. A bare header as the partial ("Scan mode:") is output still
-        // in flight — Aether always prints the menu + "Choose…: " before
-        // blocking — so answering there would double-feed the next menu once
-        // the header completes as a line and gets un-answered above.
-        let partial = strip_ansi(&line_buf);
-        // Aether 1.5.0 asks for the Cloudflare Access one-time code without a
-        // terminating newline, so normal line forwarding cannot expose it to
-        // the UI. Emit a single neutral signal line instead; the frontend
-        // displays a code field and calls `submit_access_code` to reply.
+        let partial = strip_terminal_sequences(&line_buf);
         let access_code_prompt = partial.contains("Enter the code:");
         if access_code_prompt && !code_prompt_visible {
             let _ = log_tx.send(LogEvent {
@@ -237,16 +191,18 @@ fn read_loop(
         }
         code_prompt_visible = access_code_prompt;
         if looks_like_choice_prompt(&partial)
-            && !PROMPT_TABLE.iter().any(|r| (r.header_matches)(&partial))
+            && !PROMPT_TABLE
+                .iter()
+                .any(|rule| (rule.header_matches)(&partial))
         {
             if let Some(section) = current_section {
                 if !answered.contains(section) {
-                    if let Some(rule) = PROMPT_TABLE.iter().find(|r| r.id == section) {
+                    if let Some(rule) = PROMPT_TABLE.iter().find(|rule| rule.id == section) {
                         let answer = (rule.answer)(&profile);
-                        if let Ok(mut w) = writer.lock() {
-                            let _ = w.write_all(answer.as_bytes());
-                            let _ = w.write_all(b"\r\n");
-                            let _ = w.flush();
+                        if let Ok(mut writer) = writer.lock() {
+                            let _ = writer.write_all(answer.as_bytes());
+                            let _ = writer.write_all(b"\r\n");
+                            let _ = writer.flush();
                         }
                         let _ = log_tx.send(LogEvent {
                             line: format!("[gui] answered {section} \u{2192} {answer}"),
@@ -263,19 +219,8 @@ fn read_loop(
     }
 }
 
-/// Longest the unterminated tail may grow before the front is discarded.
-/// `strip_ansi` rescans the whole tail on every read, so an unbounded tail
-/// (e.g. output that never emits a terminator) would be O(n²) CPU.
 const MAX_PARTIAL: usize = 16 * 1024;
 
-/// Drains and returns every terminated line in `buf`, leaving the
-/// unterminated tail in place. Terminal semantics, not plain `\n`-splitting:
-/// a `\r` (or ONLCR-style `\r\r`) run followed by `\n` ends a line, while a
-/// `\r` run followed by anything else is a carriage-return overwrite — a
-/// spinner/progress frame a terminal would repaint in place — so the
-/// overwritten prefix is dead output and is dropped without being emitted.
-/// A `\r` run touching the end of the buffer is kept: the `\n` half of a
-/// `\r\n` may still be in flight.
 fn drain_lines(buf: &mut String) -> Vec<String> {
     let mut lines = Vec::new();
     while let Some(pos) = buf.find(['\r', '\n']) {
@@ -287,10 +232,10 @@ fn drain_lines(buf: &mut String) -> Vec<String> {
                 run_end += 1;
             }
             if run_end == buf.len() {
-                break; // "\r" at buffer end: might be a split "\r\n"
+                break;
             }
             if buf.as_bytes()[run_end] != b'\n' {
-                buf.drain(..run_end); // overwritten frame: discard silently
+                buf.drain(..run_end);
                 continue;
             }
             run_end
@@ -308,26 +253,50 @@ fn drain_lines(buf: &mut String) -> Vec<String> {
     lines
 }
 
-/// Aether's output includes ANSI color codes (e.g. `\x1b[32m`) around log
-/// level names — stripped so header-line matching and the log panel both see
-/// plain text. Minimal hand-rolled CSI-sequence stripper: no regex needed for
-/// a single well-known pattern (`ESC [ ... letter`).
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            for c2 in chars.by_ref() {
-                if c2.is_ascii_alphabetic() {
-                    break;
-                }
+/// Removes the terminal control sequences emitted by colored Rust logs and by
+/// Windows' PTY title command. CSI sequences end on a final byte in @..~, and
+/// OSC sequences end on BEL or ST (ESC + backslash). Unknown two-byte escape
+/// sequences are dropped conservatively instead of leaking control bytes into
+/// the UI or copied diagnostics.
+fn strip_terminal_sequences(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(character) = chars.next() {
+        if character != '\u{1b}' {
+            if !character.is_control() || character == '\t' {
+                output.push(character);
             }
             continue;
         }
-        out.push(c);
+
+        match chars.peek().copied() {
+            Some('[') => {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                chars.next();
+                let mut saw_escape = false;
+                for next in chars.by_ref() {
+                    if next == '\u{7}' || (saw_escape && next == '\\') {
+                        break;
+                    }
+                    saw_escape = next == '\u{1b}';
+                }
+            }
+            Some(_) => {
+                chars.next();
+            }
+            None => {}
+        }
     }
-    out
+
+    output
 }
 
 #[cfg(test)]
@@ -360,7 +329,7 @@ mod tests {
             feed(&mut buf, "scan 1%\rscan 2%\rscan 3%"),
             Vec::<String>::new()
         );
-        assert_eq!(buf, "scan 3%"); // only the live frame survives
+        assert_eq!(buf, "scan 3%");
         assert_eq!(feed(&mut buf, "\rscan done\n"), ["scan done"]);
         assert_eq!(buf, "");
     }
@@ -370,17 +339,42 @@ mod tests {
         let mut buf = String::new();
         assert_eq!(feed(&mut buf, "abc\r"), Vec::<String>::new());
         assert_eq!(buf, "abc\r");
-        assert_eq!(feed(&mut buf, "\n"), ["abc"]); // the \r\n was split across reads
+        assert_eq!(feed(&mut buf, "\n"), ["abc"]);
         assert_eq!(buf, "");
     }
 
     #[test]
     fn unterminated_tail_is_capped() {
         let mut buf = String::new();
-        // Multibyte chars so the cap must respect char boundaries.
-        let big = "é".repeat(MAX_PARTIAL); // 2 bytes each → 32 KiB, no terminators
+        let big = "é".repeat(MAX_PARTIAL);
         assert_eq!(feed(&mut buf, &big), Vec::<String>::new());
         assert!(buf.len() <= MAX_PARTIAL + 1);
-        assert!(buf.chars().all(|c| c == 'é'));
+        assert!(buf.chars().all(|character| character == 'é'));
+    }
+
+    #[test]
+    fn strips_csi_color_sequences() {
+        assert_eq!(
+            strip_terminal_sequences("[time] \u{1b}[32mINFO\u{1b}[0m aether"),
+            "[time] INFO aether"
+        );
+    }
+
+    #[test]
+    fn strips_windows_terminal_title_osc() {
+        assert_eq!(
+            strip_terminal_sequences(
+                "\u{1b}]0;C:\\Users\\PC\\aether.exe\u{7}[time] INFO aether"
+            ),
+            "[time] INFO aether"
+        );
+    }
+
+    #[test]
+    fn strips_osc_terminated_by_string_terminator() {
+        assert_eq!(
+            strip_terminal_sequences("\u{1b}]0;title\u{1b}\\ready"),
+            "ready"
+        );
     }
 }
