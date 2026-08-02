@@ -117,7 +117,10 @@ impl SystemTunnelRuntime {
     }
 
     fn current_selection(&self) -> SystemTunnelSelection {
-        self.selection.lock().map(|value| *value).unwrap_or_default()
+        self.selection
+            .lock()
+            .map(|value| *value)
+            .unwrap_or_default()
     }
 
     fn stage_is_configurable(&self) -> bool {
@@ -386,6 +389,9 @@ mod tests {
     #[test]
     fn selection_ids_are_stable() {
         assert_eq!(SystemTunnelSelection::Off.id(), None);
-        assert_eq!(SystemTunnelSelection::Singbox.id(), Some(SING_BOX_TUNNEL_ID));
+        assert_eq!(
+            SystemTunnelSelection::Singbox.id(),
+            Some(SING_BOX_TUNNEL_ID)
+        );
     }
 }

@@ -123,9 +123,7 @@ pub fn set_system_tunnel(
     state: State<AppState>,
     selection: SystemTunnelSelection,
 ) -> Result<(), RuntimeError> {
-    state
-        .runtime
-        .set_system_tunnel_selection(&app, selection)
+    state.runtime.set_system_tunnel_selection(&app, selection)
 }
 
 #[tauri::command]

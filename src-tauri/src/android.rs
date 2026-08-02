@@ -331,9 +331,7 @@ fn vpn_profile(profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> 
 }
 
 fn status_value(status: VpnStatus) -> Value {
-    let socks = status
-        .socks_addr
-        .unwrap_or_else(|| "127.0.0.1:1819".into());
+    let socks = status.socks_addr.unwrap_or_else(|| "127.0.0.1:1819".into());
     match status.state.as_str() {
         "Launching" => json!({ "state": "Launching" }),
         "Connecting" => json!({ "state": "Connecting" }),
@@ -423,10 +421,7 @@ async fn connect(
 #[tauri::command]
 async fn disconnect(app: AppHandle) -> Result<(), String> {
     emit_status(&app, &json!({ "state": "Disconnecting" }));
-    let status = app
-        .aether_vpn()
-        .stop()
-        .map_err(|error| error.to_string())?;
+    let status = app.aether_vpn().stop().map_err(|error| error.to_string())?;
     emit_status(&app, &status_value(status));
     Ok(())
 }
@@ -591,8 +586,7 @@ pub fn run_inner() {
             app.aether_vpn()
                 .set_logging(false)
                 .map_err(|error| io::Error::other(error.to_string()))?;
-            *app
-                .state::<MobileState>()
+            *app.state::<MobileState>()
                 .settings
                 .lock()
                 .map_err(|_| io::Error::other("mobile state unavailable"))? = settings;

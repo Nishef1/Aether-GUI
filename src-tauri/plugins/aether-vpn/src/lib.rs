@@ -23,7 +23,11 @@ fn serialize_mobile_protocol<S>(
 where
     S: Serializer,
 {
-    serializer.serialize_str(if protocol == "auto" { "masque" } else { protocol })
+    serializer.serialize_str(if protocol == "auto" {
+        "masque"
+    } else {
+        protocol
+    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -159,7 +163,9 @@ impl<R: Runtime> AetherVpn<R> {
     }
 
     pub fn start(&self, profile: VpnProfile) -> Result<VpnStatus> {
-        self.0.run_mobile_plugin("start", profile).map_err(Into::into)
+        self.0
+            .run_mobile_plugin("start", profile)
+            .map_err(Into::into)
     }
 
     pub fn stop(&self) -> Result<VpnStatus> {
@@ -175,7 +181,9 @@ impl<R: Runtime> AetherVpn<R> {
     }
 
     pub fn telemetry(&self) -> Result<RuntimeTelemetry> {
-        self.0.run_mobile_plugin("telemetry", ()).map_err(Into::into)
+        self.0
+            .run_mobile_plugin("telemetry", ())
+            .map_err(Into::into)
     }
 
     pub fn logs(&self, after_id: u64) -> Result<NativeLogBatch> {
@@ -197,7 +205,9 @@ impl<R: Runtime> AetherVpn<R> {
     }
 
     pub fn diagnostics(&self) -> Result<DiagnosticsResult> {
-        self.0.run_mobile_plugin("diagnostics", ()).map_err(Into::into)
+        self.0
+            .run_mobile_plugin("diagnostics", ())
+            .map_err(Into::into)
     }
 }
 

@@ -98,8 +98,7 @@ pub fn spawn(
     #[cfg(target_os = "macos")]
     if !is_elevated() {
         return Err(RuntimeError::SystemTunnel(
-            "sing-box TUN currently requires launching Aether-GUI as administrator on macOS"
-                .into(),
+            "sing-box TUN currently requires launching Aether-GUI as administrator on macOS".into(),
         ));
     }
 

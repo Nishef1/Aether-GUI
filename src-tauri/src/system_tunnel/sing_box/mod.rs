@@ -97,8 +97,7 @@ impl SingBoxTunnel {
 
     fn write_config(app: &AppHandle, content: &str) -> Result<PathBuf, RuntimeError> {
         let dir = Self::runtime_dir(app);
-        fs::create_dir_all(&dir)
-            .map_err(|error| RuntimeError::SystemTunnel(error.to_string()))?;
+        fs::create_dir_all(&dir).map_err(|error| RuntimeError::SystemTunnel(error.to_string()))?;
         let path = dir.join(CONFIG_FILE);
         let temporary = dir.join(format!("{CONFIG_FILE}.new"));
         fs::write(&temporary, content)
@@ -190,8 +189,8 @@ impl SystemTunnelAdapter for SingBoxTunnel {
         }
 
         let binary = Self::resolve_binary(app)?;
-        let config = config::generate(&context.upstream_socks_addr)
-            .map_err(RuntimeError::SystemTunnel)?;
+        let config =
+            config::generate(&context.upstream_socks_addr).map_err(RuntimeError::SystemTunnel)?;
         let config_file = Self::write_config(app, &config)?;
         process::check_config(&binary, &config_file)?;
         Self::emit_log(
@@ -221,10 +220,7 @@ impl SystemTunnelAdapter for SingBoxTunnel {
         let app_for_logs = app.clone();
         std::thread::spawn(move || {
             for log in log_rx {
-                SingBoxTunnel::emit_log(
-                    &app_for_logs,
-                    format!("{}: {}", log.stream, log.line),
-                );
+                SingBoxTunnel::emit_log(&app_for_logs, format!("{}: {}", log.stream, log.line));
             }
         });
 
@@ -295,10 +291,7 @@ impl SystemTunnelAdapter for SingBoxTunnel {
     }
 
     fn is_active(&self) -> bool {
-        self.state
-            .lock()
-            .map(|state| state.active)
-            .unwrap_or(false)
+        self.state.lock().map(|state| state.active).unwrap_or(false)
     }
 
     fn poll_exit(&self) -> Result<Option<String>, RuntimeError> {
@@ -364,6 +357,8 @@ fn terminate_pid(pid: u32) {
     }
     #[cfg(unix)]
     {
-        let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
     }
 }

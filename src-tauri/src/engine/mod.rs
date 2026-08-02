@@ -266,7 +266,10 @@ impl EngineRuntime {
                             upstream_socks_addr: socks_addr,
                             connected_at_ms,
                         };
-                        match runtime.system_tunnel.start_selected(&app, context, tunnel_epoch) {
+                        match runtime
+                            .system_tunnel
+                            .start_selected(&app, context, tunnel_epoch)
+                        {
                             Ok(true) => {}
                             Ok(false) => return,
                             Err(error) => {
@@ -282,12 +285,8 @@ impl EngineRuntime {
                     }
                     match runtime.system_tunnel.poll_active_failure(&app) {
                         Ok(Some(message)) => {
-                            runtime.finish_system_tunnel_failure(
-                                &app,
-                                &adapter,
-                                generation,
-                                message,
-                            );
+                            runtime
+                                .finish_system_tunnel_failure(&app, &adapter, generation, message);
                             return;
                         }
                         Ok(None) => {}
@@ -407,7 +406,10 @@ impl EngineRuntime {
         app: &AppHandle,
         selection: SystemTunnelSelection,
     ) -> Result<(), RuntimeError> {
-        if !matches!(self.status(), ConnectionState::Idle | ConnectionState::Error { .. }) {
+        if !matches!(
+            self.status(),
+            ConnectionState::Idle | ConnectionState::Error { .. }
+        ) {
             return Err(RuntimeError::SystemTunnelBusy);
         }
         self.system_tunnel.set_selection(app, selection)

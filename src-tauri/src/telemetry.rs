@@ -233,7 +233,11 @@ fn parse_trace(output: &str) -> Result<EgressProbe, String> {
             }
         } else if let Some(value) = line.strip_prefix("loc=") {
             let value = value.trim().to_ascii_uppercase();
-            if value.len() == 2 && value.chars().all(|character| character.is_ascii_alphabetic()) {
+            if value.len() == 2
+                && value
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic())
+            {
                 country_code = Some(value);
             }
         } else if let Some(value) = line.strip_prefix("__aether_time_total=") {
