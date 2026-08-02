@@ -1,8 +1,7 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { ConnectButton } from "@/components/ConnectButton";
 import { ConnectionStatusLine } from "@/components/ConnectionStatusLine";
-import { AdvancedPanel } from "@/components/AdvancedPanel";
 import { CloseToTrayToggle } from "@/components/CloseToTrayToggle";
 import { AmbientBackground } from "@/components/AmbientBackground";
 import { SidecarErrorScreen } from "@/components/SidecarErrorScreen";
@@ -12,6 +11,10 @@ import { TitleBar } from "@/components/TitleBar";
 import { isAndroid } from "@/lib/platform";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
 import { initTelemetryListeners } from "@/state/telemetryStore";
+
+const AdvancedPanel = lazy(() =>
+  import("@/components/AdvancedPanel").then((module) => ({ default: module.AdvancedPanel })),
+);
 
 const SCREEN_TRANSITION = isAndroid
   ? {
@@ -36,7 +39,9 @@ function MainScreen() {
         <ConnectionStatusLine />
         <AccessCodePrompt key={attemptId} />
       </div>
-      <AdvancedPanel />
+      <Suspense fallback={<div className="h-9 w-full max-w-sm" aria-hidden="true" />}>
+        <AdvancedPanel />
+      </Suspense>
       {!isAndroid && <CloseToTrayToggle />}
     </div>
   );
