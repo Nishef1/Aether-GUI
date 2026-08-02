@@ -4,6 +4,9 @@ dist-ssr/
 *.local
 src-tauri/target/
 src-tauri/gen/
+src-tauri/gen/android/keystore.properties
+src-tauri/gen/android/*.jks
+src-tauri/gen/android/*.keystore
 src-tauri/icons/icon.png
 src-tauri/binaries/aether
 src-tauri/binaries/aether.exe

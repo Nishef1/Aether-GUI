@@ -186,6 +186,31 @@ jobs:
       - name: Initialize generated Android project
         run: npm run android:init
 
+      - name: Validate Android release signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEY_ALIAS ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              echo "Missing required Android release signing secret: $name" >&2
+              exit 1
+            fi
+            echo "::add-mask::$value"
+          done
+
+      - name: Configure temporary Android release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: node scripts/ci/configure-android-release-signing.mjs
+
       - name: Prepare verified Aether and HEV ARM64 libraries
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -198,11 +223,27 @@ jobs:
         working-directory: src-tauri/gen/android
         run: ./gradlew :app:testArm64DebugUnitTest :tauri-plugin-aether-vpn:testDebugUnitTest --no-daemon
 
+      - name: Verify and rename signed ARM64 APK
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' ! -iname '*debug*' ! -iname '*unsigned*')
+          test "${#apks[@]}" -eq 1
+          apk="${apks[0]}"
+          node scripts/ci/verify-android-release.mjs "$apk"
+          mkdir -p android-release
+          cp "$apk" "android-release/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
+
       - uses: actions/upload-artifact@v7
         with:
           name: aether-android-arm64
           if-no-files-found: error
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          path: android-release/Aether-GUI-v${{ env.RELEASE_VERSION }}-android-arm64-signed.apk
+
+      - name: Clean temporary Android signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/aether-gui-android-release.jks"
+          rm -f "$GITHUB_WORKSPACE/src-tauri/gen/android/keystore.properties"
 
   release:
     name: publish v0.7.2 release
@@ -224,20 +265,28 @@ jobs:
           grep -q '^version = "0.7.2"$' src-tauri/Cargo.toml
           grep -q '"version": "0.7.2"' src-tauri/tauri.conf.json
 
-      - name: Normalize release assets and checksums
+      - name: Preserve current release assets and add verified Android APK
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p release
-          while IFS= read -r -d '' file; do
-            relative="${file#artifacts/}"
-            artifact="${relative%%/*}"
-            cp "$file" "release/${artifact}-$(basename "$file")"
-          done < <(find artifacts -type f -print0)
-          asset_count="$(find release -maxdepth 1 -type f | wc -l)"
-          if [ "$asset_count" -lt 5 ]; then
-            echo "Expected release assets for five platform targets; found $asset_count" >&2
-            exit 1
-          fi
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release
+          while IFS= read -r asset; do
+            case "$asset" in
+              SHA256SUMS.txt|*-unsigned.apk|Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk) ;;
+              *) test -f "release/$asset" || { echo "Existing release asset was not preserved: $asset" >&2; exit 1; } ;;
+            esac
+          done < <(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          find release -maxdepth 1 -type f \( -iname '*unsigned*.apk' -o -iname '*debug*.apk' \) -delete
+          rm -f release/SHA256SUMS.txt "release/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
+          signed="artifacts/aether-android-arm64/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
+          test -f "$signed"
+          node scripts/ci/verify-android-release.mjs "$signed"
+          cp "$signed" "release/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
+          apk_count="$(find release -maxdepth 1 -type f -name '*.apk' | wc -l)"
+          test "$apk_count" -eq 1
+          ! find release -maxdepth 1 -type f -iname '*unsigned*' | grep -q .
           (cd release && sha256sum * > SHA256SUMS.txt)
           find release -maxdepth 1 -type f -printf '%f\n' | sort
 
@@ -253,7 +302,7 @@ jobs:
           - Linux x86_64
           - macOS Apple Silicon (ARM64)
           - macOS Intel (x86_64)
-          - Android ARM64 (`arm64-v8a`)
+          - Android ARM64 (`arm64-v8a`), signed with the permanent Aether-GUI release key
 
           ### Highlights
           - Updated to Aether core v1.5.0.
@@ -272,19 +321,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for tag in "$RELEASE_TAG" "${RELEASE_TAG#v}"; do
-            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
-            elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
-              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
-            fi
-          done
-          gh release create "$RELEASE_TAG" release/* \
+          gh release upload "$RELEASE_TAG" \
+            "release/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk" \
+            release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
+            --clobber
+          while IFS= read -r asset; do
+            gh release delete-asset "$asset" --repo "$GITHUB_REPOSITORY" --yes
+          done < <(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -i 'unsigned.*\.apk$' || true)
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "Aether-GUI v$RELEASE_VERSION" \
             --notes-file RELEASE_NOTES.md \
             --latest
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qi 'unsigned.*\.apk$'; then
+            echo "Unsigned Android APK remains on the GitHub Release" >&2
+            exit 1
+          fi
 
   report:
     name: publish build result

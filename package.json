@@ -13,7 +13,7 @@
     "build:android:web": "node scripts/build-android-web.mjs",
     "android:init": "npm run prepare:app-icon && tauri android init --ci && npm run apply:android-branding",
     "android:dev": "npm run prepare:android-native && npm run apply:android-branding && tauri android dev --target aarch64",
-    "android:build": "npm run prepare:android-native && npm run apply:android-branding && tauri android build --apk --target aarch64",
+    "android:build": "npm run prepare:android-native && npm run apply:android-branding && node scripts/ci/build-android-arm64.mjs",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",

@@ -129,6 +129,30 @@ class AndroidFeatureParityTest(unittest.TestCase):
         self.assertNotIn("releaseDraft", workflow)
         self.assertNotIn('tags: ["v*"]', workflow)
 
+    def test_android_release_is_fail_closed_and_verifies_the_permanent_signer(self) -> None:
+        workflow = self.read(".github/workflows/build.yml")
+        verifier = self.read("scripts/ci/verify-android-release.mjs")
+        for secret in (
+            "ANDROID_KEYSTORE_BASE64",
+            "ANDROID_KEY_ALIAS",
+            "ANDROID_KEYSTORE_PASSWORD",
+            "ANDROID_KEY_PASSWORD",
+        ):
+            self.assertIn(secret, workflow)
+        self.assertIn('run: npm run android:build', workflow)
+        self.assertIn('"android:build"', self.read("package.json"))
+        self.assertIn("--split-per-abi", self.read("scripts/ci/build-android-arm64.mjs"))
+        self.assertIn("aarch64", self.read("scripts/ci/build-android-arm64.mjs"))
+        self.assertIn("verify-android-release.mjs", workflow)
+        self.assertIn("Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk", workflow)
+        self.assertIn("unsigned", verifier)
+        self.assertIn("arm64-v8a", verifier)
+        self.assertIn("libaether_exec.so", verifier)
+        self.assertIn("libhev-socks5-tunnel.so", verifier)
+        self.assertIn("enableV1Signing = true", self.read("scripts/ci/configure-android-release-signing.mjs"))
+        self.assertIn("enableV2Signing = true", self.read("scripts/ci/configure-android-release-signing.mjs"))
+        self.assertIn("enableV3Signing = true", self.read("scripts/ci/configure-android-release-signing.mjs"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
