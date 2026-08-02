@@ -9,15 +9,23 @@ import { SidecarErrorScreen } from "@/components/SidecarErrorScreen";
 import { AccessCodePrompt } from "@/components/AccessCodePrompt";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TitleBar } from "@/components/TitleBar";
+import { isAndroid } from "@/lib/platform";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
 import { initTelemetryListeners } from "@/state/telemetryStore";
 
-const SCREEN_TRANSITION = {
-  initial: { opacity: 0, y: 8 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -4 },
-  transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const },
-};
+const SCREEN_TRANSITION = isAndroid
+  ? {
+      initial: false as const,
+      animate: { opacity: 1 },
+      exit: { opacity: 1 },
+      transition: { duration: 0 },
+    }
+  : {
+      initial: { opacity: 0, y: 8 },
+      animate: { opacity: 1, y: 0 },
+      exit: { opacity: 0, y: -4 },
+      transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const },
+    };
 
 function MainScreen() {
   const attemptId = useConnectionStore((state) => state.attemptId);
@@ -29,7 +37,7 @@ function MainScreen() {
         <AccessCodePrompt key={attemptId} />
       </div>
       <AdvancedPanel />
-      <CloseToTrayToggle />
+      {!isAndroid && <CloseToTrayToggle />}
     </div>
   );
 }
@@ -50,8 +58,10 @@ export function App() {
 
   return (
     <TooltipProvider>
-      <MotionConfig reducedMotion="user">
-        <div className="relative flex h-svh w-full flex-col overflow-hidden bg-background">
+      <MotionConfig reducedMotion={isAndroid ? "always" : "user"}>
+        <div
+          className={`relative flex h-svh w-full flex-col overflow-hidden bg-background${isAndroid ? " platform-android" : ""}`}
+        >
           <AmbientBackground />
           <TitleBar />
           <div className="relative min-h-0 flex-1">

@@ -1,7 +1,7 @@
 {
   "name": "aether-gui",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.7.2",
   "type": "module",
   "scripts": {
     "prepare:sidecars": "node scripts/prepare-sidecars.mjs",
@@ -9,8 +9,9 @@
     "dev": "npm run prepare:sidecars && vite",
     "build": "npm run prepare:sidecars && tsc -b && vite build",
     "build:android:web": "node scripts/build-android-web.mjs",
-    "android:dev": "tauri android dev",
-    "android:build": "tauri android build",
+    "android:init": "tauri android init --ci",
+    "android:dev": "npm run prepare:android-native && tauri android dev --target aarch64",
+    "android:build": "npm run prepare:android-native && tauri android build --apk --target aarch64",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",

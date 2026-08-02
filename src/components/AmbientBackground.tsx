@@ -1,44 +1,30 @@
+import { isAndroid } from "@/lib/platform";
 import { useWindowFocused } from "@/state/windowFocus";
 
 /**
- * Two soft gradient orbs. All motion is pure CSS (transform/opacity
- * keyframes in index.css) on compositor-promoted layers — zero main-thread
- * work per frame, honors prefers-reduced-motion via the media query there.
- * No blur filter: a radial gradient already fades smoothly, so blur-[65px]
- * was visually redundant while forcing an expensive re-raster of the layer.
- * Paused (not removed) while the window is unfocused so the app costs
- * ~nothing in the background and nothing jumps on refocus.
+ * Compositor-only ambient background. Android intentionally omits it: the
+ * foreground VPN service is the product, so the WebView should stop consuming
+ * GPU cycles as soon as it is not needed.
  */
 export function AmbientBackground() {
   const focused = useWindowFocused();
-  // Inline, not a Tailwind pause class — the unlayered .anim-* shorthands
-  // beat layered utilities in the cascade (see ConnectButton).
+  if (isAndroid) return null;
+
   const playState = { animationPlayState: focused ? ("running" as const) : ("paused" as const) };
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+    <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-background">
       <div
-        className="anim-orb-a absolute size-65 rounded-full"
-        style={{
-          top: -60,
-          right: -60,
-          opacity: 0.14,
-          background: "radial-gradient(circle, var(--color-primary) 0%, transparent 70%)",
-          willChange: "transform, opacity",
-          ...playState,
-        }}
+        className="anim-orb-1 absolute -top-[20%] -left-[15%] size-[70%] rounded-full bg-primary/10 blur-3xl"
+        style={playState}
       />
       <div
-        className="anim-orb-b absolute size-55 rounded-full"
-        style={{
-          bottom: -40,
-          left: -80,
-          opacity: 0.1,
-          background:
-            "radial-gradient(circle, var(--color-status-connected) 0%, transparent 70%)",
-          willChange: "transform, opacity",
-          ...playState,
-        }}
+        className="anim-orb-2 absolute -right-[20%] -bottom-[25%] size-[75%] rounded-full bg-blue-500/8 blur-3xl"
+        style={playState}
+      />
+      <div
+        className="anim-orb-3 absolute top-[35%] left-[35%] size-[35%] rounded-full bg-violet-500/5 blur-3xl"
+        style={playState}
       />
     </div>
   );

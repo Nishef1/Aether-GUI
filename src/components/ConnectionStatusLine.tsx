@@ -1,17 +1,24 @@
 import { useEffect, useState } from "react";
 import { Gauge, Globe2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
 import { useWindowFocused } from "@/state/windowFocus";
 
-const TEXT_TRANSITION = {
+const DESKTOP_TEXT_TRANSITION = {
   initial: { y: 4, opacity: 0 },
   animate: { y: 0, opacity: 1 },
   exit: { y: -4, opacity: 0 },
   transition: { duration: 0.1, ease: [0.4, 0, 0.2, 1] as const },
 };
-
+const MOBILE_TEXT_TRANSITION = {
+  initial: false as const,
+  animate: { opacity: 1 },
+  exit: { opacity: 1 },
+  transition: { duration: 0 },
+};
+const TEXT_TRANSITION = isAndroid ? MOBILE_TEXT_TRANSITION : DESKTOP_TEXT_TRANSITION;
 const BYTE_UNITS = ["KiB", "MiB", "GiB", "TiB"];
 
 function useElapsed(sinceMs: number | null): { formatted: string; totalSeconds: number } {
@@ -63,16 +70,26 @@ function ScanProgressBar({ percent }: { percent: number | null }) {
       {percent == null ? (
         <motion.div
           className="h-full w-1/3 rounded-full bg-status-connecting"
-          animate={focused ? { x: ["-100%", "220%"] } : { x: "50%", opacity: 0.6 }}
+          animate={
+            isAndroid
+              ? { x: "50%", opacity: 0.7 }
+              : focused
+                ? { x: ["-100%", "220%"] }
+                : { x: "50%", opacity: 0.6 }
+          }
           transition={
-            focused ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" } : { duration: 0.3 }
+            isAndroid
+              ? { duration: 0 }
+              : focused
+                ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" }
+                : { duration: 0.3 }
           }
         />
       ) : (
         <motion.div
           className="h-full rounded-full bg-status-connecting"
           animate={{ width: `${percent}%` }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
+          transition={{ duration: isAndroid ? 0 : 0.4, ease: "easeOut" }}
         />
       )}
     </div>
@@ -100,7 +117,10 @@ export function ConnectionStatusLine() {
   }, [status.state]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const isAttempting = status.state === "Launching" || status.state === "Connecting";
+  const isAttempting =
+    status.state === "Launching" ||
+    status.state === "Connecting" ||
+    status.state === "AwaitingAccessCode";
   const { formatted: attemptElapsed, totalSeconds: attemptSeconds } = useElapsed(
     isAttempting ? attemptStartedAt : null,
   );
@@ -126,6 +146,10 @@ export function ConnectionStatusLine() {
         scanPercent != null
           ? `Still searching · ${attemptElapsed} · ${scanPercent}%`
           : `Still searching · ${attemptElapsed}`;
+      break;
+    case "AwaitingAccessCode":
+      primary = "Verification required";
+      secondary = "Enter the one-time code sent by Cloudflare Access";
       break;
     case "Connected":
       primary = "Connected";
@@ -189,7 +213,9 @@ export function ConnectionStatusLine() {
         </motion.span>
       </AnimatePresence>
 
-      {status.state === "Connecting" && <ScanProgressBar percent={scanPercent} />}
+      {(status.state === "Connecting" || status.state === "Launching") && (
+        <ScanProgressBar percent={scanPercent} />
+      )}
 
       {connectionReady && !telemetry.egress_probe_complete && (
         <span className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground">

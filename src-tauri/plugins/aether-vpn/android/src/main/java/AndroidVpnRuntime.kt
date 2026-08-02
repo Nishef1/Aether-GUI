@@ -1,8 +1,7 @@
 package com.cluvexstudio.aethergui.vpn
 
-import android.content.Context
 import app.tauri.plugin.JSObject
-import java.io.File
+import java.io.BufferedWriter
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -55,18 +54,28 @@ data class FinalRuntimeTelemetry(
     }
 }
 
+/**
+ * Process-local Android runtime state.
+ *
+ * Logs are opt-in, memory-only and cleared as soon as logging is disabled.
+ * No diagnostic or traffic log is ever written to app storage.
+ */
 internal object AndroidVpnRuntime {
-    private const val MAX_LOG_LINES = 800
-    private const val MAX_DIAGNOSTICS_BYTES = 2_097_152L
+    private const val MAX_VISIBLE_LOG_LINES = 400
+    private const val MAX_INTERNAL_TAIL_LINES = 32
+    private const val MAX_PARTIAL_CHARS = 16 * 1024
 
     private val status = AtomicReference(idleSnapshot())
     private val activeTunBridge = AtomicReference<HevTun2Socks?>(null)
     private val telemetry = AtomicReference(FinalRuntimeTelemetry())
-    // Keep bounded in-memory logs available to the shared advanced panel.
-    // Only selected lifecycle/warning lines are persisted to flash.
-    private val loggingEnabled = AtomicBoolean(true)
+    private val loggingEnabled = AtomicBoolean(false)
     private val logSequence = AtomicLong(0L)
-    private val logLines = ArrayDeque<FinalNativeLogEntry>()
+    private val processInput = AtomicReference<BufferedWriter?>(null)
+    private val visibleLogs = ArrayDeque<FinalNativeLogEntry>()
+    private val internalTail = ArrayDeque<String>()
+    private val parserLock = Any()
+    private var partialOutput = ""
+    private var accessCodePromptVisible = false
 
     fun snapshot(): FinalServiceSnapshot = status.get()
 
@@ -86,64 +95,113 @@ internal object AndroidVpnRuntime {
 
     fun idleSnapshot() = FinalServiceSnapshot("Idle")
 
-    fun diagnosticsPath(context: Context): String =
-        File(context.filesDir, "diagnostics/aether-mobile.log").absolutePath
-
-    fun setLoggingEnabled(context: Context, enabled: Boolean) {
+    fun setLoggingEnabled(enabled: Boolean) {
         loggingEnabled.set(enabled)
         if (!enabled) {
-            synchronized(logLines) {
-                logLines.clear()
-                runCatching { File(diagnosticsPath(context)).delete() }
-            }
+            synchronized(visibleLogs) { visibleLogs.clear() }
         }
     }
 
     fun isLoggingEnabled(): Boolean = loggingEnabled.get()
 
-    private fun shouldPersistDiagnostic(line: String): Boolean {
-        val normalized = line.lowercase()
-        return normalized.contains("error") ||
-            normalized.contains("warn") ||
-            normalized.contains("starting aether") ||
-            normalized.contains("selected ") ||
-            normalized.contains("socks5 server listening") ||
-            normalized.contains("socks egress verified") ||
-            normalized.contains("android tun active") ||
-            normalized.contains("transport selected") ||
-            normalized.contains("stopped") ||
-            normalized.contains("native resources released")
+    fun logsAfter(afterId: Long): List<FinalNativeLogEntry> = synchronized(visibleLogs) {
+        if (!loggingEnabled.get()) emptyList() else visibleLogs.filter { it.id > afterId }
     }
 
-    fun appendLog(context: Context, line: String) {
+    private fun appendVisible(line: String) {
         if (!loggingEnabled.get()) return
+        val entry = FinalNativeLogEntry(
+            id = logSequence.incrementAndGet(),
+            timestamp = System.currentTimeMillis(),
+            line = line,
+        )
+        synchronized(visibleLogs) {
+            if (visibleLogs.size >= MAX_VISIBLE_LOG_LINES) visibleLogs.removeFirst()
+            visibleLogs.addLast(entry)
+        }
+    }
 
-        val timestamp = System.currentTimeMillis()
-        val entry = FinalNativeLogEntry(logSequence.incrementAndGet(), timestamp, line)
-        synchronized(logLines) {
-            if (logLines.size >= MAX_LOG_LINES) logLines.removeFirst()
-            logLines.addLast(entry)
+    private fun appendInternal(line: String) {
+        if (line.isBlank()) return
+        synchronized(internalTail) {
+            if (internalTail.size >= MAX_INTERNAL_TAIL_LINES) internalTail.removeFirst()
+            internalTail.addLast(line)
+        }
+        appendVisible(line)
+    }
 
-            if (!shouldPersistDiagnostic(line)) return@synchronized
-            val file = File(diagnosticsPath(context))
-            file.parentFile?.mkdirs()
-            if (file.length() >= MAX_DIAGNOSTICS_BYTES) {
-                file.writeText("$timestamp [android] diagnostics rotated\n")
+    fun appendServiceLine(line: String) {
+        appendInternal("[android] $line")
+    }
+
+    fun appendCoreChunk(chunk: String) {
+        synchronized(parserLock) {
+            partialOutput += chunk
+            if (partialOutput.length > MAX_PARTIAL_CHARS) {
+                partialOutput = partialOutput.takeLast(MAX_PARTIAL_CHARS)
             }
-            file.appendText("$timestamp $line\n")
+
+            val normalized = partialOutput.replace("\r\n", "\n").replace('\r', '\n')
+            val lines = normalized.split('\n')
+            partialOutput = lines.lastOrNull().orEmpty()
+            lines.dropLast(1).forEach { raw ->
+                val line = stripAnsi(raw).trim()
+                if (line.isNotEmpty()) appendInternal("[core] $line")
+            }
+
+            val prompt = stripAnsi(partialOutput).contains("Enter the code:")
+            if (prompt && !accessCodePromptVisible) {
+                val current = status.get()
+                updateSnapshot(
+                    FinalServiceSnapshot(
+                        state = "AwaitingAccessCode",
+                        socksAddr = current.socksAddr,
+                        tunAddr = current.tunAddr,
+                        connectedAtMs = current.connectedAtMs,
+                    )
+                )
+                appendVisible("[gui] Zero Trust access code required")
+            }
+            accessCodePromptVisible = prompt
         }
     }
 
-    fun logsAfter(afterId: Long): List<FinalNativeLogEntry> = synchronized(logLines) {
-        if (!loggingEnabled.get()) emptyList() else logLines.filter { it.id > afterId }
+    fun recentLogTail(limit: Int): String = synchronized(internalTail) {
+        if (limit <= 0) "" else internalTail.toList().takeLast(limit).joinToString(" | ")
     }
 
-    fun recentLogTail(limit: Int): String = synchronized(logLines) {
-        if (!loggingEnabled.get() || limit <= 0) {
-            ""
-        } else {
-            logLines.toList().takeLast(limit).joinToString(" | ") { entry -> entry.line }
+    fun attachProcessInput(writer: BufferedWriter) {
+        processInput.set(writer)
+    }
+
+    fun clearProcessInput(writer: BufferedWriter? = null) {
+        if (writer == null) processInput.set(null) else processInput.compareAndSet(writer, null)
+    }
+
+    fun submitAccessCode(code: String) {
+        val normalized = code.trim()
+        require(normalized.isNotEmpty() && normalized.length <= 512) {
+            "Invalid Zero Trust access code"
         }
+        require(!normalized.contains('\r') && !normalized.contains('\n')) {
+            "Invalid Zero Trust access code"
+        }
+        val writer = processInput.get() ?: error("Aether is not waiting for an access code")
+        synchronized(writer) {
+            writer.write(normalized)
+            writer.write("\n")
+            writer.flush()
+        }
+        synchronized(parserLock) { accessCodePromptVisible = false }
+        val current = status.get()
+        updateSnapshot(
+            FinalServiceSnapshot(
+                state = "Connecting",
+                socksAddr = current.socksAddr,
+                tunAddr = current.tunAddr,
+                connectedAtMs = current.connectedAtMs,
+            )
+        )
     }
 
     fun setActiveTunBridge(bridge: HevTun2Socks) {
@@ -151,11 +209,8 @@ internal object AndroidVpnRuntime {
     }
 
     fun clearActiveTunBridge(expected: HevTun2Socks? = null) {
-        if (expected == null) {
-            activeTunBridge.set(null)
-        } else {
-            activeTunBridge.compareAndSet(expected, null)
-        }
+        if (expected == null) activeTunBridge.set(null)
+        else activeTunBridge.compareAndSet(expected, null)
     }
 
     fun resetTelemetry() {
@@ -198,4 +253,7 @@ internal object AndroidVpnRuntime {
         trafficSnapshot()
         return telemetry.get()
     }
+
+    private fun stripAnsi(value: String): String =
+        value.replace(Regex("\\u001B\\[[;\\d]*[ -/]*[@-~]"), "")
 }

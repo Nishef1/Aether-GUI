@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { isAndroid } from "@/lib/platform";
+import { useConnectionStore } from "@/state/connectionStore";
 import type { RuntimeTelemetry } from "@/types/connection";
 
 const EMPTY_TELEMETRY: RuntimeTelemetry = {
@@ -30,23 +31,68 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
   },
 }));
 
+function isConnected(): boolean {
+  const state = useConnectionStore.getState().status.state;
+  return state === "Connected" || state === "StartingTunnel" || state === "Tunneling";
+}
+
 export async function initTelemetryListeners(): Promise<() => void> {
   const unlisten = await listen<RuntimeTelemetry>("aether://telemetry", (event) => {
     useTelemetryStore.setState({ snapshot: event.payload });
   });
   await useTelemetryStore.getState().refresh();
 
-  // Android services live outside the WebView lifecycle and cannot rely on a
-  // continuously visible window to receive emitted events. Poll the narrow
-  // native snapshot while keeping desktop fully event-driven.
-  const poll = isAndroid
-    ? setInterval(() => {
-        void useTelemetryStore.getState().refresh();
-      }, 1_000)
-    : null;
+  let disposed = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const schedule = () => {
+    if (!isAndroid || disposed || document.visibilityState !== "visible" || !isConnected()) {
+      return;
+    }
+    timer = setTimeout(async () => {
+      timer = null;
+      if (disposed || document.visibilityState !== "visible" || !isConnected()) return;
+      await useTelemetryStore.getState().refresh();
+      schedule();
+    }, 2_000);
+  };
+
+  const visibilityChanged = () => {
+    if (!isAndroid) return;
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (document.visibilityState === "visible") {
+      void useTelemetryStore.getState().refresh();
+      schedule();
+    }
+  };
+
+  const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
+    if (!isAndroid || state.status.state === previous.status.state) return;
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (isConnected() && document.visibilityState === "visible") {
+      void useTelemetryStore.getState().refresh();
+      schedule();
+    } else if (!isConnected()) {
+      useTelemetryStore.setState({ snapshot: { ...EMPTY_TELEMETRY } });
+    }
+  });
+
+  if (isAndroid) {
+    document.addEventListener("visibilitychange", visibilityChanged);
+    schedule();
+  }
 
   return () => {
+    disposed = true;
     unlisten();
-    if (poll !== null) clearInterval(poll);
+    unsubscribeConnection();
+    if (timer !== null) clearTimeout(timer);
+    if (isAndroid) document.removeEventListener("visibilitychange", visibilityChanged);
   };
 }

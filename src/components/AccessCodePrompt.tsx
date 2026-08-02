@@ -1,55 +1,67 @@
-import { useMemo, useState, type FormEvent } from "react"
-import { invoke } from "@tauri-apps/api/core"
-import { Button } from "@/components/ui/button"
-import { useConnectionStore } from "@/state/connectionStore"
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Button } from "@/components/ui/button";
+import { useConnectionStore } from "@/state/connectionStore";
 
-/** Bridges Aether 1.5.0's terminal-only Zero Trust email-code prompt into the
- * GUI. A new prompt signal is emitted after each rejected code, allowing the
- * user to retry without relaunching the tunnel. */
 export function AccessCodePrompt() {
-  const logs = useConnectionStore((s) => s.logs)
-  const [code, setCode] = useState("")
-  const [submittedFor, setSubmittedFor] = useState(0)
-  const [sending, setSending] = useState(false)
-  const promptCount = useMemo(
-    () =>
-      logs.filter((log) => log.line === "[gui] Zero Trust access code required")
-        .length,
-    [logs]
-  )
-  const waiting = promptCount > submittedFor
+  const status = useConnectionStore((state) => state.status);
+  const logs = useConnectionStore((state) => state.logs);
+  const attemptId = useConnectionStore((state) => state.attemptId);
+  const [dismissedAttempt, setDismissedAttempt] = useState<number | null>(null);
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  if (!waiting) return null
+  const nativePrompt = status.state === "AwaitingAccessCode";
+  const desktopPrompt = logs.some((entry) =>
+    entry.line.includes("[gui] Zero Trust access code required"),
+  );
+  const visible = (nativePrompt || desktopPrompt) && dismissedAttempt !== attemptId;
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!code.trim() || sending) return
-    setSending(true)
+  useEffect(() => {
+    if (visible) inputRef.current?.focus();
+  }, [visible]);
+
+  const submit = async () => {
+    const normalized = code.trim();
+    if (!normalized) return;
+    setError(null);
     try {
-      await invoke("submit_access_code", { code })
-      setCode("")
-      setSubmittedFor(promptCount)
-    } finally {
-      setSending(false)
+      await invoke("submit_access_code", { code: normalized });
+      setCode("");
+      setDismissedAttempt(attemptId);
+    } catch (cause) {
+      setError(String(cause));
     }
-  }
+  };
+
+  if (!visible) return null;
 
   return (
-    <form onSubmit={submit} className="flex w-full max-w-xs items-center gap-2">
-      <input
-        autoFocus
-        type="text"
-        inputMode="numeric"
-        autoComplete="one-time-code"
-        value={code}
-        onChange={(e) => setCode(e.target.value)}
-        placeholder="Enter the code sent to your email"
-        className="h-8 min-w-0 flex-1 rounded-md bg-black/30 px-2 text-center text-xs text-foreground ring-1 ring-primary/50 outline-none focus:ring-primary"
-        aria-label="Zero Trust email code"
-      />
-      <Button type="submit" size="sm" disabled={!code.trim() || sending}>
-        {sending ? "Sending…" : "Verify"}
-      </Button>
-    </form>
-  )
+    <div className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-sm rounded-xl border border-white/10 bg-surface-1/95 p-4 shadow-2xl backdrop-blur-xl">
+      <p className="text-sm font-medium text-foreground">Cloudflare Access code</p>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        Enter the one-time code sent to your Zero Trust email. The code is sent directly to Aether and is not logged or saved.
+      </p>
+      <div className="mt-3 flex gap-2">
+        <input
+          ref={inputRef}
+          value={code}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={512}
+          onChange={(event) => setCode(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void submit();
+          }}
+          className="h-9 min-w-0 flex-1 rounded-md bg-black/20 px-3 font-mono text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary"
+          aria-label="Cloudflare Access code"
+        />
+        <Button type="button" onClick={() => void submit()} disabled={!code.trim()}>
+          Verify
+        </Button>
+      </div>
+      {error && <p className="mt-2 text-xs text-status-error">{error}</p>}
+    </div>
+  );
 }

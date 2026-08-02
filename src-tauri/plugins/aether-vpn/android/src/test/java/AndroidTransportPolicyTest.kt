@@ -7,29 +7,22 @@ import org.junit.Test
 
 class AndroidTransportPolicyTest {
     @Test
-    fun usesOnlyOfficialAetherTransportFamilies() {
-        assertTrue(AndroidTransportPolicy.isMasque("auto"))
-        assertTrue(AndroidTransportPolicy.isMasque("masque"))
-        assertTrue(AndroidTransportPolicy.isWireGuardFamily("wireguard"))
-        assertTrue(AndroidTransportPolicy.isWireGuardFamily("gool"))
-        assertFalse(AndroidTransportPolicy.isWireGuardFamily("masque"))
+    fun enforcesSafeDualStackMtuRange() {
+        assertEquals(1280, AndroidTransportPolicy.DEFAULT_MTU)
+        assertTrue(AndroidTransportPolicy.isValidMtu(1280))
+        assertTrue(AndroidTransportPolicy.isValidMtu(1500))
+        assertFalse(AndroidTransportPolicy.isValidMtu(1279))
+        assertFalse(AndroidTransportPolicy.isValidMtu(1501))
+        assertEquals(1280, AndroidTransportPolicy.sanitizeMtu(900))
+        assertEquals(1500, AndroidTransportPolicy.sanitizeMtu(9000))
     }
 
     @Test
-    fun normalizesWireGuardNoizeWithoutAddingCustomFlags() {
-        assertEquals("off", AndroidTransportPolicy.effectiveWireGuardNoize("none"))
-        assertEquals("light", AndroidTransportPolicy.effectiveWireGuardNoize("light"))
-        assertEquals("aggressive", AndroidTransportPolicy.effectiveWireGuardNoize("heavy"))
-        assertEquals("balanced", AndroidTransportPolicy.effectiveWireGuardNoize("unknown"))
-
-        val args = mutableListOf<String>()
-        AndroidTransportPolicy.appendCoreArgs(args, "masque", false)
-        assertTrue(args.isEmpty())
-    }
-
-    @Test
-    fun respectsExplicitHttp2Selection() {
-        assertTrue(AndroidTransportPolicy.useMasqueHttp2(true, true))
-        assertFalse(AndroidTransportPolicy.useMasqueHttp2(false, false))
+    fun startupBudgetsCoverEveryScanFamily() {
+        assertEquals(75_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "turbo"))
+        assertEquals(330_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "thorough"))
+        assertEquals(240_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "ironclad"))
+        assertEquals(150_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "balanced"))
+        assertEquals(180_000L, AndroidTransportPolicy.startupTimeoutMs("gool", "balanced"))
     }
 }

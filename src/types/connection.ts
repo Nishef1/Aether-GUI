@@ -2,6 +2,7 @@ export type ConnectionStatus =
   | { state: "Idle" }
   | { state: "Launching" }
   | { state: "Connecting" }
+  | { state: "AwaitingAccessCode" }
   | { state: "Connected"; socks_addr: string; connected_at_ms: number }
   | {
       state: "StartingTunnel";
@@ -26,6 +27,7 @@ export type MasqueNoize = "firewall" | "gfw" | "off";
 export type WgNoize = "balanced" | "aggressive" | "light" | "off";
 export type ZeroTrustAuth = "email" | "service" | "token";
 export type SystemTunnelSelection = "off" | "singbox" | "native";
+export type PerfProfile = "auto" | "low" | "medium" | "high";
 
 export interface SystemTunnelDescriptor {
   id: string;
@@ -44,6 +46,21 @@ export interface ConnectionProfile {
   wg_noize: WgNoize;
   bind_address: string;
   dns: string;
+  mtu: number;
+  peer: string;
+  wg_peer: string;
+  h2_peer: string;
+  ech: string;
+  no_data_check: boolean;
+  validate_secs: number;
+  reconnect_secs: number;
+  fragment: boolean;
+  fragment_size: string;
+  fragment_delay: string;
+  keepalive: number;
+  no_profile_retry: boolean;
+  tls_groups: string;
+  perf_profile: PerfProfile;
   zero_trust_team: string;
   zero_trust_auth: ZeroTrustAuth;
   access_email: string;

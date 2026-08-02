@@ -40,8 +40,34 @@ pub struct VpnProfile {
     pub masque_noize: String,
     pub wg_noize: String,
     pub dns_server: String,
+    pub dns: String,
     pub bind_address: String,
     pub webrtc_leak_protection: bool,
+    pub mtu: u16,
+    pub peer: String,
+    pub wg_peer: String,
+    pub h2_peer: String,
+    pub ech: String,
+    pub no_data_check: bool,
+    pub validate_secs: u16,
+    pub reconnect_secs: u16,
+    pub fragment: bool,
+    pub fragment_size: String,
+    pub fragment_delay: String,
+    pub keepalive: u16,
+    pub no_profile_retry: bool,
+    pub tls_groups: String,
+    pub perf_profile: String,
+    pub zero_trust_team: String,
+    pub zero_trust_auth: String,
+    pub access_email: String,
+    pub access_client_id: String,
+    pub access_client_secret: String,
+    pub access_token: String,
+    pub zero_trust_gateway: bool,
+    pub route_block: String,
+    pub route_direct: String,
+    pub routes_file: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -100,6 +126,11 @@ struct LoggingRequest {
     enabled: bool,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct AccessCodeRequest<'a> {
+    code: &'a str,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoggingStatus {
@@ -116,6 +147,8 @@ pub struct PrepareResult {
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsResult {
     pub path: String,
+    #[serde(default)]
+    pub persistent: bool,
 }
 
 pub struct AetherVpn<R: Runtime>(PluginHandle<R>);
@@ -126,9 +159,7 @@ impl<R: Runtime> AetherVpn<R> {
     }
 
     pub fn start(&self, profile: VpnProfile) -> Result<VpnStatus> {
-        self.0
-            .run_mobile_plugin("start", profile)
-            .map_err(Into::into)
+        self.0.run_mobile_plugin("start", profile).map_err(Into::into)
     }
 
     pub fn stop(&self) -> Result<VpnStatus> {
@@ -144,9 +175,7 @@ impl<R: Runtime> AetherVpn<R> {
     }
 
     pub fn telemetry(&self) -> Result<RuntimeTelemetry> {
-        self.0
-            .run_mobile_plugin("telemetry", ())
-            .map_err(Into::into)
+        self.0.run_mobile_plugin("telemetry", ()).map_err(Into::into)
     }
 
     pub fn logs(&self, after_id: u64) -> Result<NativeLogBatch> {
@@ -161,10 +190,14 @@ impl<R: Runtime> AetherVpn<R> {
             .map_err(Into::into)
     }
 
-    pub fn diagnostics(&self) -> Result<DiagnosticsResult> {
+    pub fn submit_access_code(&self, code: &str) -> Result<()> {
         self.0
-            .run_mobile_plugin("diagnostics", ())
+            .run_mobile_plugin::<()>("submitAccessCode", AccessCodeRequest { code })
             .map_err(Into::into)
+    }
+
+    pub fn diagnostics(&self) -> Result<DiagnosticsResult> {
+        self.0.run_mobile_plugin("diagnostics", ()).map_err(Into::into)
     }
 }
 

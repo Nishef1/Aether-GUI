@@ -1,27 +1,14 @@
 package com.cluvexstudio.aethergui.vpn
 
-/**
- * Mobile-only resource and timeout policy. It deliberately does not add
- * protocol flags that are absent from the official Aether 1.5 CLI.
- */
+/** Mobile-only limits shared by the permission bridge and VpnService. */
 internal object AndroidTransportPolicy {
-    const val TUN_MTU = 1280
+    const val DEFAULT_MTU = 1280
+    const val MIN_MTU = 1280
+    const val MAX_MTU = 1500
 
-    fun isMasque(protocol: String): Boolean =
-        protocol.equals("masque", ignoreCase = true) ||
-            protocol.equals("auto", ignoreCase = true)
+    fun isValidMtu(value: Int): Boolean = value in MIN_MTU..MAX_MTU
 
-    fun isWireGuardFamily(protocol: String): Boolean =
-        protocol.equals("wireguard", ignoreCase = true) ||
-            protocol.equals("gool", ignoreCase = true)
-
-    fun effectiveWireGuardNoize(requested: String): String =
-        when (requested.trim().lowercase()) {
-            "off", "none" -> "off"
-            "light" -> "light"
-            "aggressive", "heavy" -> "aggressive"
-            else -> "balanced"
-        }
+    fun sanitizeMtu(value: Int): Int = value.coerceIn(MIN_MTU, MAX_MTU)
 
     fun startupTimeoutMs(protocol: String, scanMode: String): Long = when {
         protocol.equals("gool", ignoreCase = true) -> 180_000L
@@ -30,19 +17,8 @@ internal object AndroidTransportPolicy {
             "turbo" -> 75_000L
             "stealth" -> 210_000L
             "thorough" -> 330_000L
-            "ironclad" -> 210_000L
+            "ironclad" -> 240_000L
             else -> 150_000L
         }
     }
-
-    @Suppress("UNUSED_PARAMETER")
-    fun useMasqueHttp2(forceHttp2: Boolean, udpAvailable: Boolean): Boolean = forceHttp2
-
-    /** Official Aether 1.5 receives every supported flag in buildCoreCommand. */
-    @Suppress("UNUSED_PARAMETER")
-    fun appendCoreArgs(
-        command: MutableList<String>,
-        protocol: String,
-        useMasqueHttp2: Boolean,
-    ) = Unit
 }

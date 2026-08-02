@@ -6,6 +6,8 @@ const COMMANDS: &[&str] = &[
     "traffic",
     "telemetry",
     "logs",
+    "setLogging",
+    "submitAccessCode",
     "diagnostics",
 ];
 

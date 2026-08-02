@@ -19,13 +19,51 @@ const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
   balanced: 150,
   thorough: 330,
   stealth: 210,
-  ironclad: 210,
+  ironclad: 240,
+};
+
+const DEFAULT_PROFILE: ConnectionProfile = {
+  protocol: "auto",
+  scan_mode: "balanced",
+  ip_version: "v4",
+  quick_reconnect: false,
+  masque_http2: false,
+  masque_noize: "firewall",
+  wg_noize: "balanced",
+  bind_address: "127.0.0.1:1819",
+  dns: "",
+  mtu: 1280,
+  peer: "",
+  wg_peer: "",
+  h2_peer: "",
+  ech: "",
+  no_data_check: false,
+  validate_secs: 10,
+  reconnect_secs: 2,
+  fragment: false,
+  fragment_size: "16-32",
+  fragment_delay: "2-10",
+  keepalive: 5,
+  no_profile_retry: false,
+  tls_groups: "",
+  perf_profile: "auto",
+  zero_trust_team: "",
+  zero_trust_auth: "email",
+  access_email: "",
+  access_client_id: "",
+  access_client_secret: "",
+  access_token: "",
+  zero_trust_gateway: false,
+  route_block: "",
+  route_direct: "",
+  routes_file: "",
 };
 
 interface ConnectionState {
   status: ConnectionStatus;
   profile: ConnectionProfile;
   logs: LogLine[];
+  loggingEnabled: boolean;
   sidecarError: string | null;
   scanBudgetSecs: number | null;
   attemptId: number;
@@ -40,6 +78,11 @@ interface ConnectionState {
   setWgNoize: (wg_noize: WgNoize) => void;
   setBindAddress: (bind_address: string) => void;
   setDns: (dns: string) => void;
+  setMtu: (mtu: number) => void;
+  setProfileField: <K extends keyof ConnectionProfile>(
+    field: K,
+    value: ConnectionProfile[K],
+  ) => void;
   setZeroTrustTeam: (zero_trust_team: string) => void;
   setZeroTrustAuth: (zero_trust_auth: ZeroTrustAuth) => void;
   setAccessEmail: (access_email: string) => void;
@@ -50,33 +93,15 @@ interface ConnectionState {
   setRouteBlock: (route_block: string) => void;
   setRouteDirect: (route_direct: string) => void;
   setRoutesFile: (routes_file: string) => void;
+  setLoggingEnabled: (enabled: boolean) => Promise<void>;
   retryAfterSidecarError: () => void;
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
   status: { state: "Idle" },
-  profile: {
-    protocol: "auto",
-    scan_mode: "balanced",
-    ip_version: "v4",
-    quick_reconnect: false,
-    masque_http2: false,
-    masque_noize: "firewall",
-    wg_noize: "balanced",
-    bind_address: "127.0.0.1:1819",
-    dns: "",
-    zero_trust_team: "",
-    zero_trust_auth: "email",
-    access_email: "",
-    access_client_id: "",
-    access_client_secret: "",
-    access_token: "",
-    zero_trust_gateway: false,
-    route_block: "",
-    route_direct: "",
-    routes_file: "",
-  },
+  profile: { ...DEFAULT_PROFILE },
   logs: [],
+  loggingEnabled: !isAndroid,
   sidecarError: null,
   scanBudgetSecs: null,
   attemptId: 0,
@@ -107,7 +132,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     try {
       await invoke("disconnect");
     } catch {
-      // Status reconciliation handles an already-stopped backend.
+      // Native reconciliation handles an already-stopped backend.
     }
   },
 
@@ -127,6 +152,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   setBindAddress: (bind_address) =>
     set((state) => ({ profile: { ...state.profile, bind_address } })),
   setDns: (dns) => set((state) => ({ profile: { ...state.profile, dns } })),
+  setMtu: (mtu) =>
+    set((state) => ({
+      profile: { ...state.profile, mtu: Math.min(1500, Math.max(1280, Math.round(mtu))) },
+    })),
+  setProfileField: (field, value) =>
+    set((state) => ({ profile: { ...state.profile, [field]: value } })),
   setZeroTrustTeam: (zero_trust_team) =>
     set((state) => ({ profile: { ...state.profile, zero_trust_team } })),
   setZeroTrustAuth: (zero_trust_auth) =>
@@ -156,6 +187,17 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set((state) => ({ profile: { ...state.profile, route_direct } })),
   setRoutesFile: (routes_file) =>
     set((state) => ({ profile: { ...state.profile, routes_file } })),
+  setLoggingEnabled: async (enabled) => {
+    set({ loggingEnabled: enabled, ...(enabled ? {} : { logs: [] }) });
+    if (isAndroid) {
+      const active = enabled && document.visibilityState === "visible";
+      try {
+        await invoke("set_android_logging", { enabled: active });
+      } catch {
+        set({ loggingEnabled: false, logs: [] });
+      }
+    }
+  },
   retryAfterSidecarError: () => set({ sidecarError: null }),
 }));
 
@@ -174,6 +216,23 @@ function appendLogBatch(batch: LogLine[]) {
     logs: [...state.logs, ...batch].slice(-MAX_LOG_LINES),
     ...(budget !== null ? { scanBudgetSecs: budget } : {}),
   }));
+}
+
+function androidPollDelay(status: ConnectionStatus): number {
+  switch (status.state) {
+    case "Launching":
+    case "Connecting":
+    case "AwaitingAccessCode":
+    case "StartingTunnel":
+    case "Reconnecting":
+    case "Disconnecting":
+      return 500;
+    case "Connected":
+    case "Tunneling":
+      return 2_000;
+    default:
+      return 3_000;
+  }
 }
 
 /** Call once from App's top-level effect; returns a cleanup function. */
@@ -205,41 +264,84 @@ export async function initConnectionListeners(): Promise<() => void> {
   try {
     const [status, profile] = await Promise.all([
       invoke<ConnectionStatus>("get_status"),
-      invoke<ConnectionProfile>("get_default_profile"),
+      invoke<Partial<ConnectionProfile>>("get_default_profile"),
     ]);
-    useConnectionStore.setState({ status, profile });
+    useConnectionStore.setState({
+      status,
+      profile: { ...DEFAULT_PROFILE, ...profile, mtu: profile.mtu ?? DEFAULT_PROFILE.mtu },
+    });
   } catch (error) {
     console.error("Failed to load initial connection state:", error);
   }
 
-  let statusPoll: ReturnType<typeof setInterval> | null = null;
+  let disposed = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let lastNativeLogId = 0;
-  if (isAndroid) {
-    statusPoll = setInterval(() => {
-      void invoke<ConnectionStatus>("get_status")
-        .then((status) => useConnectionStore.setState({ status }))
-        .catch(() => undefined);
-      void invoke<{
-        entries: Array<{ id: number; timestamp: number; line: string }>;
-        last_id: number;
-      }>("get_android_logs", { afterId: lastNativeLogId })
-        .then((batch) => {
+
+  const scheduleAndroidPoll = () => {
+    if (!isAndroid || disposed || document.visibilityState !== "visible") return;
+    const delay = androidPollDelay(useConnectionStore.getState().status);
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
+      if (disposed || document.visibilityState !== "visible") return;
+      try {
+        const status = await invoke<ConnectionStatus>("get_status");
+        useConnectionStore.setState({ status });
+      } catch {
+        // The service may be transitioning between processes.
+      }
+
+      if (useConnectionStore.getState().loggingEnabled) {
+        try {
+          const batch = await invoke<{
+            entries: Array<{ id: number; timestamp: number; line: string }>;
+            last_id: number;
+          }>("get_android_logs", { afterId: lastNativeLogId });
           lastNativeLogId = Math.max(lastNativeLogId, batch.last_id);
           appendLogBatch(
-            batch.entries.map((entry) => ({
-              timestamp: entry.timestamp,
-              line: entry.line,
-            })),
+            batch.entries.map((entry) => ({ timestamp: entry.timestamp, line: entry.line })),
           );
-        })
-        .catch(() => undefined);
-    }, 500);
+        } catch {
+          // Logging is supplementary.
+        }
+      }
+      scheduleAndroidPoll();
+    }, delay);
+  };
+
+  const syncAndroidVisibility = () => {
+    if (!isAndroid) return;
+    const visible = document.visibilityState === "visible";
+    const enabled = useConnectionStore.getState().loggingEnabled && visible;
+    void invoke("set_android_logging", { enabled }).catch(() => undefined);
+    if (visible) {
+      if (pollTimer !== null) clearTimeout(pollTimer);
+      scheduleAndroidPoll();
+    } else {
+      useConnectionStore.setState({ logs: [] });
+      lastNativeLogId = 0;
+      if (pollTimer !== null) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    }
+  };
+
+  if (isAndroid) {
+    document.addEventListener("visibilitychange", syncAndroidVisibility);
+    void invoke("set_android_logging", { enabled: false }).catch(() => undefined);
+    scheduleAndroidPoll();
   }
 
   return () => {
+    disposed = true;
     unlistenStatus();
     unlistenLog();
     if (flushTimer !== null) clearTimeout(flushTimer);
-    if (statusPoll !== null) clearInterval(statusPoll);
+    if (pollTimer !== null) clearTimeout(pollTimer);
+    if (isAndroid) {
+      document.removeEventListener("visibilitychange", syncAndroidVisibility);
+      void invoke("set_android_logging", { enabled: false }).catch(() => undefined);
+    }
   };
 }

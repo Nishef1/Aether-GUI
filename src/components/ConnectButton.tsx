@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, type Variants } from "motion/react";
 import { AlertTriangle, Check, Loader2, Power } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useWindowFocused } from "@/state/windowFocus";
 import type { ConnectionStatus } from "@/types/connection";
@@ -11,6 +12,7 @@ function phaseOf(status: ConnectionStatus): Phase {
   switch (status.state) {
     case "Launching":
     case "Connecting":
+    case "AwaitingAccessCode":
     case "StartingTunnel":
     case "Reconnecting":
     case "Disconnecting":
@@ -96,16 +98,19 @@ export function ConnectButton() {
     >
       <span
         aria-hidden
-        className={cn("absolute inset-0 rounded-full bg-surface-2", RING_ANIM[phase])}
+        className={cn(
+          "absolute inset-0 rounded-full bg-surface-2",
+          !isAndroid && RING_ANIM[phase],
+        )}
         style={{
           boxShadow: RING_SHADOW[phase],
           transition: "box-shadow 0.15s ease",
-          willChange: "transform, opacity",
-          ...playState,
+          willChange: isAndroid ? "auto" : "transform, opacity",
+          ...(!isAndroid ? playState : {}),
         }}
       />
 
-      {GLOW[phase] && (
+      {!isAndroid && GLOW[phase] && (
         <span
           aria-hidden
           className={cn(
@@ -116,41 +121,43 @@ export function ConnectButton() {
         />
       )}
 
-      <AnimatePresence>
-        {(phase === "connecting" || phase === "connected") && (
-          <motion.span
-            key={phase}
-            aria-hidden
-            className="pointer-events-none absolute inset-0 rounded-full border-2"
-            style={{
-              borderColor:
-                phase === "connected"
-                  ? "var(--color-status-connected)"
-                  : "var(--color-status-connecting)",
-            }}
-            initial={{ scale: 0.9, opacity: 0.55 }}
-            animate={{ scale: phase === "connected" ? 2 : 1.7, opacity: 0 }}
-            transition={{ duration: phase === "connected" ? 0.9 : 0.7, ease: "easeOut" }}
-          />
-        )}
-      </AnimatePresence>
+      {!isAndroid && (
+        <AnimatePresence>
+          {(phase === "connecting" || phase === "connected") && (
+            <motion.span
+              key={phase}
+              aria-hidden
+              className="pointer-events-none absolute inset-0 rounded-full border-2"
+              style={{
+                borderColor:
+                  phase === "connected"
+                    ? "var(--color-status-connected)"
+                    : "var(--color-status-connecting)",
+              }}
+              initial={{ scale: 0.9, opacity: 0.55 }}
+              animate={{ scale: phase === "connected" ? 2 : 1.7, opacity: 0 }}
+              transition={{ duration: phase === "connected" ? 0.9 : 0.7, ease: "easeOut" }}
+            />
+          )}
+        </AnimatePresence>
+      )}
 
       <AnimatePresence mode="wait">
         <motion.span
           key={phase}
-          initial={{ opacity: 0, scale: 0.8 }}
+          initial={isAndroid ? false : { opacity: 0, scale: 0.8 }}
           animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.8 }}
-          transition={{ duration: 0.1, ease: [0.4, 0, 0.2, 1] }}
+          exit={isAndroid ? undefined : { opacity: 0, scale: 0.8 }}
+          transition={{ duration: isAndroid ? 0 : 0.1, ease: [0.4, 0, 0.2, 1] }}
           className="relative flex items-center justify-center"
         >
           <Icon
             size={48}
             strokeWidth={2}
-            style={phase === "connecting" ? playState : undefined}
+            style={phase === "connecting" && !isAndroid ? playState : undefined}
             className={
               phase === "connecting"
-                ? "animate-spin text-status-connecting"
+                ? cn("text-status-connecting", !isAndroid && "animate-spin")
                 : phase === "connected"
                   ? "text-status-connected"
                   : phase === "error"
