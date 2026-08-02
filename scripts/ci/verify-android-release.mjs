@@ -62,16 +62,25 @@ const signature = command(apksigner, [
   apk,
 ])
 if (!signature) fail("apksigner verification failed")
-// Android's minimum supported API is 29, so APK Signature Scheme v2 and v3
-// are the required production protections. Some Android Gradle Plugin/key
-// combinations legitimately omit the legacy v1 JAR signature; do not reject
-// an otherwise valid modern APK for that legacy compatibility layer.
-for (const scheme of ["v2", "v3"]) {
-  const match = new RegExp(
-    `Verified using ${scheme} scheme[^:]*:\\s*true`,
-    "i"
-  ).test(signature)
-  if (!match) fail(`APK Signature Scheme ${scheme} is not valid`)
+// Android's minimum supported API is 29, so at least one modern APK signing
+// scheme (v2 or v3) must verify. Some Android Gradle Plugin/key combinations
+// legitimately omit the legacy v1 JAR signature; a v1-only APK is rejected.
+const modernSchemes = ["v2", "v3"]
+const verifiedModernSchemes = modernSchemes.filter((scheme) =>
+  new RegExp(`Verified using ${scheme} scheme[^:]*:\\s*true`, "i").test(
+    signature
+  )
+)
+if (verifiedModernSchemes.length === 0) {
+  const reportedSchemes = signature
+    .split(/\r?\n/)
+    .filter((line) => /Verified using .* scheme/i.test(line))
+    .join(" | ")
+  fail(
+    `no valid modern APK signature scheme was found${
+      reportedSchemes ? ` (${reportedSchemes})` : ""
+    }`
+  )
 }
 const signerCount = signature.match(/Number of signers:\s*(\d+)/i)
 if (!signerCount || signerCount[1] !== "1")
