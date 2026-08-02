@@ -6,6 +6,12 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/binaries/aether
 src-tauri/binaries/aether.exe
+src-tauri/binaries/sing-box
+src-tauri/binaries/sing-box.exe
+src-tauri/binaries/sing-box-version.txt
+src-tauri/binaries/sing-box-LICENSE.txt
+src-tauri/binaries/wintun.dll
+src-tauri/binaries/wintun-LICENSE.txt
 src-tauri/binaries/*.tar.gz
 src-tauri/binaries/*.zip
 src-tauri/binaries/SHA256SUMS.txt

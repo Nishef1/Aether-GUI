@@ -19,8 +19,12 @@ $WintunSha256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef5
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 $Target = Join-Path $DestDir "sing-box.exe"
 $VersionFile = Join-Path $DestDir "sing-box-version.txt"
+$SingBoxLicenseTarget = Join-Path $DestDir "sing-box-LICENSE.txt"
 $TargetWintun = Join-Path $DestDir "wintun.dll"
-if ((Test-Path $Target) -and (Test-Path $TargetWintun) -and (Test-Path $VersionFile)) {
+$WintunLicenseTarget = Join-Path $DestDir "wintun-LICENSE.txt"
+if ((Test-Path $Target) -and (Test-Path $TargetWintun) -and
+    (Test-Path $SingBoxLicenseTarget) -and (Test-Path $WintunLicenseTarget) -and
+    (Test-Path $VersionFile)) {
     if ((Get-Content $VersionFile -Raw).Trim() -eq $Version) {
         Write-Host "[sidecar] sing-box $Version already prepared"
         exit 0
@@ -64,7 +68,11 @@ try {
     if ((Sha256 $Archive) -ne $Expected) { throw "Checksum mismatch for $AssetName" }
     Expand-Archive -Path $Archive -DestinationPath $Extract -Force
     $Downloaded = Get-ChildItem -Path $Extract -Recurse -Filter "sing-box.exe" | Select-Object -First 1
+    $SingBoxLicense = Get-ChildItem -Path $Extract -Recurse -File |
+        Where-Object { $_.Name -in @("LICENSE", "LICENSE.txt", "COPYING") } |
+        Select-Object -First 1
     if (-not $Downloaded) { throw "sing-box.exe missing from $AssetName" }
+    if (-not $SingBoxLicense) { throw "sing-box license missing from $AssetName" }
 
     $WintunArchive = Join-Path $TempDir "wintun.zip"
     $WintunExtract = Join-Path $TempDir "wintun"
@@ -73,17 +81,23 @@ try {
     Expand-Archive -Path $WintunArchive -DestinationPath $WintunExtract -Force
     $DownloadedWintun = Get-ChildItem -Path $WintunExtract -Recurse -Filter "wintun.dll" |
         Where-Object { $_.FullName -match "amd64" } | Select-Object -First 1
+    $WintunLicense = Get-ChildItem -Path $WintunExtract -Recurse -File |
+        Where-Object { $_.Name -match "license" } | Select-Object -First 1
     if (-not $DownloadedWintun) { throw "amd64 wintun.dll missing" }
+    if (-not $WintunLicense) { throw "Wintun prebuilt-binaries license missing" }
     $Signature = Get-AuthenticodeSignature -FilePath $DownloadedWintun.FullName
     if ($Signature.Status -ne "Valid" -or $Signature.SignerCertificate.Subject -notmatch "WireGuard") {
         throw "Wintun Authenticode signature is not valid"
     }
 
     Copy-Item $Downloaded.FullName "$Target.new" -Force
+    Copy-Item $SingBoxLicense.FullName "$SingBoxLicenseTarget.new" -Force
     Move-Item "$Target.new" $Target -Force
+    Move-Item "$SingBoxLicenseTarget.new" $SingBoxLicenseTarget -Force
     Copy-Item $DownloadedWintun.FullName $TargetWintun -Force
+    Copy-Item $WintunLicense.FullName $WintunLicenseTarget -Force
     Set-Content -Path $VersionFile -Value $Version -NoNewline
-    Write-Host "[sidecar] sing-box $Version installed and verified"
+    Write-Host "[sidecar] sing-box $Version and Wintun installed with verified licenses"
 } finally {
     Remove-Item $TempDir -Recurse -Force -ErrorAction SilentlyContinue
 }

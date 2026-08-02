@@ -22,12 +22,15 @@ fn main() {
         .manage(AppState::default())
         .setup(|app| {
             let data_dir = app.handle().path().app_data_dir()?;
-            let state = app.state::<AppState>();
-            state.runtime.prepare_all(app.handle(), &data_dir)?;
-            telemetry::spawn_watcher(app.handle().clone(), state.runtime.clone());
+            // Clone the runtime out of Tauri state before mutably borrowing the
+            // application for tray creation. This keeps setup borrow-safe while
+            // all long-lived watchers share the same runtime instance.
+            let runtime = app.state::<AppState>().runtime.clone();
+            runtime.prepare_all(app.handle(), &data_dir)?;
+            telemetry::spawn_watcher(app.handle().clone(), runtime.clone());
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
-            tray::spawn_state_watcher(app.handle().clone(), state.runtime.clone());
+            tray::spawn_state_watcher(app.handle().clone(), runtime);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -62,12 +65,12 @@ fn main() {
         .expect("error building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                let state = app_handle.state::<AppState>();
+                let runtime = app_handle.state::<AppState>().runtime.clone();
                 let data_dir = app_handle
                     .path()
                     .app_data_dir()
                     .unwrap_or_else(|_| std::env::temp_dir());
-                state.runtime.shutdown_all(app_handle, &data_dir);
+                runtime.shutdown_all(app_handle, &data_dir);
             }
         });
 }

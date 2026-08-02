@@ -16,7 +16,8 @@ done
 mkdir -p "$DEST_DIR"
 VERSION_FILE="$DEST_DIR/sing-box-version.txt"
 TARGET="$DEST_DIR/sing-box"
-if [[ -x "$TARGET" && -f "$VERSION_FILE" && "$(tr -d '\r\n' < "$VERSION_FILE")" == "$VERSION" ]]; then
+LICENSE_TARGET="$DEST_DIR/sing-box-LICENSE.txt"
+if [[ -x "$TARGET" && -f "$LICENSE_TARGET" && -f "$VERSION_FILE" && "$(tr -d '\r\n' < "$VERSION_FILE")" == "$VERSION" ]]; then
   echo "[sidecar] sing-box $VERSION already prepared"
   exit 0
 fi
@@ -47,7 +48,7 @@ let s=""; process.stdin.on("data",d=>s+=d); process.stdin.on("end",()=>{
 });
 ')" || { echo "Could not resolve sing-box $VERSION for $PLATFORM" >&2; exit 1; }
 IFS=$'\t' read -r ASSET URL DIGEST <<< "$META"
-EXPECTED="${DIGEST#sha256:}"
+EXPECTED="$(printf '%s' "${DIGEST#sha256:}" | tr '[:upper:]' '[:lower:]')"
 
 TMP_DIR="$(mktemp -d "${DEST_DIR%/}/.singbox-install.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -61,12 +62,16 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
   ACTUAL="$(shasum -a 256 "$ARCHIVE" | awk '{print tolower($1)}')"
 fi
-[[ "$ACTUAL" == "${EXPECTED,,}" ]] || { echo "Checksum mismatch for $ASSET" >&2; exit 1; }
+[[ "$ACTUAL" == "$EXPECTED" ]] || { echo "Checksum mismatch for $ASSET" >&2; exit 1; }
 
 tar -xzf "$ARCHIVE" -C "$EXTRACT_DIR"
 DOWNLOADED="$(find "$EXTRACT_DIR" -type f -name sing-box -print -quit)"
+DOWNLOADED_LICENSE="$(find "$EXTRACT_DIR" -type f \( -iname 'LICENSE' -o -iname 'LICENSE.txt' -o -iname 'COPYING' \) -print -quit)"
 [[ -n "$DOWNLOADED" ]] || { echo "sing-box binary missing from $ASSET" >&2; exit 1; }
+[[ -n "$DOWNLOADED_LICENSE" ]] || { echo "sing-box license missing from $ASSET" >&2; exit 1; }
 install -m 0755 "$DOWNLOADED" "$TARGET.new"
+install -m 0644 "$DOWNLOADED_LICENSE" "$LICENSE_TARGET.new"
 mv "$TARGET.new" "$TARGET"
+mv "$LICENSE_TARGET.new" "$LICENSE_TARGET"
 printf '%s' "$VERSION" > "$VERSION_FILE"
-echo "[sidecar] sing-box $VERSION installed and SHA-256 verified"
+echo "[sidecar] sing-box $VERSION installed with verified digest and license"
