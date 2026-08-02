@@ -1,0 +1,46 @@
+name: rustfmt-once
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: rustfmt-once
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format Rust workspace
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+
+      - name: Commit formatter output only
+        run: |
+          set -euo pipefail
+          paths=(
+            src-tauri/src/aether/mod.rs
+            src-tauri/src/aether/profiles.rs
+            src-tauri/src/aether/pty.rs
+          )
+          if git diff --quiet -- "${paths[@]}"; then
+            echo "Rust files are already formatted"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${paths[@]}"
+          git commit -m "style(rust): apply rustfmt"
+          git push origin HEAD:main
