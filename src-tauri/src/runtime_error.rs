@@ -5,8 +5,6 @@ use thiserror::Error;
 pub enum RuntimeError {
     #[error("unknown tunnel engine: {0}")]
     UnknownEngine(String),
-    #[error("tunnel engine {0} is busy")]
-    EngineBusy(String),
     #[error("invalid profile for {engine}: {message}")]
     InvalidProfile { engine: String, message: String },
     #[error("tunnel engine {engine} does not support interaction {interaction}")]
