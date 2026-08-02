@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { Gauge, Globe2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useConnectionStore } from "@/state/connectionStore";
+import { useTelemetryStore } from "@/state/telemetryStore";
 import { useWindowFocused } from "@/state/windowFocus";
 
 const TEXT_TRANSITION = {
@@ -9,6 +11,8 @@ const TEXT_TRANSITION = {
   exit: { y: -4, opacity: 0 },
   transition: { duration: 0.1, ease: [0.4, 0, 0.2, 1] as const },
 };
+
+const BYTE_UNITS = ["KiB", "MiB", "GiB", "TiB"];
 
 function useElapsed(sinceMs: number | null): { formatted: string; totalSeconds: number } {
   const [now, setNow] = useState(() => Date.now());
@@ -25,14 +29,34 @@ function useElapsed(sinceMs: number | null): { formatted: string; totalSeconds: 
   return { formatted: `${h}:${m}:${s}`, totalSeconds: total };
 }
 
-/** Thin progress track under the status text, shown only while Connecting.
- * Determinate (fills toward Aether's own reported scan budget) once that
- * budget is known; an indeterminate sweep before then, so there's always
- * visible motion rather than a dead bar. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  let value = bytes;
+  let unit = -1;
+  do {
+    value /= 1024;
+    unit += 1;
+  } while (value >= 1024 && unit < BYTE_UNITS.length - 1);
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${BYTE_UNITS[unit]}`;
+}
+
+function countryFlag(code: string): string {
+  const normalized = code.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalized)) return "🌐";
+  return String.fromCodePoint(
+    ...normalized.split("").map((character) => 127397 + character.charCodeAt(0)),
+  );
+}
+
+function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames([navigator.language || "en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
 function ScanProgressBar({ percent }: { percent: number | null }) {
-  // The indeterminate sweep freezes while the window is unfocused — an
-  // infinite loop keeps the compositor at 60fps in the background (see
-  // state/windowFocus.ts), and scanning is exactly when users tab away.
   const focused = useWindowFocused();
   return (
     <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
@@ -55,42 +79,31 @@ function ScanProgressBar({ percent }: { percent: number | null }) {
   );
 }
 
-/**
- * All status text stays in the two neutral greys (--foreground /
- * --muted-foreground) regardless of connection state — only the
- * ConnectButton's ring/icon carries status color. This sidesteps every
- * marginal-contrast case a semantic status color would hit as small text
- * (verified during design: idle-grey as text measures 4.02:1, just under
- * AA's 4.5:1 minimum).
- */
 export function ConnectionStatusLine() {
-  const status = useConnectionStore((s) => s.status);
-  const scanBudgetSecs = useConnectionStore((s) => s.scanBudgetSecs);
-  const connectedAt = status.state === "Connected" ? status.connected_at_ms : null;
-  const elapsed = useElapsed(connectedAt).formatted;
+  const status = useConnectionStore((state) => state.status);
+  const scanBudgetSecs = useConnectionStore((state) => state.scanBudgetSecs);
+  const telemetry = useTelemetryStore((state) => state.snapshot);
+  const connectedAt =
+    status.state === "Connected" ||
+    status.state === "StartingTunnel" ||
+    status.state === "Tunneling"
+      ? status.connected_at_ms
+      : null;
+  const { formatted: elapsed } = useElapsed(connectedAt);
+  const connectionReady = connectedAt != null;
 
-  // Route discovery can legitimately take up to ~2.5 minutes with nothing
-  // else changing on screen — a running timer (and, once Aether reports its
-  // own scan budget in its log stream, a real percentage) is the difference
-  // between "still working" and "looks hung", tracked from the moment a
-  // fresh attempt starts (Launching) through the whole Connecting wait.
-  // This reads the wall clock (Date.now()) on a specific state transition,
-  // which is an external-system read, not a state mirror — a genuine effect,
-  // not something derivable during render.
   const [attemptStartedAt, setAttemptStartedAt] = useState<number | null>(null);
-  /* eslint-disable react-hooks/set-state-in-effect -- capturing Date.now()
-   * at the moment of transition; can't be computed during render. */
+  /* eslint-disable react-hooks/set-state-in-effect -- capture transition time */
   useEffect(() => {
     if (status.state === "Launching") setAttemptStartedAt(Date.now());
     else if (status.state === "Idle") setAttemptStartedAt(null);
   }, [status.state]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
   const isAttempting = status.state === "Launching" || status.state === "Connecting";
   const { formatted: attemptElapsed, totalSeconds: attemptSeconds } = useElapsed(
     isAttempting ? attemptStartedAt : null,
   );
-  // Capped below 100 until the backend actually reports Connected — hitting
-  // 100% here would claim done before the state machine agrees.
   const scanPercent =
     scanBudgetSecs != null
       ? Math.min(99, Math.round((attemptSeconds / scanBudgetSecs) * 100))
@@ -98,7 +111,6 @@ export function ConnectionStatusLine() {
 
   let primary: string;
   let secondary: string;
-
   switch (status.state) {
     case "Idle":
       primary = "Disconnected";
@@ -106,7 +118,7 @@ export function ConnectionStatusLine() {
       break;
     case "Launching":
       primary = "Starting Aether…";
-      secondary = "Answering setup prompts";
+      secondary = "Preparing the transport core";
       break;
     case "Connecting":
       primary = "Finding a route…";
@@ -115,13 +127,21 @@ export function ConnectionStatusLine() {
           ? `Still searching · ${attemptElapsed} · ${scanPercent}%`
           : `Still searching · ${attemptElapsed}`;
       break;
-    case "Reconnecting":
-      primary = "Reconnecting…";
-      secondary = `Attempt ${status.attempt} of ${status.max_attempts}`;
-      break;
     case "Connected":
       primary = "Connected";
       secondary = elapsed;
+      break;
+    case "StartingTunnel":
+      primary = "Starting system tunnel…";
+      secondary = `Validating ${status.tunnel} · ${elapsed}`;
+      break;
+    case "Tunneling":
+      primary = "Protected system-wide";
+      secondary = elapsed;
+      break;
+    case "Reconnecting":
+      primary = "Reconnecting…";
+      secondary = `Attempt ${status.attempt} of ${status.max_attempts}`;
       break;
     case "Disconnecting":
       primary = "Disconnecting…";
@@ -133,11 +153,18 @@ export function ConnectionStatusLine() {
       break;
   }
 
+  const hasEgressInfo = Boolean(
+    telemetry.public_ip || telemetry.country_code || telemetry.latency_ms != null,
+  );
+  const country = telemetry.country_code
+    ? `${countryFlag(telemetry.country_code)} ${countryName(telemetry.country_code)}`
+    : null;
+
   return (
     <div
       aria-live="polite"
       aria-atomic="true"
-      className="flex flex-col items-center gap-2 text-center"
+      className="flex min-h-[60px] flex-col items-center gap-2 text-center"
     >
       <AnimatePresence mode="wait">
         <motion.span
@@ -150,14 +177,59 @@ export function ConnectionStatusLine() {
       </AnimatePresence>
       <AnimatePresence mode="wait">
         <motion.span
-          key={status.state}
-          className="block min-h-5 max-w-xs truncate font-mono text-xs text-muted-foreground"
+          key={`${status.state}-${secondary}`}
+          className={`block min-h-5 max-w-xs font-mono text-xs text-muted-foreground ${
+            status.state === "Error"
+              ? "line-clamp-3 whitespace-normal leading-relaxed"
+              : "truncate"
+          }`}
           {...TEXT_TRANSITION}
         >
           {secondary}
         </motion.span>
       </AnimatePresence>
+
       {status.state === "Connecting" && <ScanProgressBar percent={scanPercent} />}
+
+      {connectionReady && !telemetry.egress_probe_complete && (
+        <span className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
+          <Globe2 size={11} aria-hidden="true" />
+          Checking exit IP…
+        </span>
+      )}
+      {connectionReady && telemetry.egress_probe_complete && !hasEgressInfo && (
+        <span className="font-mono text-[10px] text-muted-foreground">
+          Exit information unavailable
+        </span>
+      )}
+      {connectionReady && hasEgressInfo && (
+        <div
+          className="flex max-w-sm flex-wrap items-center justify-center gap-x-2 gap-y-1 font-mono text-[10px] text-muted-foreground"
+          aria-label="Tunnel exit information"
+        >
+          {country && (
+            <span className="inline-flex items-center gap-1" title="Tunnel exit country">
+              <Globe2 size={11} aria-hidden="true" />
+              {country}
+            </span>
+          )}
+          {telemetry.public_ip && <span title="Public tunnel exit IP">{telemetry.public_ip}</span>}
+          {telemetry.latency_ms != null && (
+            <span
+              className="inline-flex items-center gap-1"
+              title="End-to-end latency through the tunnel"
+            >
+              <Gauge size={11} aria-hidden="true" />
+              {telemetry.latency_ms} ms
+            </span>
+          )}
+        </div>
+      )}
+      {status.state === "Tunneling" && (
+        <span className="font-mono text-[10px] text-muted-foreground" aria-label="Tunnel traffic">
+          ↓ {formatBytes(telemetry.received_bytes)} · ↑ {formatBytes(telemetry.sent_bytes)}
+        </span>
+      )}
     </div>
   );
 }

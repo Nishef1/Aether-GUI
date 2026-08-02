@@ -11,6 +11,12 @@ pub enum RuntimeError {
     InvalidProfile { engine: String, message: String },
     #[error("tunnel engine {engine} does not support interaction {interaction}")]
     UnsupportedInteraction { engine: String, interaction: String },
+    #[error("unknown system tunnel: {0}")]
+    UnknownSystemTunnel(String),
+    #[error("system tunnel settings cannot change while a connection is active")]
+    SystemTunnelBusy,
+    #[error("system tunnel error: {0}")]
+    SystemTunnel(String),
     #[error("{0}")]
     Engine(String),
     #[error("internal runtime error: {0}")]

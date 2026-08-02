@@ -15,6 +15,7 @@ import { NoizeProfileToggle } from "@/components/NoizeProfileToggle";
 import { BindAddressField } from "@/components/BindAddressField";
 import { ZeroTrustSettings } from "@/components/ZeroTrustSettings";
 import { RoutingSettings } from "@/components/RoutingSettings";
+import { SystemTunnelToggle } from "@/components/SystemTunnelToggle";
 import { useConnectionStore } from "@/state/connectionStore";
 
 function FieldRow({
@@ -44,24 +45,12 @@ function FieldRow({
   );
 }
 
-/**
- * Collapsed by default — this *is* the auto-mode default: press Connect,
- * done. Everything configurable (the options Aether's own interactive setup
- * exposes — see aether/prompts.rs and profiles.rs, nothing else) plus the
- * raw log stream live behind this one disclosure.
- *
- * Deliberately animation-light: opening used to stack a Motion layout
- * spring, a 300ms tw-animate slide, an instant column reflow, and three
- * Glass filter mounts — four systems fighting read as jank. Now it's one
- * fast CSS fade/slide and nothing else.
- */
 export function AdvancedPanel() {
-  const logs = useConnectionStore((s) => s.logs);
-  const status = useConnectionStore((s) => s.status);
-  const quickReconnect = useConnectionStore((s) => s.profile.quick_reconnect);
-  const setQuickReconnect = useConnectionStore((s) => s.setQuickReconnect);
+  const logs = useConnectionStore((state) => state.logs);
+  const status = useConnectionStore((state) => state.status);
+  const quickReconnect = useConnectionStore((state) => state.profile.quick_reconnect);
+  const setQuickReconnect = useConnectionStore((state) => state.setQuickReconnect);
   const [open, setOpen] = useState(false);
-  // Launch flag — locked mid-session like the other profile controls.
   const locked = status.state !== "Idle" && status.state !== "Error";
   const [autoScroll, setAutoScroll] = useState(true);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -75,7 +64,7 @@ export function AdvancedPanel() {
   return (
     <div className="w-full max-w-sm">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="flex w-full items-center justify-center gap-1.5 py-2 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary rounded-md">
+        <CollapsibleTrigger className="flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary">
           <Settings2 size={14} />
           Advanced
           <ChevronDown
@@ -88,7 +77,7 @@ export function AdvancedPanel() {
           <div className="flex flex-col gap-4 pb-2">
             <FieldRow
               label="Protocol"
-              tooltip="MASQUE disguises traffic as normal HTTPS — best against strict censorship. WireGuard is lighter and faster. gool nests two WireGuard tunnels for extra security at a speed cost."
+              tooltip="MASQUE disguises traffic as normal HTTPS. WireGuard is lighter and faster. gool nests two WireGuard tunnels at a speed cost."
             >
               <ProtocolSelect />
             </FieldRow>
@@ -103,31 +92,37 @@ export function AdvancedPanel() {
             </FieldRow>
             <FieldRow
               label="MASQUE Transport"
-              tooltip="How the MASQUE tunnel carries traffic. HTTP/3 (QUIC) has the fastest handshake; HTTP/2 (TCP) looks like ordinary HTTPS and works where UDP is blocked or throttled. Only applies to the MASQUE protocol."
+              tooltip="HTTP/3 has the fastest handshake; HTTP/2 works where UDP is blocked or throttled."
             >
               <MasqueTransportToggle />
             </FieldRow>
             <FieldRow
               label="Obfuscation"
-              tooltip="Disguises the handshake so DPI can't fingerprint the protocol. Heavier profiles send more decoy traffic — try escalating if the default doesn't connect. Options change based on the selected protocol."
+              tooltip="Disguises the handshake so DPI cannot fingerprint the protocol."
             >
               <NoizeProfileToggle />
             </FieldRow>
             <FieldRow
               label="SOCKS5 Proxy"
-              tooltip="The local address Aether's SOCKS5 proxy listens on. Change the port to avoid conflicts, or enable LAN to share the tunnel with other devices on your network."
+              tooltip="The local address Aether listens on. The sing-box system tunnel consumes this endpoint without modifying Aether."
             >
               <BindAddressField />
             </FieldRow>
             <FieldRow
+              label="System-wide tunnel"
+              tooltip="Optional sing-box TUN sidecar. It routes desktop applications through Aether and remains independently upgradeable."
+            >
+              <SystemTunnelToggle />
+            </FieldRow>
+            <FieldRow
               label="Zero Trust (organization)"
-              tooltip="Connect as a managed Cloudflare Zero Trust device instead of anonymous consumer WARP. Works with MASQUE and WireGuard. Leave the team empty for normal one-click mode."
+              tooltip="Connect as a managed Cloudflare Zero Trust device. Leave the team empty for normal one-click mode."
             >
               <ZeroTrustSettings />
             </FieldRow>
             <FieldRow
               label="DNS & Routing"
-              tooltip="Optional Aether 1.5 controls for DNS inside the tunnel and rules that block a destination or send it directly outside the tunnel."
+              tooltip="Optional Aether 1.5 controls for DNS and direct/block rules."
             >
               <RoutingSettings />
             </FieldRow>
@@ -140,9 +135,7 @@ export function AdvancedPanel() {
                     <Info size={12} />
                   </TooltipTrigger>
                   <TooltipContent>
-                    Remembers the last gateway that worked and re-tests it first on the next
-                    connect, skipping the full scan when it still works. Turn off to always scan
-                    fresh.
+                    Re-tests the last working gateway first. Disable it to force a fresh scan.
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -164,16 +157,18 @@ export function AdvancedPanel() {
 
             <div
               ref={viewportRef}
-              onScroll={(e) => {
-                const el = e.currentTarget;
-                setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
+              onScroll={(event) => {
+                const element = event.currentTarget;
+                setAutoScroll(
+                  element.scrollHeight - element.scrollTop - element.clientHeight < 24,
+                );
               }}
               className="max-h-64 overflow-y-auto rounded-md bg-black/20 p-2 font-mono text-xs text-muted-foreground ring-1 ring-white/10"
             >
               {logs.length === 0 ? (
                 <p className="text-status-idle">No output yet.</p>
               ) : (
-                logs.map((l, i) => <p key={i}>{l.line}</p>)
+                logs.map((log, index) => <p key={`${log.timestamp}-${index}`}>{log.line}</p>)
               )}
             </div>
           </div>

@@ -10,6 +10,7 @@ import { AccessCodePrompt } from "@/components/AccessCodePrompt";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TitleBar } from "@/components/TitleBar";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
+import { initTelemetryListeners } from "@/state/telemetryStore";
 
 const SCREEN_TRANSITION = {
   initial: { opacity: 0, y: 8 },
@@ -19,7 +20,7 @@ const SCREEN_TRANSITION = {
 };
 
 function MainScreen() {
-  const attemptId = useConnectionStore((s) => s.attemptId);
+  const attemptId = useConnectionStore((state) => state.attemptId);
   return (
     <div className="relative z-10 flex h-full flex-col items-center overflow-y-auto p-6">
       <div className="flex flex-1 flex-col items-center justify-center gap-6">
@@ -34,14 +35,16 @@ function MainScreen() {
 }
 
 export function App() {
-  const sidecarError = useConnectionStore((s) => s.sidecarError);
-  const retryAfterSidecarError = useConnectionStore((s) => s.retryAfterSidecarError);
-  const connect = useConnectionStore((s) => s.connect);
+  const sidecarError = useConnectionStore((state) => state.sidecarError);
+  const retryAfterSidecarError = useConnectionStore((state) => state.retryAfterSidecarError);
+  const connect = useConnectionStore((state) => state.connect);
 
   useEffect(() => {
-    const cleanup = initConnectionListeners();
+    const connectionCleanup = initConnectionListeners();
+    const telemetryCleanup = initTelemetryListeners();
     return () => {
-      void cleanup.then((unlisten) => unlisten());
+      void connectionCleanup.then((unlisten) => unlisten());
+      void telemetryCleanup.then((unlisten) => unlisten());
     };
   }, []);
 

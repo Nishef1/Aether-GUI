@@ -4,8 +4,9 @@
   "version": "0.7.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "prepare:sidecars": "node scripts/prepare-sidecars.mjs",
+    "dev": "npm run prepare:sidecars && vite",
+    "build": "npm run prepare:sidecars && tsc -b && vite build",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",

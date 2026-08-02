@@ -2,6 +2,8 @@ use crate::aether::profiles::ConnectionProfile;
 use crate::engine::EngineDescriptor;
 use crate::runtime_error::RuntimeError;
 use crate::state::{AppState, ConnectionState};
+use crate::system_tunnel::{SystemTunnelDescriptor, SystemTunnelSelection};
+use crate::telemetry::RuntimeTelemetry;
 use crate::tray;
 use serde_json::Value;
 use tauri::{AppHandle, State};
@@ -49,8 +51,7 @@ pub fn set_default_profile(
     state.runtime.set_aether_default_profile(&app, profile)
 }
 
-// Engine-neutral extension API. Android and future sidecars such as sing-box
-// use these commands instead of adding more Aether-specific IPC endpoints.
+// Engine-neutral extension API.
 #[tauri::command]
 pub fn list_engines(state: State<AppState>) -> Vec<EngineDescriptor> {
     state.runtime.list()
@@ -102,6 +103,34 @@ pub fn submit_engine_interaction(
     state
         .runtime
         .submit_interaction(Some(&engine_id), &interaction, payload)
+}
+
+// System-wide TUN API. sing-box is a sidecar over Aether SOCKS, not another
+// transport engine, so it stays independently replaceable.
+#[tauri::command]
+pub fn list_system_tunnels(state: State<AppState>) -> Vec<SystemTunnelDescriptor> {
+    state.runtime.list_system_tunnels()
+}
+
+#[tauri::command]
+pub fn get_system_tunnel(state: State<AppState>) -> SystemTunnelSelection {
+    state.runtime.system_tunnel_selection()
+}
+
+#[tauri::command]
+pub fn set_system_tunnel(
+    app: AppHandle,
+    state: State<AppState>,
+    selection: SystemTunnelSelection,
+) -> Result<(), RuntimeError> {
+    state
+        .runtime
+        .set_system_tunnel_selection(&app, selection)
+}
+
+#[tauri::command]
+pub fn get_runtime_telemetry() -> RuntimeTelemetry {
+    crate::telemetry::snapshot()
 }
 
 #[tauri::command]

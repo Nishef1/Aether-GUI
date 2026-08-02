@@ -8,6 +8,9 @@ mod events;
 mod focus;
 mod runtime_error;
 mod state;
+mod system_tunnel;
+mod telemetry;
+mod traffic;
 mod tray;
 
 use state::AppState;
@@ -20,9 +23,11 @@ fn main() {
         .setup(|app| {
             let data_dir = app.handle().path().app_data_dir()?;
             let state = app.state::<AppState>();
-            state.runtime.prepare_all(&data_dir)?;
+            state.runtime.prepare_all(app.handle(), &data_dir)?;
+            telemetry::spawn_watcher(app.handle().clone(), state.runtime.clone());
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
+            tray::spawn_state_watcher(app.handle().clone(), state.runtime.clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -38,6 +43,10 @@ fn main() {
             commands::get_engine_default_profile,
             commands::set_engine_default_profile,
             commands::submit_engine_interaction,
+            commands::list_system_tunnels,
+            commands::get_system_tunnel,
+            commands::set_system_tunnel,
+            commands::get_runtime_telemetry,
             commands::get_close_to_tray,
             commands::set_close_to_tray,
         ])
@@ -58,7 +67,7 @@ fn main() {
                     .path()
                     .app_data_dir()
                     .unwrap_or_else(|_| std::env::temp_dir());
-                state.runtime.shutdown_all(&data_dir);
+                state.runtime.shutdown_all(app_handle, &data_dir);
             }
         });
 }
