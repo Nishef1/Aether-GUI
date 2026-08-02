@@ -12,7 +12,9 @@ import type {
   ZeroTrustAuth,
 } from "@/types/connection";
 
-const MAX_LOG_LINES = 500;
+export type LogLineLimit = 100 | 250 | 500;
+
+const DEFAULT_LOG_LINE_LIMIT: LogLineLimit = 250;
 const BUDGET_RE = /budget=(\d+)s/;
 const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
   turbo: 75,
@@ -64,6 +66,7 @@ interface ConnectionState {
   profile: ConnectionProfile;
   logs: LogLine[];
   loggingEnabled: boolean;
+  logLineLimit: LogLineLimit;
   sidecarError: string | null;
   scanBudgetSecs: number | null;
   attemptId: number;
@@ -94,6 +97,8 @@ interface ConnectionState {
   setRouteDirect: (route_direct: string) => void;
   setRoutesFile: (routes_file: string) => void;
   setLoggingEnabled: (enabled: boolean) => Promise<void>;
+  setLogLineLimit: (limit: LogLineLimit) => void;
+  clearLogs: () => void;
   retryAfterSidecarError: () => void;
 }
 
@@ -101,7 +106,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   status: { state: "Idle" },
   profile: { ...DEFAULT_PROFILE },
   logs: [],
-  loggingEnabled: !isAndroid,
+  loggingEnabled: false,
+  logLineLimit: DEFAULT_LOG_LINE_LIMIT,
   sidecarError: null,
   scanBudgetSecs: null,
   attemptId: 0,
@@ -198,6 +204,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       }
     }
   },
+  setLogLineLimit: (logLineLimit) =>
+    set((state) => ({
+      logLineLimit,
+      logs: state.logs.slice(-logLineLimit),
+    })),
+  clearLogs: () => set({ logs: [] }),
   retryAfterSidecarError: () => set({ sidecarError: null }),
 }));
 
@@ -213,7 +225,9 @@ function appendLogBatch(batch: LogLine[]) {
     if (match) budget = Number(match[1]);
   }
   useConnectionStore.setState((state) => ({
-    logs: [...state.logs, ...batch].slice(-MAX_LOG_LINES),
+    ...(state.loggingEnabled
+      ? { logs: [...state.logs, ...batch].slice(-state.logLineLimit) }
+      : {}),
     ...(budget !== null ? { scanBudgetSecs: budget } : {}),
   }));
 }
