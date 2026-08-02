@@ -92,6 +92,8 @@ class AndroidFeatureParityTest(unittest.TestCase):
         self.assertIn("manager.session.take()", manager)
         self.assertIn("stop_session_blocking", manager)
         self.assertIn("orphan::reap_orphan", manager)
+        self.assertIn("generation.wrapping_add(1)", manager)
+        self.assertIn("if !is_current(&manager, generation)", manager)
         self.assertNotIn("return Err(AetherError::NotConnected);", manager)
 
     def test_exit_requested_runs_cleanup_once(self) -> None:
