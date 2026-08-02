@@ -339,13 +339,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release upload "$RELEASE_TAG" \
-            "release/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk" \
-            release/SHA256SUMS.txt \
+          gh release upload "$RELEASE_TAG" release/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
           while IFS= read -r asset; do
-            gh release delete-asset "$asset" --repo "$GITHUB_REPOSITORY" --yes
+            gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
           done < <(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -i 'unsigned.*\.apk$' || true)
           gh release edit "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \

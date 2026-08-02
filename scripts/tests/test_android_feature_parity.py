@@ -170,6 +170,8 @@ class AndroidFeatureParityTest(unittest.TestCase):
         self.assertIn('const modernSchemes = ["v2", "v3"]', verifier)
         self.assertIn('replaceAll(":", "")', verifier)
         self.assertIn("Replace release assets with current platform builds", workflow)
+        self.assertIn('gh release upload "$RELEASE_TAG" release/*', workflow)
+        self.assertIn('gh release delete-asset "$RELEASE_TAG" "$asset"', workflow)
 
 
 if __name__ == "__main__":
