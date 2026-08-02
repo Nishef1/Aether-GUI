@@ -64,6 +64,46 @@ class AndroidFeatureParityTest(unittest.TestCase):
         self.assertIn('partialOutput = ""', runtime)
         self.assertIn('EGRESS_PROBE_INTERVAL_MS = 300_000L', service)
 
+    def test_android_task_close_stops_service_and_preserves_icon_parity(self) -> None:
+        manifest = self.read("src-tauri/plugins/aether-vpn/android/src/main/AndroidManifest.xml")
+        package = self.read("package.json")
+        branding = self.read("scripts/apply-android-branding.mjs")
+        icon_source = self.read("scripts/prepare-app-icon.mjs")
+        gitignore = self.read(".gitignore")
+        self.assertIn('android:stopWithTask="true"', manifest)
+        self.assertIn('"prepare:app-icon"', package)
+        self.assertIn('"apply:android-branding"', package)
+        self.assertIn("128x128@2x.png", icon_source)
+        self.assertIn("mipmap-anydpi-v26", branding)
+        self.assertIn("ic_launcher_round.xml", branding)
+        self.assertIn("src-tauri/icons/icon.png", gitignore)
+
+    def test_windows_shutdown_terminates_descendant_processes(self) -> None:
+        orphan = self.read("src-tauri/src/aether/orphan.rs")
+        pty = self.read("src-tauri/src/aether/pty.rs")
+        sing_box = self.read("src-tauri/src/system_tunnel/sing_box/process.rs")
+        self.assertIn('"/T"', orphan)
+        self.assertIn('"/F"', orphan)
+        self.assertIn("terminate_process_tree(self.pid())", pty)
+        self.assertIn("terminate_process_tree(child.id())", sing_box)
+
+    def test_disconnect_owns_and_drains_the_session(self) -> None:
+        manager = self.read("src-tauri/src/aether/mod.rs")
+        self.assertIn("manager.session.take()", manager)
+        self.assertIn("stop_session_blocking", manager)
+        self.assertIn("orphan::reap_orphan", manager)
+        self.assertIn("generation.wrapping_add(1)", manager)
+        self.assertIn("if !is_current(&manager, generation)", manager)
+        self.assertNotIn("return Err(AetherError::NotConnected);", manager)
+
+    def test_exit_requested_runs_cleanup_once(self) -> None:
+        main = self.read("src-tauri/src/main.rs")
+        state = self.read("src-tauri/src/state.rs")
+        self.assertIn("RunEvent::ExitRequested", main)
+        self.assertIn("RunEvent::Exit", main)
+        self.assertIn("begin_shutdown", main)
+        self.assertIn("shutdown_started.swap(true", state)
+
     def test_android_mtu_is_shared_by_vpn_and_hev(self) -> None:
         service = self.read("src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt")
         panel = self.read("src/components/AdvancedPanel.tsx")

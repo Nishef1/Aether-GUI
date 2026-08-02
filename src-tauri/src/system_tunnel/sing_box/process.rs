@@ -40,6 +40,8 @@ impl SingBoxProcess {
     pub fn kill(&mut self) {
         match &mut self.inner {
             ProcessKind::Local(child) => {
+                #[cfg(windows)]
+                crate::aether::orphan::terminate_process_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -219,10 +221,7 @@ impl ElevatedProcess {
         if self.exit_code.is_some() {
             return;
         }
-        let mut command = Command::new("taskkill.exe");
-        command.args(["/PID", &self.pid.to_string(), "/T", "/F"]);
-        no_window(&mut command);
-        let _ = command.status();
+        crate::aether::orphan::terminate_process_tree(self.pid);
         self.exit_code = Some(0);
     }
 }

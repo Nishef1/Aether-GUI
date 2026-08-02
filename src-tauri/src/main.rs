@@ -16,6 +16,19 @@ mod tray;
 use state::AppState;
 use tauri::{Manager, WindowEvent};
 
+fn shutdown_runtime(app_handle: &tauri::AppHandle) {
+    let state = app_handle.state::<AppState>();
+    if !state.begin_shutdown() {
+        return;
+    }
+    let runtime = state.runtime.clone();
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    runtime.shutdown_all(app_handle, &data_dir);
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -63,14 +76,10 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                let runtime = app_handle.state::<AppState>().runtime.clone();
-                let data_dir = app_handle
-                    .path()
-                    .app_data_dir()
-                    .unwrap_or_else(|_| std::env::temp_dir());
-                runtime.shutdown_all(app_handle, &data_dir);
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                shutdown_runtime(app_handle);
             }
+            _ => {}
         });
 }
