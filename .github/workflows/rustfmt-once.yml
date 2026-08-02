@@ -24,7 +24,7 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Format Rust workspace
+      - name: Format Rust workspace once
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
 
       - name: Commit formatter output only
