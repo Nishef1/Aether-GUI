@@ -1,5 +1,6 @@
 use crate::engine::EngineRuntime;
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Shared connection state emitted by every transport and system-tunnel
@@ -38,12 +39,32 @@ pub enum ConnectionState {
 
 pub struct AppState {
     pub runtime: Arc<EngineRuntime>,
+    shutdown_started: AtomicBool,
+}
+
+impl AppState {
+    pub fn begin_shutdown(&self) -> bool {
+        !self.shutdown_started.swap(true, Ordering::SeqCst)
+    }
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             runtime: Arc::new(EngineRuntime::default()),
+            shutdown_started: AtomicBool::new(false),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_guard_only_allows_one_cleanup_pass() {
+        let state = AppState::default();
+        assert!(state.begin_shutdown());
+        assert!(!state.begin_shutdown());
     }
 }
