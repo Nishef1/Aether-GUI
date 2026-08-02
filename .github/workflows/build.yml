@@ -13,12 +13,10 @@ permissions:
   contents: read
 
 jobs:
-  cleanup-obsolete-release:
-    name: remove obsolete v0.7.2 release
+  mark:
+    name: start platform build
     runs-on: ubuntu-24.04
     permissions:
-      actions: write
-      contents: write
       statuses: write
     steps:
       - name: Mark platform build pending
@@ -31,35 +29,8 @@ jobs:
             -f description='Building desktop and Android artifacts' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
-      - name: Delete obsolete release and tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for tag in v0.7.2 0.7.2; do
-            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
-            elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
-              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
-            fi
-          done
-
-      - name: Delete obsolete build artifacts and workflow runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
-            --jq '.artifacts[].id' | while read -r artifact_id; do
-              [ -n "$artifact_id" ] && gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
-            done
-          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
-            --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id" | while read -r run_id; do
-              [ -n "$run_id" ] && gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/runs/$run_id"
-            done
-
   desktop:
-    needs: cleanup-obsolete-release
+    needs: mark
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -168,7 +139,7 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*setup.exe
 
   android:
-    needs: cleanup-obsolete-release
+    needs: mark
     name: android-arm64
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -228,7 +199,7 @@ jobs:
   report:
     name: publish build result
     if: always()
-    needs: [cleanup-obsolete-release, desktop, android]
+    needs: [mark, desktop, android]
     runs-on: ubuntu-24.04
     permissions:
       statuses: write
@@ -236,16 +207,16 @@ jobs:
       - name: Publish aggregate commit status
         env:
           GH_TOKEN: ${{ github.token }}
-          CLEANUP_RESULT: ${{ needs.cleanup-obsolete-release.result }}
+          MARK_RESULT: ${{ needs.mark.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
           ANDROID_RESULT: ${{ needs.android.result }}
         run: |
           set -euo pipefail
           state=success
           description='All desktop and Android builds completed'
-          if [ "$CLEANUP_RESULT" != success ] || [ "$DESKTOP_RESULT" != success ] || [ "$ANDROID_RESULT" != success ]; then
+          if [ "$MARK_RESULT" != success ] || [ "$DESKTOP_RESULT" != success ] || [ "$ANDROID_RESULT" != success ]; then
             state=failure
-            description="Build failed: cleanup=$CLEANUP_RESULT desktop=$DESKTOP_RESULT android=$ANDROID_RESULT"
+            description="Build failed: mark=$MARK_RESULT desktop=$DESKTOP_RESULT android=$ANDROID_RESULT"
           fi
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state="$state" \
