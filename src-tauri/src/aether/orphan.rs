@@ -51,11 +51,11 @@ pub fn terminate_process_tree(pid: u32) {
 
     #[cfg(unix)]
     {
-        let pid = pid.to_string();
-        let _ = Command::new("kill").args(["-TERM", &pid]).status();
-        if !wait_until_dead(pid.parse().unwrap_or(0), Duration::from_millis(750)) {
-            let _ = Command::new("kill").args(["-KILL", &pid]).status();
-            wait_until_dead(pid.parse().unwrap_or(0), Duration::from_millis(750));
+        let pid_string = pid.to_string();
+        let _ = Command::new("kill").args(["-TERM", &pid_string]).status();
+        if !wait_until_dead(pid, Duration::from_millis(750)) {
+            let _ = Command::new("kill").args(["-KILL", &pid_string]).status();
+            wait_until_dead(pid, Duration::from_millis(750));
         }
     }
 }
@@ -94,6 +94,7 @@ fn is_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn is_alive(pid: u32) -> bool {
+    let expected = pid.to_string();
     let mut command = Command::new("tasklist.exe");
     command.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
     no_window(&mut command);
@@ -101,9 +102,12 @@ fn is_alive(pid: u32) -> bool {
         .output()
         .map(|output| {
             output.status.success()
-                && String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .any(|line| line.split(',').nth(1).map(|value| value.trim().trim_matches('"')) == Some(pid.to_string().as_str()))
+                && String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                    line.split(',')
+                        .nth(1)
+                        .map(|value| value.trim().trim_matches('"'))
+                        == Some(expected.as_str())
+                })
         })
         .unwrap_or(false)
 }
