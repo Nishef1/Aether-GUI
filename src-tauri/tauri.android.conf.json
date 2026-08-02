@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Aether",
+  "build": {
+    "beforeBuildCommand": "npm run build:android:web",
+    "beforeDevCommand": "npm run build:android:web"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Aether",
+        "resizable": true,
+        "decorations": true,
+        "backgroundColor": "#0D0D0F"
+      }
+    ]
+  },
+  "bundle": {
+    "externalBin": [],
+    "resources": [],
+    "createUpdaterArtifacts": false,
+    "android": {
+      "minSdkVersion": 29
+    }
+  }
+}

@@ -25,7 +25,7 @@ export type IpVersion = "v4" | "v6" | "both";
 export type MasqueNoize = "firewall" | "gfw" | "off";
 export type WgNoize = "balanced" | "aggressive" | "light" | "off";
 export type ZeroTrustAuth = "email" | "service" | "token";
-export type SystemTunnelSelection = "off" | "singbox";
+export type SystemTunnelSelection = "off" | "singbox" | "native";
 
 export interface SystemTunnelDescriptor {
   id: string;

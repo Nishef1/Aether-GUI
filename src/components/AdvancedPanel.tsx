@@ -104,13 +104,13 @@ export function AdvancedPanel() {
             </FieldRow>
             <FieldRow
               label="SOCKS5 Proxy"
-              tooltip="The local address Aether listens on. The sing-box system tunnel consumes this endpoint without modifying Aether."
+              tooltip="The local address exposed by Aether. An optional platform tunnel can consume it without changing the core."
             >
               <BindAddressField />
             </FieldRow>
             <FieldRow
               label="System-wide tunnel"
-              tooltip="Optional sing-box TUN sidecar. It routes desktop applications through Aether and remains independently upgradeable."
+              tooltip="Routes applications through Aether using the platform adapter: sing-box on desktop and VpnService with HEV on Android."
             >
               <SystemTunnelToggle />
             </FieldRow>

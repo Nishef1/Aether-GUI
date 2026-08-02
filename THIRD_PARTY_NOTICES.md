@@ -6,8 +6,11 @@ Aether-GUI bundles or prepares the following independent components. Their autho
 
 - Project: CluvexStudio/Aether
 - Role: censorship-circumvention transport and local SOCKS5 server
+- Desktop and Android baseline: v1.5.0 (`66a798b7771d5ffbb28fc858bffc99fb67295baf`)
 - License: GNU Affero General Public License v3.0
 - Source: https://github.com/CluvexStudio/Aether
+
+The Android preparation script downloads the official ARM64 release asset, verifies the release-provided SHA-256 digest and bundles the corresponding license text.
 
 ## sing-box
 
@@ -26,10 +29,15 @@ The preparation scripts copy the license file distributed in the verified sing-b
 - Pinned package: 0.14.1
 - Source: https://www.wintun.net/
 
-The Windows preparation script verifies the official archive checksum and the DLL Authenticode signer. It also copies the license supplied in the official prebuilt archive to `binaries/wintun-LICENSE.txt`, which is bundled beside `wintun.dll`.
+The Windows preparation script verifies the official archive checksum and the DLL Authenticode signer. It also copies the license supplied in the official prebuilt archive to `binaries/wintun-LICENSE.txt`.
 
 ## HEV SOCKS5 tunnel
 
-Android builds may include HEV SOCKS5 tunnel as the VpnService TUN-to-SOCKS dataplane. Its notice and exact pinned version must be added with the Android module before an Android release is published.
+- Project: heiher/hev-socks5-tunnel
+- Role: Android `VpnService` TUN-to-SOCKS dataplane
+- Pinned release: 2.14.4
+- Source: https://github.com/heiher/hev-socks5-tunnel
+
+The Android builder compiles the pinned tag for ARM64, verifies the stable native API symbols used by the local JNI wrapper and bundles the upstream license beside the native assets.
 
 This file is informational. The complete license texts distributed with third-party binaries remain authoritative.

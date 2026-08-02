@@ -8,7 +8,7 @@ The official Aether binary is the default and only transport engine. Protocol fi
 
 ## Two independent extension boundaries
 
-The runtime deliberately separates **transport engines** from **system-wide tunnel adapters**.
+The runtime separates **transport engines** from **system-wide tunnel adapters**.
 
 ```text
 Frontend / IPC
@@ -18,90 +18,71 @@ EngineRuntime
       |     `-- Aether transport -> loopback SOCKS5
       |
       `-- SystemTunnelRuntime
-            `-- SystemTunnelAdapter
-                  `-- sing-box TUN -> Aether SOCKS5
+            |-- sing-box TUN on desktop
+            `-- Android VpnService + HEV
 ```
 
-### Transport engines
-
-`src-tauri/src/engine/EngineAdapter` owns transport-specific process startup, profiles, readiness, interactions and shutdown. Aether is wrapped by an adapter without changing `src-tauri/src/aether/`.
-
-### System-wide tunnels
-
-`src-tauri/src/system_tunnel/SystemTunnelAdapter` consumes a transport's loopback SOCKS endpoint and owns operating-system routing, privilege elevation, TUN lifecycle, health verification and traffic-interface reporting.
-
-sing-box is intentionally implemented here rather than as another transport engine. It does not replace MASQUE, WireGuard or gool; it only routes desktop application traffic into Aether's existing SOCKS endpoint.
+`EngineAdapter` owns a transport's process, profile, readiness, interactions and shutdown. `SystemTunnelAdapter` consumes a loopback SOCKS endpoint and owns platform routing, privilege boundaries, TUN lifecycle, health verification and traffic-interface reporting.
 
 ## Upstream boundary
 
-The upstream Aether integration remains under `src-tauri/src/aether/`. Avoid editing it for Android, sing-box or future sidecars. Upstream updates should normally replace or merge that directory without knowing about custom platform modules.
+The upstream Aether integration remains under `src-tauri/src/aether/`. Avoid editing it for Android, sing-box or future sidecars. The small intentional integration surface is `main.rs`, `commands.rs`, `state.rs` and `engine/mod.rs`.
 
-The small intentional integration surface is:
+## Desktop sing-box adapter
 
-1. `main.rs` registers the runtime, watchers and IPC commands.
-2. `commands.rs` preserves Matin's Aether-shaped IPC and exposes extension APIs.
-3. `state.rs` exposes the shared engine-neutral connection state.
-4. `engine/mod.rs` composes transports with optional system tunnels.
+The desktop adapter is isolated under `src-tauri/src/system_tunnel/sing_box/`. It is off by default and uses:
 
-## sing-box desktop adapter
+- sing-box v1.13.12, release-digest verified;
+- Wintun 0.14.1 on Windows, checksum and Authenticode verified;
+- `sing-box check` before launch;
+- strict dual-stack TUN routing and DNS hijacking;
+- direct process bypass for Aether and sing-box to prevent loops;
+- end-to-end route verification before `Tunneling`;
+- cancellation epochs, PID ownership and orphan cleanup.
 
-The desktop module lives under:
+## Shared connection telemetry
 
-```text
-src-tauri/src/system_tunnel/sing_box/
-  config.rs
-  mod.rs
-  process.rs
-  status.rs
-```
+The UI receives one platform-neutral contract for:
 
-Properties:
-
-- pinned sing-box release rather than an unbounded `latest` download;
-- release asset SHA-256 verification;
-- Wintun archive checksum and Authenticode verification on Windows;
-- config validation with `sing-box check` before startup;
-- loop prevention by routing Aether and sing-box processes directly;
-- dual-stack TUN with strict routing and DNS hijacking;
-- end-to-end data-path verification before reporting `Tunneling`;
-- PID ownership checks and orphan cleanup;
-- cancellation epochs so a stopped connection cannot publish a stale startup result;
-- traffic counters sourced from the adapter-owned TUN interface.
-
-The adapter is off by default. Enabling it is a persisted launch setting and may require administrator approval.
-
-## Telemetry contract
-
-Telemetry is supplementary and cannot decide whether the connection is successful. It reports:
-
+- route-scan percentage derived from the active scan budget;
 - public tunnel exit IP;
-- country code used by the frontend to render a flag;
-- end-to-end latency through Aether's SOCKS path;
-- cumulative upload and download bytes from the active TUN interface;
-- sample timestamp.
+- country code rendered as a flag;
+- end-to-end latency through Aether;
+- upload/download totals from the active TUN dataplane;
+- authoritative connection duration from `connected_at_ms`.
 
-The connection duration is derived from the authoritative `connected_at_ms` carried by the shared state machine. Route-scan percentage remains derived from Aether's own logged scan budget and is capped below 100 until backend readiness is confirmed.
+Telemetry is supplementary and cannot mark an unverified connection as successful.
 
-## Android boundary
+## Android adapter
 
-Android belongs at the platform boundary, not inside Aether or the desktop sing-box adapter. The Android implementation owns `VpnService`, permission flow, foreground lifecycle, socket protection and TUN-to-SOCKS plumbing while exposing the same connection and telemetry contracts.
+Android is isolated under:
 
 ```text
-src-tauri/plugins/aether-vpn/   # Android native service/plugin
-src-tauri/src/platform/android/ # Rust/Tauri command bridge
-src-tauri/src/engine/           # shared transport abstraction
+src-tauri/src/android.rs
+src-tauri/plugins/aether-vpn/
+scripts/prepare-android-native.sh
 ```
 
-Desktop sing-box elevation and Wintun code must not compile into Android. Android uses its own VpnService dataplane.
+It uses the official Aether v1.5.0 ARM64 release and HEV 2.14.4 behind a stable local JNI wrapper. The platform module owns:
+
+- `VpnService` permission and foreground lifecycle;
+- Aether process startup and bounded native logs;
+- SOCKS readiness and real egress verification;
+- HEV TUN-to-SOCKS startup and traffic counters;
+- cancellation-safe cleanup during repeated connect/disconnect;
+- service-state and telemetry reconciliation independent of WebView visibility.
+
+Desktop sing-box, Wintun and elevation code do not compile into Android. Android's system-tunnel selection maps to the native VpnService adapter instead.
+
+Current Android boundary: consumer Aether profiles, MASQUE/WireGuard/gool, DNS selection and native system tunneling are wired. Zero Trust enrolment and Aether route files/lists are rejected explicitly until the mobile credential and per-app routing contracts are implemented; they are never silently ignored.
 
 ## Upgrade procedure
 
 1. Fetch the latest Matin upstream commit.
-2. Compare it with the recorded upstream baseline.
-3. Merge upstream-owned files first, especially `src-tauri/src/aether/` and frontend components.
-4. Reapply or resolve only the small runtime/bootstrap integration surface.
-5. Keep sidecars version-pinned and validate their release metadata and licenses.
-6. Run Rust tests, frontend checks and native builds.
-7. Test Android lifecycle separately from core protocol behavior.
+2. Merge upstream-owned files before custom platform modules.
+3. Keep `src-tauri/src/aether/` aligned with upstream.
+4. Keep every sidecar and native dependency version-pinned with license material.
+5. Run Rust, frontend, Kotlin/JVM and native build validation.
+6. Test Android lifecycle separately from transport protocol behavior.
 
-Never carry protocol fixes in this GUI repository when they belong in the official core. Submit or consume them upstream instead.
+Never carry protocol fixes in this GUI repository when they belong in the official core.

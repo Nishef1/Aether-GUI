@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Switch } from "@/components/ui/switch";
+import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useSystemTunnelStore } from "@/state/systemTunnelStore";
 
@@ -11,6 +12,7 @@ export function SystemTunnelToggle() {
   const load = useSystemTunnelStore((state) => state.load);
   const setSelection = useSystemTunnelStore((state) => state.setSelection);
   const locked = status.state !== "Idle" && status.state !== "Error";
+  const activeSelection = isAndroid ? "native" : "singbox";
 
   useEffect(() => {
     if (!loaded) void load();
@@ -22,16 +24,18 @@ export function SystemTunnelToggle() {
         <div className="flex flex-col">
           <span className="text-xs text-foreground">Route all apps through Aether</span>
           <span className="text-[10px] text-muted-foreground">
-            Uses the pinned sing-box TUN sidecar; administrator approval may be required.
+            {isAndroid
+              ? "Uses Android VpnService with the pinned HEV TUN-to-SOCKS dataplane."
+              : "Uses the pinned sing-box TUN sidecar; administrator approval may be required."}
           </span>
         </div>
         <Switch
-          checked={selection === "singbox"}
+          checked={selection === activeSelection}
           disabled={!loaded || locked}
           onCheckedChange={(enabled) => {
-            void setSelection(enabled ? "singbox" : "off");
+            void setSelection(enabled ? activeSelection : "off");
           }}
-          aria-label="Enable sing-box system tunnel"
+          aria-label="Enable system-wide Aether tunnel"
         />
       </div>
       {error && <span className="text-[10px] text-status-error">{error}</span>}

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
+import { isAndroid } from "@/lib/platform";
 import type { RuntimeTelemetry } from "@/types/connection";
 
 const EMPTY_TELEMETRY: RuntimeTelemetry = {
@@ -34,5 +35,18 @@ export async function initTelemetryListeners(): Promise<() => void> {
     useTelemetryStore.setState({ snapshot: event.payload });
   });
   await useTelemetryStore.getState().refresh();
-  return unlisten;
+
+  // Android services live outside the WebView lifecycle and cannot rely on a
+  // continuously visible window to receive emitted events. Poll the narrow
+  // native snapshot while keeping desktop fully event-driven.
+  const poll = isAndroid
+    ? setInterval(() => {
+        void useTelemetryStore.getState().refresh();
+      }, 1_000)
+    : null;
+
+  return () => {
+    unlisten();
+    if (poll !== null) clearInterval(poll);
+  };
 }
