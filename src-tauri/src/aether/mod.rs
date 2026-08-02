@@ -480,14 +480,27 @@ fn monitor_connected(
 
 fn stop_session_blocking(session: &mut PtySession, grace: Duration) {
     session.send_ctrl_c();
-    let deadline = Instant::now() + grace;
-    while Instant::now() < deadline {
-        if session.try_wait().is_some() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(100));
+
+    #[cfg(windows)]
+    {
+        let _ = grace;
+        // Kill while the parent PID is still alive so taskkill /T can reach
+        // every descendant instead of leaving a detached helper behind.
+        session.kill();
+        return;
     }
-    session.kill();
+
+    #[cfg(not(windows))]
+    {
+        let deadline = Instant::now() + grace;
+        while Instant::now() < deadline {
+            if session.try_wait().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        session.kill();
+    }
 }
 
 pub fn request_disconnect(
