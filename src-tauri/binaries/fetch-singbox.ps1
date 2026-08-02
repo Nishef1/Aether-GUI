@@ -46,7 +46,18 @@ function Download-WithRetry([string]$Uri, [string]$OutFile, [hashtable]$RequestH
 }
 
 function Sha256([string]$Path) {
-    return (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLowerInvariant()
+    $Stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $Hasher = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $Bytes = $Hasher.ComputeHash($Stream)
+            return ([System.BitConverter]::ToString($Bytes)).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $Hasher.Dispose()
+        }
+    } finally {
+        $Stream.Dispose()
+    }
 }
 
 $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$Version" -Headers $Headers -TimeoutSec 45
@@ -85,6 +96,8 @@ try {
         Where-Object { $_.Name -match "license" } | Select-Object -First 1
     if (-not $DownloadedWintun) { throw "amd64 wintun.dll missing" }
     if (-not $WintunLicense) { throw "Wintun prebuilt-binaries license missing" }
+
+    Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
     $Signature = Get-AuthenticodeSignature -FilePath $DownloadedWintun.FullName
     if ($Signature.Status -ne "Valid" -or $Signature.SignerCertificate.Subject -notmatch "WireGuard") {
         throw "Wintun Authenticode signature is not valid"
