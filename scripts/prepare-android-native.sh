@@ -67,7 +67,7 @@ curl -fsSL --retry 3 -o "$LICENSES/Aether-AGPL-3.0.txt" \
   "https://raw.githubusercontent.com/CluvexStudio/Aether/$AETHER_COMMIT/LICENSE"
 
 HEV_SRC="$TMP/hev"
-git clone --quiet --depth 1 --branch "$HEV_VERSION" --recurse-submodules \
+git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$HEV_VERSION" --recurse-submodules \
   https://github.com/heiher/hev-socks5-tunnel.git "$HEV_SRC"
 [[ "$(git -C "$HEV_SRC" describe --tags --exact-match)" == "$HEV_VERSION" ]] || {
   echo "HEV tag verification failed" >&2
