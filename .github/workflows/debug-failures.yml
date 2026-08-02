@@ -1,0 +1,85 @@
+name: debug-failures
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: debug-failures
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf
+      - name: Run Rust tests with captured output
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p ci-logs
+          cargo test --manifest-path src-tauri/Cargo.toml --locked 2>&1 | tee ci-logs/rust-tests.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: rust-test-failure-log
+          path: ci-logs/rust-tests.log
+          if-no-files-found: error
+
+  android-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ANDROID_MIN_API: 29
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Install Android SDK and pinned NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npm run android:init
+      - name: Prepare verified Android native libraries
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run prepare:android-native
+      - name: Run Android tests with captured output
+        working-directory: src-tauri/gen/android
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p ../../../ci-logs
+          ./gradlew test --no-daemon --stacktrace 2>&1 | tee ../../../ci-logs/android-tests.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-test-failure-log
+          path: ci-logs/android-tests.log
+          if-no-files-found: error
