@@ -118,6 +118,14 @@ mod tests {
 
     #[test]
     fn windows_termination_always_includes_descendants() {
-        assert_eq!(taskkill_args(1819), ["/PID", "1819", "/T", "/F"]);
+        assert_eq!(
+            taskkill_args(1819),
+            [
+                "/PID".to_owned(),
+                "1819".to_owned(),
+                "/T".to_owned(),
+                "/F".to_owned(),
+            ]
+        );
     }
 }
