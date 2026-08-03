@@ -136,6 +136,20 @@ class AndroidFeatureParityTest(unittest.TestCase):
         self.assertIn("if (isAndroid) return null", background)
         self.assertIn("2_000", telemetry_store)
 
+    def test_android_shell_respects_safe_area_and_forces_native_tunnel(self) -> None:
+        app = self.read("src/App.tsx")
+        tunnel_store = self.read("src/state/systemTunnelStore.ts")
+        tunnel_toggle = self.read("src/components/SystemTunnelToggle.tsx")
+        self.assertIn("!isAndroid && <TitleBar />", app)
+        self.assertIn("env(safe-area-inset-bottom", app)
+        self.assertIn("min-h-72", app)
+        self.assertIn("if (isAndroid) void loadSystemTunnel()", app)
+        self.assertIn('isAndroid ? "native" : selection', tunnel_store)
+        self.assertIn('selection: isAndroid ? "native" : "off"', tunnel_store)
+        self.assertIn("Proxy-only mode is disabled", tunnel_toggle)
+        self.assertIn("Always on", tunnel_toggle)
+        self.assertNotIn('enabled ? activeSelection : "off"', tunnel_toggle)
+
     def test_build_workflow_is_single_artifact_pipeline_not_release_automation(self) -> None:
         workflow = self.read(".github/workflows/build.yml")
         self.assertIn("android-arm64", workflow)
