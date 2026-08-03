@@ -10,6 +10,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { TitleBar } from "@/components/TitleBar";
 import { isAndroid } from "@/lib/platform";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
+import { useSystemTunnelStore } from "@/state/systemTunnelStore";
 import { initTelemetryListeners } from "@/state/telemetryStore";
 
 const AdvancedPanel = lazy(() =>
@@ -32,9 +33,26 @@ const SCREEN_TRANSITION = isAndroid
 
 function MainScreen() {
   const attemptId = useConnectionStore((state) => state.attemptId);
+  const mobileSafeArea = isAndroid
+    ? {
+        paddingTop: "max(1rem, env(safe-area-inset-top, 0px))",
+        paddingBottom: "calc(max(1.5rem, env(safe-area-inset-bottom, 0px)) + 1.5rem)",
+        scrollPaddingBottom: "calc(max(1.5rem, env(safe-area-inset-bottom, 0px)) + 1.5rem)",
+      }
+    : undefined;
+
   return (
-    <div className="relative z-10 flex h-full flex-col items-center overflow-y-auto p-6">
-      <div className="flex flex-1 flex-col items-center justify-center gap-6">
+    <div
+      className={`relative z-10 flex h-full flex-col items-center overflow-y-auto ${isAndroid ? "px-5" : "p-6"}`}
+      style={mobileSafeArea}
+    >
+      <div
+        className={
+          isAndroid
+            ? "flex min-h-72 w-full shrink-0 flex-col items-center justify-center gap-4 py-4"
+            : "flex flex-1 flex-col items-center justify-center gap-6"
+        }
+      >
         <ConnectButton />
         <ConnectionStatusLine />
         <AccessCodePrompt key={attemptId} />
@@ -51,6 +69,7 @@ export function App() {
   const sidecarError = useConnectionStore((state) => state.sidecarError);
   const retryAfterSidecarError = useConnectionStore((state) => state.retryAfterSidecarError);
   const connect = useConnectionStore((state) => state.connect);
+  const loadSystemTunnel = useSystemTunnelStore((state) => state.load);
 
   useEffect(() => {
     const connectionCleanup = initConnectionListeners();
@@ -61,6 +80,10 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (isAndroid) void loadSystemTunnel();
+  }, [loadSystemTunnel]);
+
   return (
     <TooltipProvider>
       <MotionConfig reducedMotion={isAndroid ? "always" : "user"}>
@@ -68,7 +91,7 @@ export function App() {
           className={`relative flex h-svh w-full flex-col overflow-hidden bg-background${isAndroid ? " platform-android" : ""}`}
         >
           <AmbientBackground />
-          <TitleBar />
+          {!isAndroid && <TitleBar />}
           <div className="relative min-h-0 flex-1">
             <AnimatePresence mode="sync">
               {sidecarError ? (
