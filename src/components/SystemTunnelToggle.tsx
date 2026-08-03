@@ -35,7 +35,18 @@ export function SystemTunnelToggle() {
             Always on
           </span>
         </div>
-        {error && <span className="text-[10px] text-status-error">{error}</span>}
+        {error && (
+          <div className="flex items-center justify-between gap-3 text-[10px] text-status-error">
+            <span className="min-w-0 truncate">{error}</span>
+            <button
+              type="button"
+              className="shrink-0 rounded-md px-2 py-1 text-foreground ring-1 ring-white/10"
+              onClick={() => void load()}
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </div>
     );
   }
