@@ -15,7 +15,7 @@ export function SystemTunnelToggle() {
   const locked = status.state !== "Idle" && status.state !== "Error";
 
   useEffect(() => {
-    if (!loaded) void load();
+    if (!isAndroid && !loaded) void load();
   }, [load, loaded]);
 
   if (isAndroid) {
