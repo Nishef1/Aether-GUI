@@ -21,7 +21,7 @@ export function SystemTunnelToggle() {
   if (isAndroid) {
     return (
       <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between gap-3 rounded-lg bg-white/4 px-3 py-2.5 ring-1 ring-white/8">
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3 py-2.5 ring-1 ring-white/10">
           <div className="flex min-w-0 items-center gap-2.5">
             <ShieldCheck className="size-4 shrink-0 text-status-connected" />
             <div className="min-w-0">
@@ -31,7 +31,7 @@ export function SystemTunnelToggle() {
               </p>
             </div>
           </div>
-          <span className="shrink-0 rounded-full bg-status-connected/12 px-2 py-1 text-[10px] font-medium text-status-connected ring-1 ring-status-connected/25">
+          <span className="shrink-0 rounded-full bg-status-connected/10 px-2 py-1 text-[10px] font-medium text-status-connected ring-1 ring-status-connected/20">
             Always on
           </span>
         </div>
