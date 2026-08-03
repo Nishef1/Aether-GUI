@@ -33,6 +33,10 @@ const SCREEN_TRANSITION = isAndroid
 
 function MainScreen() {
   const attemptId = useConnectionStore((state) => state.attemptId);
+  const tunnelReady = useSystemTunnelStore(
+    (state) => state.loaded && state.selection === "native",
+  );
+  const tunnelError = useSystemTunnelStore((state) => state.error);
   const mobileSafeArea = isAndroid
     ? {
         paddingTop: "max(1rem, env(safe-area-inset-top, 0px))",
@@ -53,7 +57,15 @@ function MainScreen() {
             : "flex flex-1 flex-col items-center justify-center gap-6"
         }
       >
-        <ConnectButton />
+        {isAndroid && !tunnelReady ? (
+          <div className="grid size-40 place-items-center rounded-full bg-surface-2 text-center ring-1 ring-white/10">
+            <span className="max-w-24 text-xs leading-5 text-muted-foreground">
+              {tunnelError ? "VPN tunnel unavailable" : "Preparing VPN tunnel"}
+            </span>
+          </div>
+        ) : (
+          <ConnectButton />
+        )}
         <ConnectionStatusLine />
         <AccessCodePrompt key={attemptId} />
       </div>
