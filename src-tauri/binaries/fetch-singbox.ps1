@@ -1,6 +1,6 @@
 param(
     [string]$DestDir = $PSScriptRoot,
-    [string]$Version = "v1.13.12"
+    [string]$Version = "v1.14.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -85,7 +85,7 @@ public static class AetherWinTrustVerifier
         {
             if (pcwszFilePath != IntPtr.Zero)
             {
-                Marshal.FreeCoTaskMem(pcwszFilePath);
+                Marshal.FreeCoTaskMemUni(pcwszFilePath);
                 pcwszFilePath = IntPtr.Zero;
             }
         }
