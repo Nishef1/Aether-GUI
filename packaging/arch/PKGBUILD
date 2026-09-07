@@ -1,6 +1,6 @@
 # Maintainer: Aether-GUI contributors
 pkgname=aether-gui-git
-pkgver=0.7.2.r0.gHEAD
+pkgver=0.8.0.r0.gHEAD
 pkgrel=1
 pkgdesc='Cross-platform GUI for the Aether censorship-circumvention tunnel'
 arch=('x86_64')
@@ -31,7 +31,7 @@ sha256sums=('SKIP')
 pkgver() {
   cd "$srcdir/Aether-GUI"
   local base
-  base="$(node -p "require('./package.json').version")"
+  base="$(node -p "require('./src-tauri/tauri.conf.json').version")"
   printf '%s.r%s.g%s' "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
