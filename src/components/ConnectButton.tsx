@@ -3,6 +3,7 @@ import { AlertTriangle, Check, Loader2, Power } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
+import { useExitPolicyStore } from "@/state/exitPolicyStore";
 import { useWindowFocused } from "@/state/windowFocus";
 import type { ConnectionStatus } from "@/types/connection";
 
@@ -60,14 +61,21 @@ export function ConnectButton() {
   const status = useConnectionStore((state) => state.status);
   const connect = useConnectionStore((state) => state.connect);
   const disconnect = useConnectionStore((state) => state.disconnect);
+  const beginManualAttempt = useExitPolicyStore((state) => state.beginManualAttempt);
+  const cancelAutomation = useExitPolicyStore((state) => state.cancelAutomation);
   const focused = useWindowFocused();
   const phase = phaseOf(status);
   const Icon = ICONS[phase];
   const color = STATUS_COLOR[phase];
 
   const handleClick = () => {
-    if (phase === "idle" || phase === "error") void connect();
-    else void disconnect();
+    if (phase === "idle" || phase === "error") {
+      beginManualAttempt();
+      void connect();
+    } else {
+      cancelAutomation();
+      void disconnect();
+    }
   };
 
   return (
@@ -98,6 +106,8 @@ export function ConnectButton() {
           phase === "connecting" && !isAndroid && "anim-ring-pulse-fast",
           phase === "connected" && !isAndroid && "anim-ring-pulse-slow",
           phase === "idle" && !isAndroid && "anim-ring-breathe",
+          phase === "connecting" && isAndroid && "android-connect-ring",
+          phase === "connected" && isAndroid && "android-connected-ring",
         )}
         style={{
           borderColor: color,
@@ -127,6 +137,14 @@ export function ConnectButton() {
         </AnimatePresence>
       )}
 
+      {isAndroid && phase === "connecting" && (
+        <span
+          aria-hidden
+          className="android-connect-ripple pointer-events-none absolute inset-1 rounded-full border"
+          style={{ borderColor: color }}
+        />
+      )}
+
       <AnimatePresence mode="wait">
         <motion.span
           key={phase}
@@ -141,6 +159,7 @@ export function ConnectButton() {
             strokeWidth={2}
             className={cn(
               phase === "connecting" && !isAndroid && "animate-spin",
+              phase === "connecting" && isAndroid && "android-connect-spin",
               phase === "connecting" && "text-status-connecting",
               phase === "connected" && "text-status-connected",
               phase === "error" && "text-status-error",
