@@ -1,11 +1,11 @@
 import { useConnectionStore } from "@/state/connectionStore";
 
 const INPUT =
-  "h-8 w-full rounded-md bg-black/20 px-2 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50";
+  "min-h-12 w-full rounded-xl bg-black/20 px-3 text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50";
 const AREA =
-  "min-h-16 w-full resize-y rounded-md bg-black/20 px-2 py-1.5 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50";
+  "min-h-24 w-full resize-y rounded-xl bg-black/20 px-3 py-2.5 text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50";
 const PRESET =
-  "rounded-md px-2 py-1 text-[10px] text-muted-foreground ring-1 ring-white/10 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50";
+  "min-h-11 rounded-xl px-3 py-2 text-[11px] text-muted-foreground ring-1 ring-white/10 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50";
 
 const DNS_PRESETS = [
   { label: "Default", value: "" },
@@ -28,8 +28,9 @@ const COMMON_AD_BLOCK = [
   "domain:outbrain.com",
 ].join("\n");
 
-/** Aether 1.5.0 DNS and routing controls. Each list accepts the exact
- * comma/newline-separated format documented by the core. */
+/** Aether 1.9 DNS and routing controls. Lists use the core's documented
+ * comma/newline-separated rule format; domain sniffing keeps these useful
+ * behind the desktop/Android TUN boundary. */
 export function RoutingSettings() {
   const profile = useConnectionStore((state) => state.profile);
   const status = useConnectionStore((state) => state.status);
@@ -66,10 +67,10 @@ export function RoutingSettings() {
   };
 
   return (
-    <div className="flex flex-col gap-3 rounded-md bg-black/10 p-2 ring-1 ring-white/10">
-      <div className="flex flex-col gap-1.5">
-        <span className="text-[10px] font-medium text-muted-foreground">DNS preset</span>
-        <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-col gap-4 rounded-2xl bg-black/10 p-3 ring-1 ring-white/10">
+      <div className="flex flex-col gap-2">
+        <span className="text-[11px] font-medium text-muted-foreground">DNS preset</span>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {DNS_PRESETS.map((preset) => (
             <button
               key={preset.label}
@@ -88,15 +89,15 @@ export function RoutingSettings() {
           value={profile.dns}
           disabled={locked}
           onChange={(event) => setDns(event.target.value)}
-          placeholder="Tunnel DNS, e.g. 1.1.1.1,1.0.0.1 (optional)"
+          placeholder="Tunnel DNS, e.g. 1.1.1.1,1.0.0.1"
           className={INPUT}
           aria-label="Tunnel DNS resolvers"
         />
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <span className="text-[10px] font-medium text-muted-foreground">Routing preset</span>
-        <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-col gap-2">
+        <span className="text-[11px] font-medium text-muted-foreground">Routing preset</span>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           <button type="button" disabled={locked} onClick={() => applyRoutingPreset("iran")} className={PRESET}>
             Iran direct
           </button>
@@ -119,7 +120,7 @@ export function RoutingSettings() {
         value={profile.route_block}
         disabled={locked}
         onChange={(event) => setRouteBlock(event.target.value)}
-        placeholder="Block: domains, CIDRs, ports… (optional)"
+        placeholder="Block: domains, CIDRs, ports…"
         className={AREA}
         aria-label="Blocked routes"
       />
@@ -127,7 +128,7 @@ export function RoutingSettings() {
         value={profile.route_direct}
         disabled={locked}
         onChange={(event) => setRouteDirect(event.target.value)}
-        placeholder="Direct: banking, LAN, domestic sites… (optional)"
+        placeholder="Direct: banking, LAN, domestic sites…"
         className={AREA}
         aria-label="Direct routes"
       />
@@ -141,7 +142,7 @@ export function RoutingSettings() {
         aria-label="Routing rules file path"
       />
       <p className="text-[10px] leading-4 text-muted-foreground">
-        Iran direct covers <code>.ir</code> domains; add custom CIDRs for domestic services on other domains. Supports domain, IP/CIDR, <code>port:443</code>, <code>private</code>, and Aether&apos;s <code>full:</code>/<code>keyword:</code>/<code>regexp:</code> rules. Block wins over direct.
+        Iran direct covers <code>.ir</code> domains only; add explicit CIDRs/domains for other domestic services. Supports domain, IP/CIDR, <code>port:443</code>, <code>private</code>, and Aether&apos;s <code>full:</code>/<code>keyword:</code>/<code>regexp:</code> rules. Block wins over direct.
       </p>
     </div>
   );
