@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
-import { Gauge, Globe2 } from "lucide-react";
+import { Gauge, Globe2, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { CountryFlag } from "@/components/CountryFlag";
+import { EXIT_RETRY_LIMIT, isPrivacyPreferredExit } from "@/lib/exitPolicy";
 import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
+import { useExitPolicyStore } from "@/state/exitPolicyStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
 import { useWindowFocused } from "@/state/windowFocus";
 
@@ -47,14 +50,6 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${BYTE_UNITS[unit]}`;
 }
 
-function countryFlag(code: string): string {
-  const normalized = code.toUpperCase();
-  if (!/^[A-Z]{2}$/.test(normalized)) return "🌐";
-  return String.fromCodePoint(
-    ...normalized.split("").map((character) => 127397 + character.charCodeAt(0)),
-  );
-}
-
 function countryName(code: string): string {
   try {
     return new Intl.DisplayNames([navigator.language || "en"], { type: "region" }).of(code) ?? code;
@@ -65,31 +60,39 @@ function countryName(code: string): string {
 
 function ScanProgressBar({ percent }: { percent: number | null }) {
   const focused = useWindowFocused();
+
+  if (isAndroid) {
+    return (
+      <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
+        {percent == null ? (
+          <div className="android-scan-indeterminate h-full w-1/3 rounded-full bg-status-connecting" />
+        ) : (
+          <div
+            className="h-full rounded-full bg-status-connecting transition-[width] duration-300 ease-out"
+            style={{ width: `${percent}%` }}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
       {percent == null ? (
         <motion.div
           className="h-full w-1/3 rounded-full bg-status-connecting"
-          animate={
-            isAndroid
-              ? { x: "50%", opacity: 0.7 }
-              : focused
-                ? { x: ["-100%", "220%"] }
-                : { x: "50%", opacity: 0.6 }
-          }
+          animate={focused ? { x: ["-100%", "220%"] } : { x: "50%", opacity: 0.6 }}
           transition={
-            isAndroid
-              ? { duration: 0 }
-              : focused
-                ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" }
-                : { duration: 0.3 }
+            focused
+              ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" }
+              : { duration: 0.3 }
           }
         />
       ) : (
         <motion.div
           className="h-full rounded-full bg-status-connecting"
           animate={{ width: `${percent}%` }}
-          transition={{ duration: isAndroid ? 0 : 0.4, ease: "easeOut" }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
         />
       )}
     </div>
@@ -100,6 +103,10 @@ export function ConnectionStatusLine() {
   const status = useConnectionStore((state) => state.status);
   const scanBudgetSecs = useConnectionStore((state) => state.scanBudgetSecs);
   const telemetry = useTelemetryStore((state) => state.snapshot);
+  const exitPreference = useExitPolicyStore((state) => state.preference);
+  const privacyRetryCount = useExitPolicyStore((state) => state.retryCount);
+  const privacyRerolling = useExitPolicyStore((state) => state.rerolling);
+  const privacyExhausted = useExitPolicyStore((state) => state.exhausted);
   const connectedAt =
     status.state === "Connected" ||
     status.state === "StartingTunnel" ||
@@ -141,11 +148,13 @@ export function ConnectionStatusLine() {
       secondary = "Click to connect";
       break;
     case "Launching":
-      primary = "Starting Aether…";
-      secondary = "Preparing the transport core";
+      primary = privacyRerolling ? "Trying another exit…" : "Starting Aether…";
+      secondary = privacyRerolling
+        ? `Privacy retry ${privacyRetryCount} of ${EXIT_RETRY_LIMIT}`
+        : "Preparing the transport core";
       break;
     case "Connecting":
-      primary = "Finding a route…";
+      primary = privacyRerolling ? "Finding a privacy exit…" : "Finding a route…";
       secondary =
         scanPercent != null
           ? `Still searching · ${attemptElapsed} · ${scanPercent}%`
@@ -172,8 +181,8 @@ export function ConnectionStatusLine() {
       secondary = `Attempt ${status.attempt} of ${status.max_attempts}`;
       break;
     case "Disconnecting":
-      primary = "Disconnecting…";
-      secondary = "";
+      primary = privacyRerolling ? "Switching exit…" : "Disconnecting…";
+      secondary = privacyRerolling ? "Keeping the retry bounded to protect battery" : "";
       break;
     case "Error":
       primary = status.phase === "system-tunnel" ? "Device protection failed" : "Connection failed";
@@ -184,9 +193,8 @@ export function ConnectionStatusLine() {
   const hasEgressInfo = Boolean(
     telemetry.public_ip || telemetry.country_code || telemetry.latency_ms != null,
   );
-  const country = telemetry.country_code
-    ? `${countryFlag(telemetry.country_code)} Approx. ${countryName(telemetry.country_code)}`
-    : null;
+  const countryCode = telemetry.country_code?.toUpperCase() ?? null;
+  const privacyPreferred = isPrivacyPreferredExit(countryCode);
 
   return (
     <div
@@ -245,13 +253,13 @@ export function ConnectionStatusLine() {
           className="flex max-w-sm flex-wrap items-center justify-center gap-x-2 gap-y-1 font-mono text-[10px] text-muted-foreground"
           aria-label="Tunnel egress information"
         >
-          {country && (
+          {countryCode && (
             <span
-              className="inline-flex items-center gap-1"
-              title="Approximate geolocation of the tunnel egress IP; WARP does not select an exit country"
+              className="inline-flex items-center gap-1.5"
+              title="Approximate geolocation of the tunnel egress IP; WARP does not guarantee an exit country"
             >
-              <Globe2 size={11} aria-hidden="true" />
-              {country}
+              <CountryFlag code={countryCode} className="h-[13px] w-[18px]" />
+              Approx. {countryName(countryCode)}
             </span>
           )}
           {telemetry.public_ip && <span title="Verified public tunnel egress IP">{telemetry.public_ip}</span>}
@@ -266,6 +274,34 @@ export function ConnectionStatusLine() {
           )}
         </div>
       )}
+
+      {connectionReady && exitPreference === "privacy" && telemetry.egress_probe_complete && (
+        <span
+          className={`inline-flex max-w-xs items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10px] ring-1 ${
+            privacyPreferred
+              ? "bg-status-connected/8 text-status-connected ring-status-connected/20"
+              : privacyExhausted
+                ? "bg-status-connecting/8 text-status-connecting ring-status-connecting/20"
+                : "bg-white/5 text-muted-foreground ring-white/10"
+          }`}
+        >
+          {privacyPreferred ? (
+            <ShieldCheck size={11} aria-hidden="true" />
+          ) : privacyRerolling ? (
+            <RefreshCw size={11} className="android-connect-spin" aria-hidden="true" />
+          ) : (
+            <TriangleAlert size={11} aria-hidden="true" />
+          )}
+          {privacyPreferred
+            ? "Privacy exit accepted"
+            : !countryCode
+              ? "Exit country could not be verified; connection kept"
+              : privacyExhausted
+                ? `Preferred exit unavailable after ${EXIT_RETRY_LIMIT} retries; current connection kept`
+                : `Current exit is outside the privacy pool · retry ${privacyRetryCount}/${EXIT_RETRY_LIMIT}`}
+        </span>
+      )}
+
       {status.state === "Tunneling" && (
         <span className="font-mono text-[10px] text-muted-foreground" aria-label="Tunnel traffic">
           ↓ {formatBytes(telemetry.received_bytes)} · ↑ {formatBytes(telemetry.sent_bytes)}
