@@ -1,6 +1,5 @@
 package com.cluvexstudio.aethergui.vpn
 
-import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
@@ -44,9 +43,10 @@ internal object AndroidEgressIdentityGuard {
     fun compare(underlayIp: String?, tunnelIp: String): EgressIdentityCheck {
         val changed = underlayIp?.let { !sameIp(it, tunnelIp) }
         if (changed == false) {
-            throw EgressIdentityLeakException(
-                "Aether egress is identical to the device underlay IP. Refusing to report a protected connection; check direct-routing rules or a failed tunnel path.",
-            )
+            val message =
+                "Aether egress is identical to the device underlay IP. Refusing to report a protected connection; check direct-routing rules or a failed tunnel path."
+            AndroidVpnRuntime.reportSafetyFailure(message)
+            throw EgressIdentityLeakException(message)
         }
         return EgressIdentityCheck(underlayIp, tunnelIp, changed)
     }
