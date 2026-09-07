@@ -81,14 +81,15 @@ export function ConnectButton() {
       variants={SHAKE_VARIANTS}
       className={cn(
         "connect-orb relative grid shrink-0 place-items-center rounded-full outline-none",
-        "size-[8.5rem] sm:size-36",
+        "size-[9.25rem] sm:size-36",
+        isAndroid && "mt-3",
         "focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-4 focus-visible:ring-offset-background",
         "disabled:cursor-wait",
       )}
     >
       <span
         aria-hidden
-        className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_35%_28%,rgba(255,255,255,0.13),transparent_38%),linear-gradient(145deg,var(--color-surface-2),var(--color-surface-1))] shadow-[0_18px_45px_rgba(0,0,0,0.38)] ring-1 ring-white/12"
+        className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_35%_28%,rgba(255,255,255,0.14),transparent_38%),linear-gradient(145deg,var(--color-surface-2),var(--color-surface-1))] shadow-[0_20px_52px_rgba(0,0,0,0.42)] ring-1 ring-white/12"
       />
       <span
         aria-hidden
@@ -136,7 +137,7 @@ export function ConnectButton() {
           className="relative grid place-items-center"
         >
           <Icon
-            size={isAndroid ? 42 : 46}
+            size={isAndroid ? 46 : 46}
             strokeWidth={2}
             className={cn(
               phase === "connecting" && !isAndroid && "animate-spin",
