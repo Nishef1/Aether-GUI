@@ -6,6 +6,7 @@ pkgdesc='Cross-platform GUI for the Aether censorship-circumvention tunnel'
 arch=('x86_64')
 url='https://github.com/Nishef1/Aether-GUI'
 license=('AGPL-3.0-only')
+options=('!debug')
 depends=(
   'webkit2gtk-4.1'
   'gtk3'
