@@ -1,35 +1,54 @@
 package com.cluvexstudio.aethergui.vpn
 
+import android.os.SystemClock
 import java.net.InetAddress
 import java.net.URL
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.HttpsURLConnection
 
 /** Raised only when Aether exposes the exact public address of the underlay. */
 internal class EgressIdentityLeakException(message: String) : IllegalStateException(message)
 
 /**
- * One-shot connection safety baseline.
+ * Supplemental exact-IP safety baseline.
  *
  * GeoIP/country is intentionally absent from this class. A nearby Cloudflare
  * address that geolocates to Iran can be a valid low-latency exit. The only
  * fail-closed identity condition here is exact public-IP equality, which means
  * the protected path has not changed the network identity at all.
+ *
+ * Direct public-IP lookups are cached because the normal telemetry probe runs
+ * periodically. Native TUN/HEV health remains the primary continuous safety
+ * contract, so repeatedly waking the radio for an underlay lookup adds little
+ * value while costing battery.
  */
 internal object AndroidEgressIdentityGuard {
     private const val CONNECT_TIMEOUT_MS = 2_500
     private const val READ_TIMEOUT_MS = 3_000
+    private const val BASELINE_TTL_MS = 15 * 60 * 1_000L
 
     private data class Provider(val url: String)
+    private data class CachedBaseline(val capturedAtMs: Long, val addresses: Set<String>)
 
     private val ipv4Primary = Provider("https://api4.ipify.org/")
     private val ipv4Fallback = Provider("https://checkip.amazonaws.com/")
     private val ipv6Provider = Provider("https://api6.ipify.org/")
+    private val cachedBaseline = AtomicReference<CachedBaseline?>(null)
 
-    fun underlayPublicIps(): Set<String> = buildSet {
-        val ipv4 = runCatching { directPublicIp(ipv4Primary) }.getOrNull()
-            ?: runCatching { directPublicIp(ipv4Fallback) }.getOrNull()
-        ipv4?.let(::add)
-        runCatching { directPublicIp(ipv6Provider) }.getOrNull()?.let(::add)
+    fun underlayPublicIps(): Set<String> {
+        val now = SystemClock.elapsedRealtime()
+        cachedBaseline.get()?.let { cached ->
+            if (now - cached.capturedAtMs < BASELINE_TTL_MS) return cached.addresses
+        }
+
+        val addresses = buildSet {
+            val ipv4 = runCatching { directPublicIp(ipv4Primary) }.getOrNull()
+                ?: runCatching { directPublicIp(ipv4Fallback) }.getOrNull()
+            ipv4?.let(::add)
+            runCatching { directPublicIp(ipv6Provider) }.getOrNull()?.let(::add)
+        }
+        cachedBaseline.set(CachedBaseline(now, addresses))
+        return addresses
     }
 
     fun assertChanged(underlayIps: Collection<String>, tunnelIp: String) {
