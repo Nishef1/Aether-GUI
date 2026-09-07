@@ -127,6 +127,51 @@ impl MobileConnectionProfile {
         sanitized.upstream.clear();
         sanitized
     }
+
+    /// Keep the user's hidden values in the editable profile, but never hand
+    /// options from an inactive transport to the Android process launcher.
+    /// This mirrors the desktop Rust boundary and protects against stale UI
+    /// state after protocol changes.
+    fn for_runtime(mut self) -> Self {
+        match self.protocol.as_str() {
+            "wireguard" => {
+                self.wg_peer.clear();
+                self.wiw_outer.clear();
+                self.wiw_inner.clear();
+                self.wiw_scan = false;
+                self.masque_http2 = false;
+                self.h2_peer.clear();
+                self.ech.clear();
+                self.fragment = false;
+            }
+            "gool" => {
+                self.peer.clear();
+                self.masque_http2 = false;
+                self.h2_peer.clear();
+                self.ech.clear();
+                self.fragment = false;
+                if self.wiw_scan {
+                    self.wg_peer.clear();
+                    self.wiw_outer.clear();
+                    self.wiw_inner.clear();
+                } else if !self.wiw_outer.trim().is_empty() {
+                    // New v1.9 endpoint wins over the legacy outer-peer field.
+                    self.wg_peer.clear();
+                }
+            }
+            _ => {
+                self.wg_peer.clear();
+                self.wiw_outer.clear();
+                self.wiw_inner.clear();
+                self.wiw_scan = false;
+                if !self.masque_http2 {
+                    self.h2_peer.clear();
+                    self.fragment = false;
+                }
+            }
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -264,6 +309,7 @@ fn primary_dns(profile: &MobileConnectionProfile) -> String {
 }
 
 fn vpn_profile(profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> VpnProfile {
+    let profile = profile.for_runtime();
     let dns_server = primary_dns(&profile);
     VpnProfile {
         protocol: profile.protocol,

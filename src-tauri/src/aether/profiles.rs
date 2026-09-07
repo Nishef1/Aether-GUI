@@ -269,7 +269,9 @@ fn push_non_empty(args: &mut Vec<String>, flag: &str, value: &str) {
 
 impl ConnectionProfile {
     /// Generates the non-secret CLI contract for Aether v1.9. Secrets and
-    /// environment-only switches are applied by pty.rs instead.
+    /// environment-only switches are applied by pty.rs instead. Protocol-
+    /// specific controls are scoped here as a defence-in-depth boundary: a
+    /// hidden/stale UI value must never silently change another transport.
     pub fn as_args(&self) -> Vec<String> {
         let mut args = Vec::with_capacity(48);
         match self.protocol {
@@ -312,21 +314,41 @@ impl ConnectionProfile {
         if self.http_proxy.trim().parse::<std::net::SocketAddr>().is_ok() {
             push_non_empty(&mut args, "--http-proxy", &self.http_proxy);
         }
-        push_non_empty(&mut args, "--peer", &self.peer);
-        if self.wiw_outer.trim().is_empty() {
-            push_non_empty(&mut args, "--wg-peer", &self.wg_peer);
-        }
-        push_non_empty(&mut args, "--wiw-outer", &self.wiw_outer);
-        push_non_empty(&mut args, "--wiw-inner", &self.wiw_inner);
-        if self.wiw_scan && matches!(self.protocol, Protocol::Gool) {
-            args.push("--wiw-scan".into());
+
+        match self.protocol {
+            Protocol::Auto | Protocol::Masque => {
+                push_non_empty(&mut args, "--peer", &self.peer);
+                if self.masque_http2 {
+                    args.push("--h2".into());
+                    push_non_empty(&mut args, "--h2-peer", &self.h2_peer);
+                    if self.fragment {
+                        args.push("--fragment".into());
+                        push_non_empty(&mut args, "--fragment-size", &self.fragment_size);
+                        push_non_empty(&mut args, "--fragment-delay", &self.fragment_delay);
+                    }
+                }
+                push_non_empty(&mut args, "--ech", &self.ech);
+            }
+            Protocol::Wireguard => {
+                // In Aether 1.9 --peer is the explicit classic WireGuard peer.
+                push_non_empty(&mut args, "--peer", &self.peer);
+            }
+            Protocol::Gool => {
+                if self.wiw_scan {
+                    // Do not also forward stale endpoints: --wiw-scan is an
+                    // explicit request to discover two fresh hops.
+                    args.push("--wiw-scan".into());
+                } else {
+                    if self.wiw_outer.trim().is_empty() {
+                        // Compatibility with profiles saved before v1.9.
+                        push_non_empty(&mut args, "--wg-peer", &self.wg_peer);
+                    }
+                    push_non_empty(&mut args, "--wiw-outer", &self.wiw_outer);
+                    push_non_empty(&mut args, "--wiw-inner", &self.wiw_inner);
+                }
+            }
         }
 
-        if self.masque_http2 {
-            args.push("--h2".into());
-        }
-        push_non_empty(&mut args, "--h2-peer", &self.h2_peer);
-        push_non_empty(&mut args, "--ech", &self.ech);
         if self.no_data_check {
             args.push("--no-data-check".into());
         }
@@ -336,11 +358,6 @@ impl ConnectionProfile {
         args.push(self.reconnect_secs.clamp(1, 60).to_string());
         push_non_empty(&mut args, "--dns", &self.dns);
 
-        if self.fragment && self.masque_http2 {
-            args.push("--fragment".into());
-            push_non_empty(&mut args, "--fragment-size", &self.fragment_size);
-            push_non_empty(&mut args, "--fragment-delay", &self.fragment_delay);
-        }
         if matches!(self.protocol, Protocol::Wireguard | Protocol::Gool) {
             args.push("--keepalive".into());
             args.push(self.keepalive.clamp(1, 120).to_string());
@@ -464,6 +481,10 @@ pub fn save(app: &tauri::AppHandle, profile: &ConnectionProfile) {
 mod tests {
     use super::*;
 
+    fn has_pair(args: &[String], flag: &str, value: &str) -> bool {
+        args.windows(2).any(|pair| pair[0] == flag && pair[1] == value)
+    }
+
     #[test]
     fn defaults_match_aether_19_safe_path() {
         let profile = ConnectionProfile::default();
@@ -485,9 +506,54 @@ mod tests {
             ..Default::default()
         };
         let args = profile.as_args();
-        assert!(args.windows(2).any(|v| v == ["--http-proxy", "127.0.0.1:1820"]));
-        assert!(args.windows(2).any(|v| v == ["--wiw-outer", "162.159.192.1:2408"]));
-        assert!(args.windows(2).any(|v| v == ["--wiw-inner", "188.114.96.1:2408"]));
+        assert!(has_pair(&args, "--http-proxy", "127.0.0.1:1820"));
+        assert!(has_pair(&args, "--wiw-outer", "162.159.192.1:2408"));
+        assert!(has_pair(&args, "--wiw-inner", "188.114.96.1:2408"));
+    }
+
+    #[test]
+    fn stale_gool_values_never_leak_into_masque() {
+        let profile = ConnectionProfile {
+            protocol: Protocol::Masque,
+            peer: "162.159.192.1:443".into(),
+            wg_peer: "162.159.192.2:2408".into(),
+            wiw_outer: "162.159.192.3:2408".into(),
+            wiw_inner: "188.114.96.1:2408".into(),
+            ..Default::default()
+        };
+        let args = profile.as_args();
+        assert!(has_pair(&args, "--peer", "162.159.192.1:443"));
+        assert!(!args.iter().any(|arg| matches!(arg.as_str(), "--wg-peer" | "--wiw-outer" | "--wiw-inner" | "--wiw-scan")));
+    }
+
+    #[test]
+    fn stale_masque_values_never_leak_into_wireguard() {
+        let profile = ConnectionProfile {
+            protocol: Protocol::Wireguard,
+            masque_http2: true,
+            h2_peer: "162.159.192.1:443".into(),
+            ech: "auto".into(),
+            fragment: true,
+            ..Default::default()
+        };
+        let args = profile.as_args();
+        assert!(!args.iter().any(|arg| matches!(arg.as_str(), "--h2" | "--h2-peer" | "--ech" | "--fragment" | "--fragment-size" | "--fragment-delay")));
+    }
+
+    #[test]
+    fn wiw_scan_ignores_manual_and_legacy_endpoints() {
+        let profile = ConnectionProfile {
+            protocol: Protocol::Gool,
+            peer: "162.159.192.9:2408".into(),
+            wg_peer: "162.159.192.2:2408".into(),
+            wiw_outer: "162.159.192.3:2408".into(),
+            wiw_inner: "188.114.96.1:2408".into(),
+            wiw_scan: true,
+            ..Default::default()
+        };
+        let args = profile.as_args();
+        assert!(args.iter().any(|arg| arg == "--wiw-scan"));
+        assert!(!args.iter().any(|arg| matches!(arg.as_str(), "--peer" | "--wg-peer" | "--wiw-outer" | "--wiw-inner")));
     }
 
     #[test]

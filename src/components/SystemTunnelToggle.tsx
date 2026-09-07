@@ -32,7 +32,7 @@ export function SystemTunnelToggle() {
             </div>
           </div>
           <span className="shrink-0 rounded-full bg-status-connected/10 px-2.5 py-1.5 text-[10px] font-semibold text-status-connected ring-1 ring-status-connected/20">
-            Always on
+            Device-wide
           </span>
         </div>
         {error && (
@@ -40,7 +40,7 @@ export function SystemTunnelToggle() {
             <span className="min-w-0">{error}</span>
             <button
               type="button"
-              className="shrink-0 rounded-lg px-3 text-foreground ring-1 ring-white/10"
+              className="min-h-12 shrink-0 rounded-lg px-3 text-foreground ring-1 ring-white/10"
               onClick={() => void load()}
             >
               Retry

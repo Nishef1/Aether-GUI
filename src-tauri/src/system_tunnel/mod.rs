@@ -93,8 +93,11 @@ impl Default for SystemTunnelRuntime {
         let mut adapters = BTreeMap::new();
         adapters.insert(sing_box.id().to_owned(), sing_box);
         Self {
+            // Full-device protection is the product default. A persisted
+            // explicit "off" still wins in prepare_all(). Keeping this native
+            // avoids a React/WebView bootstrap race before the first connect.
+            selection: Mutex::new(SystemTunnelSelection::Singbox),
             adapters,
-            selection: Mutex::new(SystemTunnelSelection::Off),
             stage: Mutex::new(TunnelStage::Idle),
             attempt_epoch: AtomicU64::new(0),
         }
@@ -120,6 +123,8 @@ impl SystemTunnelRuntime {
         self.selection
             .lock()
             .map(|value| *value)
+            // Fail closed to proxy-only if state is poisoned; normal startup
+            // has already selected sing-box above.
             .unwrap_or_default()
     }
 
@@ -137,7 +142,7 @@ impl SystemTunnelRuntime {
             .ok()
             .and_then(|store| store.get(STORE_KEY))
             .and_then(|value| value.as_str().map(SystemTunnelSelection::from_store))
-            .unwrap_or_default();
+            .unwrap_or(SystemTunnelSelection::Singbox);
         if let Ok(mut selection) = self.selection.lock() {
             *selection = stored;
         }
@@ -379,9 +384,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_keeps_upstream_proxy_mode() {
+    fn new_install_defaults_to_full_device_tunnel() {
         let runtime = SystemTunnelRuntime::default();
-        assert_eq!(runtime.selection(), SystemTunnelSelection::Off);
+        assert_eq!(runtime.selection(), SystemTunnelSelection::Singbox);
         assert_eq!(runtime.list().len(), 1);
         assert_eq!(runtime.list()[0].id, SING_BOX_TUNNEL_ID);
     }
@@ -393,5 +398,6 @@ mod tests {
             SystemTunnelSelection::Singbox.id(),
             Some(SING_BOX_TUNNEL_ID)
         );
+        assert_eq!(SystemTunnelSelection::from_store("off"), SystemTunnelSelection::Off);
     }
 }
