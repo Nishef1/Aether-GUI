@@ -16,7 +16,7 @@ internal data class EgressProbeResult(
     val countryCode: String?,
     val latencyMs: Long,
     val provider: String = "unknown",
-    /** true = exact underlay/tunnel addresses differ; null = direct baseline unavailable. */
+    /** true = checked underlay addresses differ; null = direct baseline unavailable. */
     val identityChanged: Boolean? = null,
 )
 
@@ -25,9 +25,9 @@ internal data class EgressProbeResult(
  *
  * The primary identity providers are deliberately not Cloudflare-owned. WARP
  * normally preserves approximate geography even though it replaces the user's
- * public IP, so country equality is not evidence of a leak. We compare the exact
- * neutral-provider address seen outside Aether with the exact address seen
- * through SOCKS and fail closed only when those addresses are identical.
+ * public IP, so country equality is not evidence of a leak. We compare neutral
+ * IPv4 and (best-effort) IPv6 addresses outside Aether with the same families
+ * through SOCKS and fail closed only on exact address equality.
  */
 internal object AndroidEgressProbe {
     private const val CONNECT_TIMEOUT_MS = 6_000
@@ -46,6 +46,14 @@ internal object AndroidEgressProbe {
 
     private val identityProviders = listOf(
         Provider(
+            label = "ipify-v4",
+            host = "api4.ipify.org",
+            port = 443,
+            path = "/",
+            tls = true,
+            useDomainAddress = true,
+        ),
+        Provider(
             label = "aws-checkip",
             host = "checkip.amazonaws.com",
             port = 443,
@@ -61,9 +69,8 @@ internal object AndroidEgressProbe {
             tls = true,
             useDomainAddress = true,
         ),
-        // Kept as a last non-TLS fallback because some filtered networks break
-        // one of the neutral HTTPS endpoints. This is still reached through the
-        // encrypted Aether tunnel, not over the device underlay.
+        // Last-resort identity fallback. It is reached through Aether, so the
+        // HTTP leg is still encapsulated by the encrypted tunnel.
         Provider(
             label = "ip-api",
             host = "ip-api.com",
@@ -74,8 +81,17 @@ internal object AndroidEgressProbe {
         ),
     )
 
+    private val ipv6IdentityProvider = Provider(
+        label = "ipify-v6",
+        host = "api6.ipify.org",
+        port = 443,
+        path = "/",
+        tls = true,
+        useDomainAddress = true,
+    )
+
     fun probe(bindAddress: String): EgressProbeResult {
-        val underlayIp = AndroidEgressIdentityGuard.underlayPublicIp()
+        val underlayIps = AndroidEgressIdentityGuard.underlayPublicIps()
         val (proxyHost, proxyPort) = splitHostPort(bindAddress)
         val failures = mutableListOf<String>()
 
@@ -83,7 +99,15 @@ internal object AndroidEgressProbe {
             val result = runCatching { probeProvider(proxyHost, proxyPort, provider) }
             if (result.isSuccess) {
                 val probe = result.getOrThrow()
-                val identity = AndroidEgressIdentityGuard.compare(underlayIp, probe.publicIp)
+                val identity = AndroidEgressIdentityGuard.compare(underlayIps, probe.publicIp)
+
+                // A routed ::/0 is part of the Android protection contract. If
+                // both sides can reach an IPv6 echo service, compare that family
+                // as well. Failure to obtain IPv6 is not itself an IP leak.
+                runCatching { probeProvider(proxyHost, proxyPort, ipv6IdentityProvider) }
+                    .getOrNull()
+                    ?.let { ipv6 -> AndroidEgressIdentityGuard.compare(underlayIps, ipv6.publicIp) }
+
                 return probe.copy(identityChanged = identity.changed)
             }
             failures += "${provider.label}: ${result.exceptionOrNull()?.message ?: "unknown error"}"
@@ -256,10 +280,11 @@ internal object AndroidEgressProbe {
             ?.trim()
         val plain = response
             .lineSequence()
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .firstNotNullOfOrNull(AndroidEgressIdentityGuard::parseIp)
-        return listOfNotNull(plain, trace, json).firstNotNullOfOrNull(AndroidEgressIdentityGuard::parseIp)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .firstNotNullOfOrNull { AndroidEgressIdentityGuard.parseIp(it) }
+        return listOfNotNull(plain, trace, json)
+            .firstNotNullOfOrNull { AndroidEgressIdentityGuard.parseIp(it) }
     }
 
     private fun parseCountry(response: String): String? {
