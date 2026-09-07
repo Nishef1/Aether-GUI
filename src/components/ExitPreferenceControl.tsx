@@ -5,9 +5,9 @@ import { useExitPolicyStore } from "@/state/exitPolicyStore";
 const OPTIONS = [
   {
     id: "low-latency" as const,
-    label: "Fastest",
+    label: "Low latency",
     icon: Gamepad2,
-    description: "Lowest-latency route. Exit country is not restricted.",
+    description: "Keeps the first healthy route and ignores country. Best for gaming.",
   },
   {
     id: "privacy" as const,
