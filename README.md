@@ -11,9 +11,9 @@
 
 Aether-GUI is an independent, mobile-first graphical client around the official [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) transport core. It keeps transport logic in the upstream core and adds a platform-neutral connection UI, full-device tunnelling, lifecycle management, telemetry and safe interactive Zero Trust authentication.
 
-`main` currently pins **Aether v1.9.0** (`311b573352bb67e494895ff67d20b002d075116a`). Runtime versions live in one source of truth: [`scripts/runtime-versions.json`](scripts/runtime-versions.json).
+`main` currently targets **Aether-GUI v0.8.0**, pins **Aether v1.9.0** (`311b573352bb67e494895ff67d20b002d075116a`) and uses **sing-box v1.14.0** for the desktop system tunnel. Runtime versions live in one source of truth: [`scripts/runtime-versions.json`](scripts/runtime-versions.json).
 
-> **Release status:** the published `v0.7.2` assets predate the current Aether 1.9/mobile-first work on `main`. Do not assume those older binaries contain the runtime and UI changes documented below. New release artifacts are published only after explicit manual validation.
+> **Release status:** `v0.8.0` is the current release candidate. The manual cross-platform workflow must pass Windows, Linux, Debian 12, Arch, both macOS architectures and signed Android ARM64 before the release job may publish the tag/assets.
 
 ## What it supports
 
@@ -65,20 +65,24 @@ The GUI does **not** carry private protocol patches for MASQUE/WireGuard/gool. P
 Prerequisites: Node.js/npm, stable Rust and the normal [Tauri v2 platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```sh
+node scripts/ci/sync-product-version.mjs
 npm ci
 npm run verify:runtimes
 npm run typecheck
+npm run lint
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 npm run tauri -- dev
 ```
 
-`npm run prepare:aether` fetches the pinned official core for the current desktop platform and verifies the published checksum. `npm run prepare:sidecars` prepares the pinned desktop sing-box/Wintun runtime where applicable.
+`src-tauri/tauri.conf.json` is the product-version source of truth. `sync-product-version.mjs` deterministically aligns generated npm/Cargo lock metadata before frozen installs/tests. `npm run prepare:aether` fetches the pinned official core for the current desktop platform and verifies the published checksum. `npm run prepare:sidecars` prepares the pinned desktop sing-box/Wintun runtime where applicable.
 
 ### Android ARM64
 
 Android additionally requires JDK 17, Android SDK 36, NDK `28.2.13676358`, Bash and Rust target `aarch64-linux-android`.
 
 ```sh
+node scripts/ci/sync-product-version.mjs
 npm ci
 npm run android:init
 npm run prepare:android-native
@@ -91,7 +95,7 @@ More detail: [`docs/BUILD.md`](docs/BUILD.md).
 
 ## Build / release policy
 
-`.github/workflows/build.yml` is **manual-only** (`workflow_dispatch`). It does not run on push or tags and it does not create/update GitHub Releases. This is intentional: runtime/device validation is performed explicitly before publishing.
+`.github/workflows/build.yml` is **manual-only** (`workflow_dispatch`). It does not run on push or tags. When the operator explicitly runs it with `publish_release = true`, the release job runs only after the desktop matrix, Debian 12 smoke install, Arch native package and Android ARM64 job all succeed; it then publishes/updates `v0.8.0` with the artifacts and `SHA256SUMS.txt`.
 
 The current release checklist includes Windows connection/disconnect/reconnect, desktop system TUN, Android permission/service lifecycle, repeated Android connect/disconnect, foreground/background behavior, MASQUE H2/H3, WireGuard, gool, DNS/routing, exit-IP/data-plane verification and signed ARM64 package validation.
 
