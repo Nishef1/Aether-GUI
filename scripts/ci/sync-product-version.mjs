@@ -36,20 +36,23 @@ if (writeIfChanged(packageLockPath, `${JSON.stringify(lock, null, 2)}\n`)) chang
 
 const cargo = fs.readFileSync(cargoPath, "utf8");
 const cargoNext = cargo.replace(
-  /(\[package\][\s\S]*?\nversion\s*=\s*")[^"]+("\s*\n)/,
+  /(\[package\][\s\S]*?\r?\nversion\s*=\s*")[^"]+("\s*\r?\n)/,
   `$1${version}$2`,
 );
-if (cargoNext === cargo && !cargo.includes(`version = "${version}"`)) {
+if (cargoNext === cargo && !new RegExp(`version\\s*=\\s*"${version.replaceAll(".", "\\.")}"`).test(cargo)) {
   throw new Error("Could not locate the root package version in src-tauri/Cargo.toml");
 }
 if (writeIfChanged(cargoPath, cargoNext)) changed.push("src-tauri/Cargo.toml");
 
 const cargoLock = fs.readFileSync(cargoLockPath, "utf8");
 const cargoLockNext = cargoLock.replace(
-  /(\[\[package\]\]\s*\nname\s*=\s*"aether-gui"\s*\nversion\s*=\s*")[^"]+("\s*\n)/,
+  /(\[\[package\]\]\s*\r?\nname\s*=\s*"aether-gui"\s*\r?\nversion\s*=\s*")[^"]+("\s*\r?\n)/,
   `$1${version}$2`,
 );
-if (cargoLockNext === cargoLock && !cargoLock.includes(`name = "aether-gui"\nversion = "${version}"`)) {
+const cargoLockVersionPattern = new RegExp(
+  `name\\s*=\\s*"aether-gui"\\s*\\r?\\nversion\\s*=\\s*"${version.replaceAll(".", "\\.")}"`,
+);
+if (cargoLockNext === cargoLock && !cargoLockVersionPattern.test(cargoLock)) {
   throw new Error("Could not locate the aether-gui package record in src-tauri/Cargo.lock");
 }
 if (writeIfChanged(cargoLockPath, cargoLockNext)) changed.push("src-tauri/Cargo.lock");
