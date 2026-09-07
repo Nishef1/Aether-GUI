@@ -21,10 +21,12 @@ internal data class EgressProbeResult(
 /**
  * End-to-end SOCKS verification used as the definition of transport readiness.
  *
- * Public identity and GeoIP are observational data. They never reject an
- * otherwise healthy tunnel: low-latency mode is allowed to keep a nearby WARP
- * egress, while the UI's privacy policy may independently request another
- * route. Native TUN/HEV failures remain fail-closed safety faults.
+ * GeoIP is observational data and never rejects an otherwise healthy tunnel:
+ * low-latency mode is allowed to keep a nearby WARP egress, while the UI's
+ * privacy policy may independently request another route. Exact equality with
+ * the device's public underlay IP remains a safety fault because that is an
+ * identity leak, not a geographic preference. Native TUN/HEV failures remain
+ * fail-closed safety faults as well.
  */
 internal object AndroidEgressProbe {
     private const val CONNECT_TIMEOUT_MS = 6_000
@@ -78,6 +80,15 @@ internal object AndroidEgressProbe {
         ),
     )
 
+    private val ipv6IdentityProvider = Provider(
+        label = "ipify-v6",
+        host = "api6.ipify.org",
+        port = 443,
+        path = "/",
+        tls = true,
+        useDomainAddress = true,
+    )
+
     // A separate lightweight GeoIP request is needed because the neutral IP
     // echo providers intentionally return only the address. This request also
     // traverses Aether and is informational only.
@@ -91,6 +102,7 @@ internal object AndroidEgressProbe {
     )
 
     fun probe(bindAddress: String): EgressProbeResult {
+        val underlayIps = AndroidEgressIdentityGuard.underlayPublicIps()
         val (proxyHost, proxyPort) = splitHostPort(bindAddress)
         val failures = mutableListOf<String>()
 
@@ -98,8 +110,17 @@ internal object AndroidEgressProbe {
             val result = runCatching { probeProvider(proxyHost, proxyPort, provider) }
             if (result.isSuccess) {
                 val probe = result.getOrThrow()
-                if (probe.countryCode != null) return probe
+                AndroidEgressIdentityGuard.assertChanged(underlayIps, probe.publicIp)
 
+                if (underlayIps.any { it.contains(':') }) {
+                    runCatching { probeProvider(proxyHost, proxyPort, ipv6IdentityProvider) }
+                        .getOrNull()
+                        ?.let { ipv6 ->
+                            AndroidEgressIdentityGuard.assertChanged(underlayIps, ipv6.publicIp)
+                        }
+                }
+
+                if (probe.countryCode != null) return probe
                 val geo = runCatching { probeProvider(proxyHost, proxyPort, geoProvider) }.getOrNull()
                 return probe.copy(countryCode = geo?.countryCode)
             }
@@ -264,12 +285,6 @@ internal object AndroidEgressProbe {
     private fun elapsedMillis(startedAt: Long): Long =
         ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(1L)
 
-    private fun parseIp(value: String): String? {
-        val candidate = value.trim().lineSequence().firstOrNull()?.trim().orEmpty()
-        if (candidate.isEmpty() || (!candidate.contains('.') && !candidate.contains(':'))) return null
-        return runCatching { InetAddress.getByName(candidate).hostAddress }.getOrNull()
-    }
-
     private fun parsePublicIp(response: String): String? {
         val trace = Regex("(?m)^ip=([^\\r\\n]+)$").find(response)?.groupValues?.getOrNull(1)?.trim()
         val json = Regex("\\\"query\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"")
@@ -281,8 +296,9 @@ internal object AndroidEgressProbe {
             .lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .firstNotNullOfOrNull(::parseIp)
-        return listOfNotNull(plain, trace, json).firstNotNullOfOrNull(::parseIp)
+            .firstNotNullOfOrNull { AndroidEgressIdentityGuard.parseIp(it) }
+        return listOfNotNull(plain, trace, json)
+            .firstNotNullOfOrNull { AndroidEgressIdentityGuard.parseIp(it) }
     }
 
     private fun parseCountry(response: String): String? {
