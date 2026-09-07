@@ -150,6 +150,7 @@
 .platform-android .connect-orb {
   min-width: 9.25rem;
   min-height: 9.25rem;
+  contain: paint;
 }
 
 .platform-android input,
@@ -201,6 +202,34 @@
   50% { transform: translate(-25px, 18px); opacity: 0.14; }
 }
 
+/* Android WebView gets dedicated compositor-friendly animations. Motion's JS
+   animation loop is intentionally avoided during connection because native
+   status polling and WebView scheduling can otherwise make the spinner look
+   frozen. Only transform/opacity are animated. */
+@keyframes android-connect-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes android-connect-ring {
+  0%, 100% { transform: scale(1); opacity: 0.58; }
+  50% { transform: scale(1.045); opacity: 0.95; }
+}
+
+@keyframes android-connected-ring {
+  0%, 100% { transform: scale(1); opacity: 0.62; }
+  50% { transform: scale(1.02); opacity: 0.86; }
+}
+
+@keyframes android-connect-ripple {
+  0% { transform: scale(0.96); opacity: 0.34; }
+  78%, 100% { transform: scale(1.34); opacity: 0; }
+}
+
+@keyframes android-scan-indeterminate {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(310%); }
+}
+
 .anim-ring-breathe { animation: ring-breathe 4.5s ease-in-out infinite; }
 .anim-ring-pulse-fast { animation: ring-pulse-fast 1.6s ease-in-out infinite; }
 .anim-ring-pulse-slow { animation: ring-pulse-slow 2.4s ease-in-out infinite; }
@@ -209,6 +238,32 @@
 .anim-orb-a { animation: orb-drift-a 10s ease-in-out infinite; }
 .anim-orb-b { animation: orb-drift-b 13s ease-in-out infinite; }
 
+.platform-android .android-connect-spin {
+  animation: android-connect-spin 0.9s linear infinite;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.platform-android .android-connect-ring {
+  animation: android-connect-ring 1.45s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.platform-android .android-connected-ring {
+  animation: android-connected-ring 2.4s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.platform-android .android-connect-ripple {
+  animation: android-connect-ripple 1.1s ease-out infinite;
+  will-change: transform, opacity;
+}
+
+.platform-android .android-scan-indeterminate {
+  animation: android-scan-indeterminate 1.15s ease-in-out infinite;
+  will-change: transform;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .anim-ring-breathe,
   .anim-ring-pulse-fast,
@@ -216,7 +271,12 @@
   .anim-glow-fast,
   .anim-glow-slow,
   .anim-orb-a,
-  .anim-orb-b {
+  .anim-orb-b,
+  .android-connect-spin,
+  .android-connect-ring,
+  .android-connected-ring,
+  .android-connect-ripple,
+  .android-scan-indeterminate {
     animation: none;
   }
 }
