@@ -27,6 +27,21 @@ $Target = Join-Path $DestDir "aether.exe"
 $Stamp = Join-Path $DestDir "aether-version.txt"
 $ExpectedVersion = $Version -replace '^v', ''
 
+function Sha256([string]$Path) {
+  $Stream = [System.IO.File]::OpenRead($Path)
+  try {
+    $Hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $Bytes = $Hasher.ComputeHash($Stream)
+      return ([System.BitConverter]::ToString($Bytes)).Replace("-", "").ToLowerInvariant()
+    } finally {
+      $Hasher.Dispose()
+    }
+  } finally {
+    $Stream.Dispose()
+  }
+}
+
 function Test-AetherVersion {
   if (-not (Test-Path $Target)) {
     return $false
@@ -78,7 +93,7 @@ try {
     throw "Aether checksum entry was not found for $Asset"
   }
 
-  $ActualSha = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+  $ActualSha = Sha256 $Archive
   if ($ActualSha -ne $ExpectedSha) {
     throw "Checksum verification failed for $Asset"
   }
