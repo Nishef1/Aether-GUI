@@ -122,7 +122,7 @@ function evaluateExitPolicy(snapshot: RuntimeTelemetry): void {
   if (epoch != null) void rerollPrivacyExit(epoch);
 }
 
-export const useTelemetryStore = create<TelemetryStore>((set, get) => ({
+export const useTelemetryStore = create<TelemetryStore>((set) => ({
   snapshot: { ...EMPTY_TELEMETRY },
   refresh: async () => {
     try {
@@ -139,9 +139,6 @@ export const useTelemetryStore = create<TelemetryStore>((set, get) => ({
     policy.beginManualAttempt();
     const epoch = useExitPolicyStore.getState().beginReroll();
     if (epoch != null) void rerollPrivacyExit(epoch);
-    // Keep the current telemetry visible until native disconnect begins so the
-    // user can see which exit is being replaced.
-    void get;
   },
 }));
 
