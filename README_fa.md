@@ -11,9 +11,9 @@
 
 Aether-GUI یک کلاینت گرافیکی مستقل و **mobile-first** برای هسته‌ی رسمی [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) است. منطق پروتکل‌ها در هسته‌ی upstream باقی می‌ماند و این پروژه رابط کاربری، مدیریت چرخه‌ی اتصال، تونل سراسری سیستم، telemetry و ورود تعاملی Zero Trust را مدیریت می‌کند.
 
-شاخه‌ی `main` در حال حاضر **Aether v1.9.0** با commit دقیق `311b573352bb67e494895ff67d20b002d075116a` را pin می‌کند. نسخه‌ی تمام runtimeها از یک منبع واحد یعنی [`scripts/runtime-versions.json`](scripts/runtime-versions.json) خوانده می‌شود.
+شاخه‌ی `main` اکنون **Aether-GUI v0.8.0** را هدف می‌گیرد، **Aether v1.9.0** با commit دقیق `311b573352bb67e494895ff67d20b002d075116a` را pin می‌کند و برای تونل desktop از **sing-box v1.14.0** استفاده می‌کند. نسخه‌ی runtimeها از [`scripts/runtime-versions.json`](scripts/runtime-versions.json) خوانده می‌شود.
 
-> **وضعیت انتشار:** فایل‌های منتشرشده‌ی `v0.7.2` مربوط به قبل از مهاجرت فعلی به Aether 1.9 و بازطراحی mobile-first هستند. بنابراین نباید فرض کرد آن فایل‌های قدیمی تغییرات فعلی `main` را دارند. نسخه‌ی جدید فقط بعد از تست دستی و صریح منتشر می‌شود.
+> **وضعیت انتشار:** `v0.8.0` کاندید فعلی انتشار است. workflow دستی باید Windows، Linux، Debian 12، Arch، هر دو معماری macOS و Android ARM64 امضاشده را با موفقیت رد کند تا release job اجازه‌ی انتشار فایل‌ها را داشته باشد.
 
 ## امکانات فعلی
 
@@ -65,20 +65,24 @@ EngineRuntime
 پیش‌نیازها: Node.js/npm، Rust stable و پیش‌نیازهای معمول [Tauri v2](https://v2.tauri.app/start/prerequisites/).
 
 ```sh
+node scripts/ci/sync-product-version.mjs
 npm ci
 npm run verify:runtimes
 npm run typecheck
+npm run lint
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 npm run tauri -- dev
 ```
 
-`npm run prepare:aether` هسته‌ی pin‌شده‌ی رسمی را برای سیستم‌عامل فعلی می‌گیرد و checksum منتشرشده را بررسی می‌کند. `npm run prepare:sidecars` نیز runtimeهای desktop مثل sing-box/Wintun را آماده می‌کند.
+`src-tauri/tauri.conf.json` منبع نسخه‌ی محصول است. اسکریپت `sync-product-version.mjs` metadata تولیدشده‌ی npm/Cargo را قبل از frozen install/test به همان نسخه همگام می‌کند. `npm run prepare:aether` هسته‌ی pin‌شده‌ی رسمی را برای سیستم‌عامل فعلی می‌گیرد و checksum منتشرشده را بررسی می‌کند. `npm run prepare:sidecars` نیز runtimeهای desktop مثل sing-box/Wintun را آماده می‌کند.
 
 ### Android ARM64
 
 علاوه بر موارد بالا به JDK 17، Android SDK 36، NDK `28.2.13676358`، Bash و target رست `aarch64-linux-android` نیاز است.
 
 ```sh
+node scripts/ci/sync-product-version.mjs
 npm ci
 npm run android:init
 npm run prepare:android-native
@@ -91,7 +95,7 @@ npm run android:build
 
 ## سیاست build و release
 
-`.github/workflows/build.yml` فقط با **`workflow_dispatch` دستی** اجرا می‌شود. روی push یا tag خودکار اجرا نمی‌شود و GitHub Release هم ایجاد یا به‌روزرسانی نمی‌کند. این رفتار عمدی است تا قبل از انتشار، runtime و دستگاه واقعی جداگانه بررسی شوند.
+`.github/workflows/build.yml` فقط با **`workflow_dispatch` دستی** اجرا می‌شود و روی push یا tag خودکار اجرا نمی‌شود. اگر اپراتور هنگام اجرای دستی `publish_release = true` را انتخاب کند، release job فقط بعد از موفقیت desktop matrix، تست نصب Debian 12، پکیج native Arch و Android ARM64 اجرا می‌شود و سپس `v0.8.0` را همراه artifactها و `SHA256SUMS.txt` منتشر/به‌روزرسانی می‌کند.
 
 چک نهایی انتشار شامل connect/disconnect/reconnect روی Windows، تونل سراسری desktop، چرخه‌ی permission/service در Android، چند بار اتصال و قطع، foreground/background، MASQUE H2/H3، WireGuard، gool، DNS/routing، بررسی exit IP/data-plane و اعتبارسنجی APK امضاشده‌ی ARM64 است.
 
