@@ -311,7 +311,12 @@ impl ConnectionProfile {
             args.push("--bind".into());
             args.push(self.bind_address.clone());
         }
-        if self.http_proxy.trim().parse::<std::net::SocketAddr>().is_ok() {
+        if self
+            .http_proxy
+            .trim()
+            .parse::<std::net::SocketAddr>()
+            .is_ok()
+        {
             push_non_empty(&mut args, "--http-proxy", &self.http_proxy);
         }
 
@@ -482,7 +487,8 @@ mod tests {
     use super::*;
 
     fn has_pair(args: &[String], flag: &str, value: &str) -> bool {
-        args.windows(2).any(|pair| pair[0] == flag && pair[1] == value)
+        args.windows(2)
+            .any(|pair| pair[0] == flag && pair[1] == value)
     }
 
     #[test]
@@ -523,7 +529,10 @@ mod tests {
         };
         let args = profile.as_args();
         assert!(has_pair(&args, "--peer", "162.159.192.1:443"));
-        assert!(!args.iter().any(|arg| matches!(arg.as_str(), "--wg-peer" | "--wiw-outer" | "--wiw-inner" | "--wiw-scan")));
+        assert!(!args.iter().any(|arg| matches!(
+            arg.as_str(),
+            "--wg-peer" | "--wiw-outer" | "--wiw-inner" | "--wiw-scan"
+        )));
     }
 
     #[test]
@@ -537,7 +546,15 @@ mod tests {
             ..Default::default()
         };
         let args = profile.as_args();
-        assert!(!args.iter().any(|arg| matches!(arg.as_str(), "--h2" | "--h2-peer" | "--ech" | "--fragment" | "--fragment-size" | "--fragment-delay")));
+        assert!(!args.iter().any(|arg| matches!(
+            arg.as_str(),
+            "--h2"
+                | "--h2-peer"
+                | "--ech"
+                | "--fragment"
+                | "--fragment-size"
+                | "--fragment-delay"
+        )));
     }
 
     #[test]
@@ -553,7 +570,10 @@ mod tests {
         };
         let args = profile.as_args();
         assert!(args.iter().any(|arg| arg == "--wiw-scan"));
-        assert!(!args.iter().any(|arg| matches!(arg.as_str(), "--peer" | "--wg-peer" | "--wiw-outer" | "--wiw-inner")));
+        assert!(!args.iter().any(|arg| matches!(
+            arg.as_str(),
+            "--peer" | "--wg-peer" | "--wiw-outer" | "--wiw-inner"
+        )));
     }
 
     #[test]
