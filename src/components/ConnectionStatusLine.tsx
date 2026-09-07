@@ -103,6 +103,7 @@ export function ConnectionStatusLine() {
   const status = useConnectionStore((state) => state.status);
   const scanBudgetSecs = useConnectionStore((state) => state.scanBudgetSecs);
   const telemetry = useTelemetryStore((state) => state.snapshot);
+  const retryPrivacyExit = useTelemetryStore((state) => state.retryPrivacyExit);
   const exitPreference = useExitPolicyStore((state) => state.preference);
   const privacyRetryCount = useExitPolicyStore((state) => state.retryCount);
   const privacyRerolling = useExitPolicyStore((state) => state.rerolling);
@@ -115,10 +116,19 @@ export function ConnectionStatusLine() {
       : null;
   const { formatted: elapsed } = useElapsed(connectedAt);
   const connectionReady = connectedAt != null;
+  const stableConnected = status.state === "Connected" || status.state === "Tunneling";
   const systemTunnelError = status.state === "Error" && status.phase === "system-tunnel";
   const privilegeTunnelError =
     systemTunnelError &&
     /administrator|approval|uac|pkexec|polkit|permission|privilege/i.test(status.message);
+
+  const countryCode = telemetry.country_code?.toUpperCase() ?? null;
+  const privacyPreferred = isPrivacyPreferredExit(countryCode);
+  const privacySearching =
+    exitPreference === "privacy" &&
+    privacyRetryCount > 0 &&
+    !privacyPreferred &&
+    !privacyExhausted;
 
   const [attemptStartedAt, setAttemptStartedAt] = useState<number | null>(null);
   /* eslint-disable react-hooks/set-state-in-effect -- capture transition time */
@@ -148,13 +158,13 @@ export function ConnectionStatusLine() {
       secondary = "Click to connect";
       break;
     case "Launching":
-      primary = privacyRerolling ? "Trying another exit…" : "Starting Aether…";
-      secondary = privacyRerolling
+      primary = privacySearching ? "Trying another exit…" : "Starting Aether…";
+      secondary = privacySearching
         ? `Privacy retry ${privacyRetryCount} of ${EXIT_RETRY_LIMIT}`
         : "Preparing the transport core";
       break;
     case "Connecting":
-      primary = privacyRerolling ? "Finding a privacy exit…" : "Finding a route…";
+      primary = privacySearching ? "Finding a privacy exit…" : "Finding a route…";
       secondary =
         scanPercent != null
           ? `Still searching · ${attemptElapsed} · ${scanPercent}%`
@@ -193,8 +203,13 @@ export function ConnectionStatusLine() {
   const hasEgressInfo = Boolean(
     telemetry.public_ip || telemetry.country_code || telemetry.latency_ms != null,
   );
-  const countryCode = telemetry.country_code?.toUpperCase() ?? null;
-  const privacyPreferred = isPrivacyPreferredExit(countryCode);
+  const canRetryPrivacy =
+    stableConnected &&
+    exitPreference === "privacy" &&
+    telemetry.egress_probe_complete &&
+    !privacyPreferred &&
+    !privacyRerolling &&
+    (privacyExhausted || !countryCode);
 
   return (
     <div
@@ -276,30 +291,46 @@ export function ConnectionStatusLine() {
       )}
 
       {connectionReady && exitPreference === "privacy" && telemetry.egress_probe_complete && (
-        <span
-          className={`inline-flex max-w-xs items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10px] ring-1 ${
-            privacyPreferred
-              ? "bg-status-connected/8 text-status-connected ring-status-connected/20"
-              : privacyExhausted
-                ? "bg-status-connecting/8 text-status-connecting ring-status-connecting/20"
-                : "bg-white/5 text-muted-foreground ring-white/10"
-          }`}
-        >
-          {privacyPreferred ? (
-            <ShieldCheck size={11} aria-hidden="true" />
-          ) : privacyRerolling ? (
-            <RefreshCw size={11} className="android-connect-spin" aria-hidden="true" />
-          ) : (
-            <TriangleAlert size={11} aria-hidden="true" />
+        <div className="flex max-w-xs flex-col items-center gap-1.5">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10px] ring-1 ${
+              privacyPreferred
+                ? "bg-status-connected/8 text-status-connected ring-status-connected/20"
+                : privacyExhausted
+                  ? "bg-status-connecting/8 text-status-connecting ring-status-connecting/20"
+                  : "bg-white/5 text-muted-foreground ring-white/10"
+            }`}
+          >
+            {privacyPreferred ? (
+              <ShieldCheck size={11} aria-hidden="true" />
+            ) : privacySearching ? (
+              <RefreshCw
+                size={11}
+                className={isAndroid ? "android-connect-spin" : "animate-spin"}
+                aria-hidden="true"
+              />
+            ) : (
+              <TriangleAlert size={11} aria-hidden="true" />
+            )}
+            {privacyPreferred
+              ? "Privacy exit accepted"
+              : !countryCode
+                ? "Exit country could not be verified; connection kept"
+                : privacyExhausted
+                  ? `Preferred exit unavailable after ${EXIT_RETRY_LIMIT} automatic retries; current connection kept`
+                  : `Current exit is outside the privacy pool · retry ${privacyRetryCount}/${EXIT_RETRY_LIMIT}`}
+          </span>
+
+          {canRetryPrivacy && (
+            <button
+              type="button"
+              onClick={retryPrivacyExit}
+              className="min-h-8 rounded-full bg-white/5 px-3 text-[10px] font-medium text-foreground ring-1 ring-white/10 transition-colors hover:bg-white/10"
+            >
+              Try another exit
+            </button>
           )}
-          {privacyPreferred
-            ? "Privacy exit accepted"
-            : !countryCode
-              ? "Exit country could not be verified; connection kept"
-              : privacyExhausted
-                ? `Preferred exit unavailable after ${EXIT_RETRY_LIMIT} retries; current connection kept`
-                : `Current exit is outside the privacy pool · retry ${privacyRetryCount}/${EXIT_RETRY_LIMIT}`}
-        </span>
+        </div>
       )}
 
       {status.state === "Tunneling" && (
