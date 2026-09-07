@@ -126,7 +126,8 @@ class HevTun2Socks(
 
                 val shouldReport = synchronized(nativeLock) { ownsSession && !stopRequested }
                 if (shouldReport) {
-                    onUnexpectedStop?.invoke("Android device tunnel stopped unexpectedly")
+                    val message = "Android device tunnel stopped unexpectedly; traffic remains blocked to prevent an IP leak"
+                    onUnexpectedStop?.invoke(message) ?: AndroidVpnRuntime.reportSafetyFailure(message)
                 }
                 return@Thread
             }
