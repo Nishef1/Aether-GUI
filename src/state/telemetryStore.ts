@@ -23,6 +23,7 @@ const REROLL_STATUS_POLL_MS = 200;
 interface TelemetryStore {
   snapshot: RuntimeTelemetry;
   refresh: () => Promise<void>;
+  retryPrivacyExit: () => void;
 }
 
 function isConnected(): boolean {
@@ -121,7 +122,7 @@ function evaluateExitPolicy(snapshot: RuntimeTelemetry): void {
   if (epoch != null) void rerollPrivacyExit(epoch);
 }
 
-export const useTelemetryStore = create<TelemetryStore>((set) => ({
+export const useTelemetryStore = create<TelemetryStore>((set, get) => ({
   snapshot: { ...EMPTY_TELEMETRY },
   refresh: async () => {
     try {
@@ -131,6 +132,16 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
     } catch {
       // Telemetry is supplementary and must never affect basic connectivity.
     }
+  },
+  retryPrivacyExit: () => {
+    const policy = useExitPolicyStore.getState();
+    if (policy.preference !== "privacy" || !isStableConnected()) return;
+    policy.beginManualAttempt();
+    const epoch = useExitPolicyStore.getState().beginReroll();
+    if (epoch != null) void rerollPrivacyExit(epoch);
+    // Keep the current telemetry visible until native disconnect begins so the
+    // user can see which exit is being replaced.
+    void get;
   },
 }));
 
