@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
-const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+const ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
+const IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
 const PROBE_INTERVAL: Duration = Duration::from_secs(60);
 const TRACE_URL: &str = "https://www.cloudflare.com/cdn-cgi/trace";
 
@@ -153,7 +154,8 @@ pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
 
         loop {
             let status = runtime.status();
-            if let Some((socks_addr, connected_at_ms)) = connected_details(&status) {
+            let connected = connected_details(&status);
+            if let Some((socks_addr, connected_at_ms)) = connected {
                 let raw = runtime.traffic_interface().and_then(traffic::current);
                 if active_session != Some(connected_at_ms) {
                     active_session = Some(connected_at_ms);
@@ -169,11 +171,14 @@ pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
                     let token = SESSION_TOKEN.load(Ordering::SeqCst);
                     spawn_egress_probe(app.clone(), token, socks_addr);
                 }
-            } else if active_session.take().is_some() {
-                next_probe = None;
-                reset_session(&app, None);
+                std::thread::sleep(ACTIVE_SAMPLE_INTERVAL);
+            } else {
+                if active_session.take().is_some() {
+                    next_probe = None;
+                    reset_session(&app, None);
+                }
+                std::thread::sleep(IDLE_SAMPLE_INTERVAL);
             }
-            std::thread::sleep(SAMPLE_INTERVAL);
         }
     });
 }
