@@ -95,6 +95,25 @@ internal object AndroidVpnRuntime {
 
     fun idleSnapshot() = FinalServiceSnapshot("Idle")
 
+    /**
+     * Safety faults never silently downgrade to a direct/proxy-only path.
+     * The VPN descriptor remains installed until service cleanup/reconnect, so
+     * other apps are blackholed rather than leaked if the native TUN dies.
+     */
+    fun reportSafetyFailure(message: String) {
+        appendInternal("[safety] $message")
+        val current = status.get()
+        updateSnapshot(
+            FinalServiceSnapshot(
+                state = "Error",
+                message = message,
+                socksAddr = current.socksAddr,
+                tunAddr = current.tunAddr,
+                connectedAtMs = current.connectedAtMs,
+            ),
+        )
+    }
+
     fun setLoggingEnabled(enabled: Boolean) {
         loggingEnabled.set(enabled)
         if (!enabled) {
@@ -158,7 +177,7 @@ internal object AndroidVpnRuntime {
                         socksAddr = current.socksAddr,
                         tunAddr = current.tunAddr,
                         connectedAtMs = current.connectedAtMs,
-                    )
+                    ),
                 )
                 appendVisible("[gui] Zero Trust access code required")
             }
@@ -203,7 +222,7 @@ internal object AndroidVpnRuntime {
                 socksAddr = current.socksAddr,
                 tunAddr = current.tunAddr,
                 connectedAtMs = current.connectedAtMs,
-            )
+            ),
         )
     }
 
@@ -221,7 +240,11 @@ internal object AndroidVpnRuntime {
     }
 
     fun trafficSnapshot(): FinalNativeTraffic {
-        val stats = runCatching { activeTunBridge.get()?.TProxyGetStats() }.getOrNull()
+        val bridge = activeTunBridge.get()
+        if (bridge != null && !bridge.isRunning()) {
+            reportSafetyFailure("Android device tunnel is no longer running; traffic remains blocked to prevent an IP leak")
+        }
+        val stats = runCatching { bridge?.TProxyGetStats() }.getOrNull()
         val traffic = if (stats == null || stats.size < 4) {
             FinalNativeTraffic()
         } else {
