@@ -1,0 +1,12 @@
+{
+  "aether": {
+    "version": "v1.9.0",
+    "commit": "311b573352bb67e494895ff67d20b002d075116a"
+  },
+  "singBox": {
+    "version": "v1.13.12"
+  },
+  "hev": {
+    "version": "2.14.4"
+  }
+}

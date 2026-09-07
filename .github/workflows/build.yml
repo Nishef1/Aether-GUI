@@ -1,17 +1,11 @@
 name: build
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  RELEASE_VERSION: 0.7.2
-  RELEASE_TAG: v0.7.2
 
 permissions:
   contents: read
@@ -19,7 +13,7 @@ permissions:
 jobs:
   mark:
     name: start platform build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     permissions:
       statuses: write
     steps:
@@ -30,7 +24,7 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state=pending \
             -f context=aether/build \
-            -f description='Building desktop and Android artifacts' \
+            -f description='Building desktop, Debian, Arch and Android artifacts' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
   desktop:
@@ -43,9 +37,9 @@ jobs:
       matrix:
         include:
           - name: linux-x86_64
-            os: ubuntu-24.04
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            aether_asset: aether-linux-x86_64.tar.gz
+            aether_asset: aether-linux-x86_64-musl.tar.gz
           - name: windows-x86_64
             os: windows-2025
             target: x86_64-pc-windows-msvc
@@ -72,42 +66,27 @@ jobs:
           targets: ${{ matrix.target }}
           components: rustfmt
 
-      - name: Install Linux packages
+      - name: Install Linux build packages
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            build-essential curl file libayatana-appindicator3-dev libfuse2 librsvg2-dev \
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
 
       - run: npm ci --no-audit --no-fund
+
+      - name: Verify runtime version manifest
+        run: npm run verify:runtimes
 
       - name: Audit production dependencies
         if: runner.os == 'Linux'
         run: npm audit --omit=dev --audit-level=moderate
 
-      - name: Fetch official Aether core
-        if: runner.os != 'Windows'
+      - name: Fetch verified official Aether core
         env:
           AETHER_ASSET: ${{ matrix.aether_asset }}
-        run: bash src-tauri/binaries/fetch-aether.sh
-
-      - name: Fetch official Aether core
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $version = "v1.5.0"
-          $asset = "${{ matrix.aether_asset }}"
-          $base = "https://github.com/CluvexStudio/Aether/releases/download/$version"
-          Invoke-WebRequest "$base/$asset" -OutFile $asset
-          Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile SHA256SUMS.txt
-          $line = Get-Content SHA256SUMS.txt | Where-Object { $_ -match [regex]::Escape($asset) } | Select-Object -First 1
-          if (-not $line) { throw "Aether checksum entry was not found" }
-          $expected = ($line -split '\s+')[0].ToLowerInvariant()
-          $actual = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) { throw "Aether checksum mismatch" }
-          Expand-Archive $asset -DestinationPath aether-extract
-          Copy-Item aether-extract/aether.exe src-tauri/binaries/aether.exe
+        run: npm run prepare:aether
 
       - name: Prepare pinned sing-box sidecar
         env:
@@ -133,6 +112,24 @@ jobs:
       - name: Build desktop bundle
         run: npm run tauri -- build --target ${{ matrix.target }}
 
+      - name: Verify Linux release bundles
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(node -e 'const v=require("./scripts/runtime-versions.json"); process.stdout.write(v.aether.version.slice(1))')"
+          src-tauri/binaries/aether --version | grep -Fq "$expected"
+
+          mapfile -t debs < <(find "src-tauri/target/${{ matrix.target }}/release/bundle" -type f -name '*.deb')
+          mapfile -t appimages < <(find "src-tauri/target/${{ matrix.target }}/release/bundle" -type f -name '*.AppImage')
+          test "${#debs[@]}" -ge 1
+          test "${#appimages[@]}" -ge 1
+
+          depends="$(dpkg-deb -f "${debs[0]}" Depends)"
+          for required in 'libwebkit2gtk-4.1-0' 'libgtk-3-0' 'libayatana-appindicator3-1' 'pkexec'; do
+            grep -Fq "$required" <<< "$depends" || { echo "Missing Debian dependency: $required" >&2; exit 1; }
+          done
+
       - uses: actions/upload-artifact@v7
         with:
           name: aether-${{ matrix.name }}
@@ -146,10 +143,112 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*setup.exe
 
+  debian:
+    needs: desktop
+    name: debian-12-package-smoke
+    runs-on: ubuntu-22.04
+    container: debian:12
+    timeout-minutes: 20
+    steps:
+      - name: Install package-test tooling
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates file git jq
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: aether-linux-x86_64
+          path: /tmp/aether-linux
+
+      - name: Install and verify Debian 12 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="$(find /tmp/aether-linux -type f -name '*.deb' -print -quit)"
+          test -n "$deb"
+          apt-get install -y "$deb"
+
+          gui="$(command -v aether-gui || true)"
+          test -n "$gui"
+          if ldd "$gui" | grep -q 'not found'; then
+            ldd "$gui"
+            exit 1
+          fi
+
+          core="$(find /usr -type f -path '*/binaries/aether' -print -quit 2>/dev/null)"
+          test -x "$core"
+          expected_core="$(jq -r '.aether.version | ltrimstr("v")' scripts/runtime-versions.json)"
+          "$core" --version | grep -Fq "$expected_core"
+          package_version="$(dpkg-deb -f "$deb" Version | sed 's/^[^:]*://')"
+          echo "Debian package installed cleanly; package version=$package_version core=$core"
+
+  arch:
+    needs: mark
+    name: arch-native-package
+    runs-on: ubuntu-22.04
+    container: archlinux:base-devel
+    timeout-minutes: 75
+    steps:
+      - name: Install Arch build and runtime dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --needed --noconfirm \
+            git curl wget file nodejs npm rust openssl librsvg xdotool patchelf \
+            webkit2gtk-4.1 gtk3 libayatana-appindicator polkit
+          useradd --create-home builder
+
+      - uses: actions/checkout@v6
+
+      - name: Build native pacman package from this exact commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=/tmp/aether-arch-package
+          mkdir -p "$work"
+          awk -v source_path="$GITHUB_WORKSPACE" -v commit="$GITHUB_SHA" '
+            /^source=\(/ { print "source=(\"Aether-GUI::git+file://" source_path "#commit=" commit "\")"; next }
+            { print }
+          ' packaging/arch/PKGBUILD > "$work/PKGBUILD"
+          chown -R builder:builder "$work"
+          chmod -R a+rX "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -lc "cd '$work' && makepkg --noconfirm --cleanbuild --force"
+          mkdir -p "$GITHUB_WORKSPACE/arch-release"
+          cp "$work"/*.pkg.tar.zst "$GITHUB_WORKSPACE/arch-release/"
+
+      - name: Verify Arch package payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="$(find arch-release -maxdepth 1 -type f -name '*.pkg.tar.zst' -print -quit)"
+          test -n "$pkg"
+          root=/tmp/aether-arch-root
+          mkdir -p "$root"
+          bsdtar -xpf "$pkg" -C "$root"
+
+          gui="$root/usr/bin/aether-gui"
+          test -x "$gui"
+          if ldd "$gui" | grep -q 'not found'; then
+            ldd "$gui"
+            exit 1
+          fi
+
+          core="$(find "$root" -type f -path '*/binaries/aether' -print -quit)"
+          test -x "$core"
+          expected="$(node -e 'const v=require("./scripts/runtime-versions.json"); process.stdout.write(v.aether.version.slice(1))')"
+          "$core" --version | grep -Fq "$expected"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: aether-arch-x86_64
+          if-no-files-found: error
+          path: arch-release/*.pkg.tar.zst
+
   android:
     needs: mark
     name: android-arm64
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 75
     env:
       ANDROID_MIN_API: 29
@@ -182,6 +281,9 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
       - run: npm ci --no-audit --no-fund
+
+      - name: Verify runtime version manifest
+        run: npm run verify:runtimes
 
       - name: Initialize generated Android project
         run: npm run android:init
@@ -216,6 +318,17 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run prepare:android-native
 
+      - name: Verify Android native runtime stamp
+        run: |
+          node - <<'NODE'
+          const fs = require("fs");
+          const versions = require("./scripts/runtime-versions.json");
+          const stamp = JSON.parse(fs.readFileSync("src-tauri/plugins/aether-vpn/android/.native-versions.json", "utf8"));
+          if (stamp.aether !== versions.aether.version) throw new Error(`Android core ${stamp.aether} != ${versions.aether.version}`);
+          if (stamp.aether_commit !== versions.aether.commit) throw new Error("Android core commit mismatch");
+          if (stamp.hev !== versions.hev.version) throw new Error(`Android HEV ${stamp.hev} != ${versions.hev.version}`);
+          NODE
+
       - name: Build ARM64 APK
         run: npm run android:build
 
@@ -230,14 +343,15 @@ jobs:
           test "${#apks[@]}" -eq 1
           apk="${apks[0]}"
           node scripts/ci/verify-android-release.mjs "$apk"
+          version="$(node -p "require('./package.json').version")"
           mkdir -p android-release
-          cp "$apk" "android-release/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
+          cp "$apk" "android-release/Aether-GUI-v${version}-android-arm64-signed.apk"
 
       - uses: actions/upload-artifact@v7
         with:
           name: aether-android-arm64
           if-no-files-found: error
-          path: android-release/Aether-GUI-v${{ env.RELEASE_VERSION }}-android-arm64-signed.apk
+          path: android-release/Aether-GUI-v*-android-arm64-signed.apk
 
       - name: Clean temporary Android signing material
         if: always()
@@ -245,121 +359,11 @@ jobs:
           rm -f "$RUNNER_TEMP/aether-gui-android-release.jks"
           rm -f "$GITHUB_WORKSPACE/src-tauri/gen/android/keystore.properties"
 
-  release:
-    name: publish v0.7.2 release
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release v0.7.2]')
-    needs: [desktop, android]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/download-artifact@v7
-        with:
-          path: artifacts
-
-      - name: Verify release version
-        run: |
-          node -e 'const p=require("./package.json"); if (p.version !== process.env.RELEASE_VERSION) { throw new Error(`package.json is ${p.version}, expected ${process.env.RELEASE_VERSION}`) }'
-          grep -q '^version = "0.7.2"$' src-tauri/Cargo.toml
-          grep -q '"version": "0.7.2"' src-tauri/tauri.conf.json
-
-      - name: Replace release assets with current platform builds
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p release
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release
-          while IFS= read -r asset; do
-            case "$asset" in
-              SHA256SUMS.txt|*-unsigned.apk|Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk) ;;
-              *) test -f "release/$asset" || { echo "Existing release asset was not preserved: $asset" >&2; exit 1; } ;;
-            esac
-          done < <(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-          find release -maxdepth 1 -type f \( -name 'aether-*' -o -name 'Aether-GUI-v*.apk' -o -name 'SHA256SUMS.txt' \) -delete
-          while IFS= read -r -d '' file; do
-            relative="${file#artifacts/}"
-            artifact="${relative%%/*}"
-            base="$(basename "$file")"
-            case "$artifact" in
-              aether-android-arm64)
-                test "$base" = "Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
-                cp "$file" "release/$base"
-                ;;
-              aether-linux-x86_64|aether-windows-x86_64|aether-macos-arm64|aether-macos-x86_64)
-                cp "$file" "release/${artifact}-${base}"
-                ;;
-              *)
-                echo "Unexpected workflow artifact: $file" >&2
-                exit 1
-                ;;
-            esac
-          done < <(find artifacts -mindepth 2 -type f -print0)
-          signed="artifacts/aether-android-arm64/Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk"
-          test -f "$signed"
-          node scripts/ci/verify-android-release.mjs "$signed"
-          desktop_count="$(find release -maxdepth 1 -type f \( -name 'aether-linux-*' -o -name 'aether-windows-*' -o -name 'aether-macos-*' \) | wc -l)"
-          test "$desktop_count" -ge 5
-          apk_count="$(find release -maxdepth 1 -type f -name "Aether-GUI-v${RELEASE_VERSION}-android-arm64-signed.apk" | wc -l)"
-          test "$apk_count" -eq 1
-          ! find release -maxdepth 1 -type f -iname '*unsigned*' | grep -q .
-          (cd release && sha256sum * > SHA256SUMS.txt)
-          find release -maxdepth 1 -type f -printf '%f\n' | sort
-
-      - name: Write release notes
-        run: |
-          cat > RELEASE_NOTES.md <<'EOF'
-          ## Aether-GUI v0.7.2
-
-          Cross-platform release built from the same validated `main` commit.
-
-          ### Included platforms
-          - Windows x86_64
-          - Linux x86_64
-          - macOS Apple Silicon (ARM64)
-          - macOS Intel (x86_64)
-          - Android ARM64 (`arm64-v8a`), signed with the permanent Aether-GUI release key
-
-          ### Highlights
-          - Updated to Aether core v1.5.0.
-          - Bounded initial connection scans and one-time Turbo-to-Balanced fallback.
-          - Stronger disconnect, shutdown, stale-retry, and process-tree cleanup.
-          - Restored live-log controls with copy, clear, enable/disable, and line limits.
-          - Removed ANSI and terminal-title control sequences from diagnostics.
-          - Added practical DNS, Iran-direct, LAN-direct, and advertisement-blocking routing presets.
-          - Fixed Android native-library packaging, VPN lifecycle behavior, and launcher icon parity.
-
-          `SHA256SUMS.txt` is included for integrity verification.
-          EOF
-
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release upload "$RELEASE_TAG" release/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-          while IFS= read -r asset; do
-            gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
-          done < <(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -i 'unsigned.*\.apk$' || true)
-          gh release edit "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Aether-GUI v$RELEASE_VERSION" \
-            --notes-file RELEASE_NOTES.md \
-            --latest
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qi 'unsigned.*\.apk$'; then
-            echo "Unsigned Android APK remains on the GitHub Release" >&2
-            exit 1
-          fi
-
   report:
     name: publish build result
     if: always()
-    needs: [mark, desktop, android, release]
-    runs-on: ubuntu-24.04
+    needs: [mark, desktop, debian, arch, android]
+    runs-on: ubuntu-22.04
     permissions:
       statuses: write
     steps:
@@ -368,18 +372,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MARK_RESULT: ${{ needs.mark.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
+          DEBIAN_RESULT: ${{ needs.debian.result }}
+          ARCH_RESULT: ${{ needs.arch.result }}
           ANDROID_RESULT: ${{ needs.android.result }}
-          RELEASE_RESULT: ${{ needs.release.result }}
         run: |
           set -euo pipefail
           state=success
-          description='All desktop and Android builds completed'
-          if [ "$RELEASE_RESULT" = success ]; then
-            description='All builds completed and v0.7.2 was published'
-          fi
-          if [ "$MARK_RESULT" != success ] || [ "$DESKTOP_RESULT" != success ] || [ "$ANDROID_RESULT" != success ] || { [ "$RELEASE_RESULT" != success ] && [ "$RELEASE_RESULT" != skipped ]; }; then
+          description='All desktop, Debian, Arch and Android builds completed'
+          if [ "$MARK_RESULT" != success ] || [ "$DESKTOP_RESULT" != success ] || [ "$DEBIAN_RESULT" != success ] || [ "$ARCH_RESULT" != success ] || [ "$ANDROID_RESULT" != success ]; then
             state=failure
-            description="Build failed: mark=$MARK_RESULT desktop=$DESKTOP_RESULT android=$ANDROID_RESULT release=$RELEASE_RESULT"
+            description="Build failed: desktop=$DESKTOP_RESULT debian=$DEBIAN_RESULT arch=$ARCH_RESULT android=$ANDROID_RESULT"
           fi
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state="$state" \

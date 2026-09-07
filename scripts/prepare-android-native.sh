@@ -10,9 +10,25 @@ sha256_file() {
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-AETHER_VERSION="v1.5.0"
-AETHER_COMMIT="66a798b7771d5ffbb28fc858bffc99fb67295baf"
-HEV_VERSION="2.14.4"
+VERSIONS="$ROOT/scripts/runtime-versions.json"
+for tool in curl git node tar; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "$tool is required" >&2; exit 2; }
+done
+
+RUNTIME_META="$(node -e '
+const fs=require("fs");
+const v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+const a=v.aether||{}, h=v.hev||{};
+if(!/^v\d+\.\d+\.\d+$/.test(a.version||"")) process.exit(2);
+if(!/^[0-9a-f]{40}$/.test(a.commit||"")) process.exit(2);
+if(!/^\d+\.\d+\.\d+$/.test(h.version||"")) process.exit(2);
+process.stdout.write(`${a.version}\t${a.commit}\t${h.version}`);
+' "$VERSIONS")" || {
+  echo "Invalid runtime version manifest" >&2
+  exit 2
+}
+IFS=$'\t' read -r AETHER_VERSION AETHER_COMMIT HEV_VERSION <<< "$RUNTIME_META"
+
 ANDROID_API="${ANDROID_MIN_API:-29}"
 NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-${NDK_HOME:-}}}"
 [[ -n "$NDK" && -x "$NDK/ndk-build" ]] || {
@@ -30,10 +46,6 @@ if [[ -f "$OUT/libaether_exec.so" && -f "$OUT/libhev-socks5-tunnel.so" && -f "$O
   exit 0
 fi
 
-for tool in curl git node tar; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "$tool is required" >&2; exit 2; }
-done
-
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/aether-android-native.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 rm -rf "$OUT"
@@ -46,8 +58,14 @@ fi
 
 RELEASE_JSON="$(curl -fsSL --retry 5 --retry-all-errors "${HEADERS[@]}" \
   "https://api.github.com/repos/CluvexStudio/Aether/releases/tags/$AETHER_VERSION")"
-AETHER_META="$(printf '%s' "$RELEASE_JSON" | node -e '
-let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const r=JSON.parse(s);const a=(r.assets||[]).find(x=>x.name==="aether-android-arm64.tar.gz");if(!a?.browser_download_url||!String(a.digest||"").startsWith("sha256:"))process.exit(2);process.stdout.write(`${a.browser_download_url}\t${a.digest.slice(7)}`);});
+AETHER_META="$(printf '%s' "$RELEASE_JSON" | EXPECTED_TAG="$AETHER_VERSION" node -e '
+let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{
+  const r=JSON.parse(s);
+  if(r.tag_name!==process.env.EXPECTED_TAG) process.exit(2);
+  const a=(r.assets||[]).find(x=>x.name==="aether-android-arm64.tar.gz");
+  if(!a?.browser_download_url||!String(a.digest||"").startsWith("sha256:"))process.exit(2);
+  process.stdout.write(`${a.browser_download_url}\t${a.digest.slice(7)}`);
+});
 ')" || { echo "Official Aether ARM64 release asset/digest was not found" >&2; exit 3; }
 IFS=$'\t' read -r AETHER_URL AETHER_SHA <<< "$AETHER_META"
 AETHER_ARCHIVE="$TMP/aether.tar.gz"
@@ -104,7 +122,7 @@ READELF="$TOOLCHAIN/bin/llvm-readelf"
   echo "Required NDK LLVM tools were not found" >&2
   exit 5
 }
-HEV_SYMBOLS="$($NM --dynamic --defined-only "$HEV_LIB" 2>/dev/null || true)"
+HEV_SYMBOLS="$("$NM" --dynamic --defined-only "$HEV_LIB" 2>/dev/null || true)"
 for symbol in hev_socks5_tunnel_main hev_socks5_tunnel_quit hev_socks5_tunnel_stats; do
   grep -qw "$symbol" <<< "$HEV_SYMBOLS" || {
     echo "HEV stable API symbol missing: $symbol" >&2
