@@ -80,6 +80,6 @@ export const useExitPolicyStore = create<ExitPolicyState>((set, get) => ({
   },
 
   finishReroll: () => set({ rerolling: false }),
-  markAccepted: () => set({ rerolling: false, exhausted: false }),
+  markAccepted: () => set({ retryCount: 0, rerolling: false, exhausted: false }),
   markExhausted: () => set({ rerolling: false, exhausted: true }),
 }));
