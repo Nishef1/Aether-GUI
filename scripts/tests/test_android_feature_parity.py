@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import unittest
 
+from test_android_egress_safety import AndroidEgressSafetyTest  # noqa: F401
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -114,8 +116,8 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("event.payload.line.includes(ACCESS_CODE_MARKER)", store)
         self.assertIn("accessCodeRequired", prompt)
         self.assertNotIn("logs.some", prompt)
-        self.assertIn('min-h-12', prompt)
-        self.assertIn('safe-area-inset-bottom', prompt)
+        self.assertIn("min-h-12", prompt)
+        self.assertIn("safe-area-inset-bottom", prompt)
 
     def test_android_logging_is_opt_in_memory_only(self) -> None:
         runtime = self.read(
@@ -158,11 +160,37 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("app-scroll", app)
         self.assertIn("safe-area-inset-top", css)
         self.assertIn("safe-area-inset-bottom", css)
-        self.assertIn("size-[8.5rem]", connect)
+        self.assertIn("size-[9.25rem]", connect)
+        self.assertIn('isAndroid && "mt-3"', connect)
+        self.assertIn("min-width: 9.25rem", css)
         self.assertIn("min-h-12", protocol)
         self.assertNotIn('"h-8 ', routing)
         self.assertNotIn('"h-8 ', zero_trust)
         self.assertIn("App-local listener", bind)
+
+    def test_visual_motion_is_low_power_and_accessibility_aware(self) -> None:
+        app = self.read("src/App.tsx")
+        background = self.read("src/components/AmbientBackground.tsx")
+        css = self.read("src/index.css")
+        self.assertIn('reducedMotion={isAndroid ? "always" : "user"}', app)
+        self.assertIn("anim-orb-a", background)
+        self.assertIn("anim-orb-b", background)
+        self.assertNotIn("anim-orb-1", background)
+        self.assertIn("!isAndroid", background)
+        for animation in (
+            ".anim-ring-breathe", ".anim-ring-pulse-fast", ".anim-ring-pulse-slow",
+            ".anim-glow-fast", ".anim-glow-slow", ".anim-orb-a", ".anim-orb-b",
+        ):
+            self.assertIn(animation, css)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", css)
+
+    def test_telemetry_keeps_timer_precise_without_one_second_native_polling(self) -> None:
+        telemetry = self.read("src-tauri/src/telemetry.rs")
+        status = self.read("src/components/ConnectionStatusLine.tsx")
+        self.assertIn("ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2)", telemetry)
+        self.assertIn("IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(5)", telemetry)
+        self.assertIn("setInterval(() => setNow(Date.now()), 1000)", status)
+        self.assertIn("PROBE_INTERVAL: Duration = Duration::from_secs(60)", telemetry)
 
     def test_desktop_tunnel_default_is_native_ssot_not_local_storage(self) -> None:
         native = self.read("src-tauri/src/system_tunnel/mod.rs")
