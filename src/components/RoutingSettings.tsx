@@ -142,7 +142,7 @@ export function RoutingSettings() {
         aria-label="Routing rules file path"
       />
       {(profile.route_direct.trim() || profile.routes_file.trim()) && (
-        <p className="rounded-xl bg-status-warning/5 px-3 py-2 text-[10px] leading-4 text-status-warning ring-1 ring-status-warning/15">
+        <p className="rounded-xl bg-status-connecting/5 px-3 py-2 text-[10px] leading-4 text-status-connecting ring-1 ring-status-connecting/15">
           Direct rules intentionally bypass Aether for matching destinations. Those destinations can see your original network IP; use direct routing only when that exposure is intentional.
         </p>
       )}
