@@ -1,8 +1,9 @@
 export type ExitPreference = "low-latency" | "privacy";
 
-// WARP does not expose deterministic country selection. Keep automatic rerolls
-// bounded so privacy mode never turns into an expensive battery/network loop.
-export const EXIT_RETRY_LIMIT = 4;
+// WARP does not expose deterministic country selection. Two automatic rerolls
+// are enough to sample fresh routes without turning mobile privacy mode into a
+// long radio/CPU loop. The UI offers an explicit manual retry after this budget.
+export const EXIT_RETRY_LIMIT = 2;
 
 // Curated pool for the privacy-oriented mode. This is deliberately an allowlist,
 // not a geopolitical blocklist: unknown/other locations remain usable in
