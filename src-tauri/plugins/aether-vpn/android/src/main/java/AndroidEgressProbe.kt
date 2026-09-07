@@ -68,16 +68,6 @@ internal object AndroidEgressProbe {
             tls = true,
             useDomainAddress = true,
         ),
-        // Last-resort identity fallback. It is reached through Aether, so the
-        // HTTP leg is still encapsulated by the encrypted tunnel.
-        Provider(
-            label = "ip-api",
-            host = "ip-api.com",
-            port = 80,
-            path = "/json/?fields=status,query,countryCode",
-            tls = false,
-            useDomainAddress = true,
-        ),
     )
 
     private val ipv6IdentityProvider = Provider(
@@ -89,15 +79,15 @@ internal object AndroidEgressProbe {
         useDomainAddress = true,
     )
 
-    // A separate lightweight GeoIP request is needed because the neutral IP
-    // echo providers intentionally return only the address. This request also
-    // traverses Aether and is informational only.
+    // Identity comes from neutral HTTPS echo services first. Country is then
+    // read independently from Cloudflare's HTTPS trace because WARP's loc value
+    // is exactly the approximate geography that matters to this exit policy.
     private val geoProvider = Provider(
-        label = "ip-api-geo",
-        host = "ip-api.com",
-        port = 80,
-        path = "/json/?fields=status,query,countryCode",
-        tls = false,
+        label = "cloudflare-geo",
+        host = "www.cloudflare.com",
+        port = 443,
+        path = "/cdn-cgi/trace",
+        tls = true,
         useDomainAddress = true,
     )
 
@@ -168,7 +158,7 @@ internal object AndroidEgressProbe {
             writer.write("GET ${provider.path} HTTP/1.1\r\n")
             writer.write("Host: ${provider.hostHeader}\r\n")
             writer.write("User-Agent: Aether-Android/3\r\n")
-            writer.write("Accept: text/plain, application/json\r\n")
+            writer.write("Accept: text/plain\r\n")
             writer.write("Connection: close\r\n\r\n")
             writer.flush()
 
@@ -287,27 +277,18 @@ internal object AndroidEgressProbe {
 
     private fun parsePublicIp(response: String): String? {
         val trace = Regex("(?m)^ip=([^\\r\\n]+)$").find(response)?.groupValues?.getOrNull(1)?.trim()
-        val json = Regex("\\\"query\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"")
-            .find(response)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.trim()
         val plain = response
             .lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .firstNotNullOfOrNull { AndroidEgressIdentityGuard.parseIp(it) }
-        return listOfNotNull(plain, trace, json)
+        return listOfNotNull(plain, trace)
             .firstNotNullOfOrNull { AndroidEgressIdentityGuard.parseIp(it) }
     }
 
     private fun parseCountry(response: String): String? {
         val trace = Regex("(?m)^loc=([A-Za-z]{2})$").find(response)?.groupValues?.getOrNull(1)
-        val json = Regex("\\\"countryCode\\\"\\s*:\\s*\\\"([A-Za-z]{2})\\\"")
-            .find(response)
-            ?.groupValues
-            ?.getOrNull(1)
-        return (trace ?: json)?.uppercase()
+        return trace?.uppercase()
     }
 
     private fun splitHostPort(value: String): Pair<String, Int> {
