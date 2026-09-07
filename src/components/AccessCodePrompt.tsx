@@ -9,19 +9,20 @@ export function AccessCodePrompt() {
   const clearAccessCodeRequirement = useConnectionStore(
     (state) => state.clearAccessCodeRequirement,
   );
-  const attemptId = useConnectionStore((state) => state.attemptId);
-  const [dismissedAttempt, setDismissedAttempt] = useState<number | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const nativePrompt = status.state === "AwaitingAccessCode";
-  const visible = (nativePrompt || accessCodeRequired) && dismissedAttempt !== attemptId;
+  const visible = status.state === "AwaitingAccessCode" || accessCodeRequired;
 
   useEffect(() => {
-    if (visible) inputRef.current?.focus();
-  }, [visible]);
+    if (visible && !submitting) inputRef.current?.focus();
+    if (!visible) {
+      setCode("");
+      setError(null);
+    }
+  }, [submitting, visible]);
 
   const submit = async () => {
     const normalized = code.trim();
@@ -31,8 +32,10 @@ export function AccessCodePrompt() {
     try {
       await invoke("submit_access_code", { code: normalized });
       setCode("");
+      // Clear only the current prompt. If Aether rejects the code and asks
+      // again in the same connection attempt, the next native/log event sets
+      // the requirement again and the dialog reappears.
       clearAccessCodeRequirement();
-      setDismissedAttempt(attemptId);
     } catch (cause) {
       setError(String(cause));
     } finally {
