@@ -148,8 +148,8 @@
 }
 
 .platform-android .connect-orb {
-  min-width: 8.5rem;
-  min-height: 8.5rem;
+  min-width: 9.25rem;
+  min-height: 9.25rem;
 }
 
 .platform-android input,
@@ -211,6 +211,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .anim-ring-breathe,
+  .anim-ring-pulse-fast,
+  .anim-ring-pulse-slow,
+  .anim-glow-fast,
+  .anim-glow-slow,
   .anim-orb-a,
   .anim-orb-b {
     animation: none;
