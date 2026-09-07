@@ -1,16 +1,22 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Copy, Info, Settings2, Trash2 } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  FileTerminal,
+  Network,
+  Settings2,
+  ShieldCheck,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
-import { ProtocolSelect } from "@/components/ProtocolSelect";
-import { ScanModeToggle } from "@/components/ScanModeToggle";
 import { IpVersionToggle } from "@/components/IpVersionToggle";
-import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
 import { NoizeProfileToggle } from "@/components/NoizeProfileToggle";
 import { BindAddressField } from "@/components/BindAddressField";
 import { ZeroTrustSettings } from "@/components/ZeroTrustSettings";
@@ -20,26 +26,44 @@ import { CoreAdvancedSettings } from "@/components/CoreAdvancedSettings";
 import { isAndroid } from "@/lib/platform";
 import { useConnectionStore, type LogLineLimit } from "@/state/connectionStore";
 
-function FieldRow({
-  label,
-  tooltip,
+function SectionCard({
+  icon,
+  title,
+  description,
   children,
 }: {
-  label: string;
-  tooltip?: string;
+  icon: ReactNode;
+  title: string;
+  description: string;
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-        {label}
-        {tooltip && (
-          <Tooltip>
-            <TooltipTrigger aria-label={`About ${label}`}>
-              <Info size={12} />
-            </TooltipTrigger>
-            <TooltipContent>{tooltip}</TooltipContent>
-          </Tooltip>
+    <section className="rounded-3xl bg-surface-1/75 p-4 ring-1 ring-white/10">
+      <div className="mb-4 flex items-start gap-2.5">
+        <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/5 text-muted-foreground ring-1 ring-white/8">
+          {icon}
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{description}</p>
+        </div>
+      </div>
+      <div className="flex flex-col gap-4">{children}</div>
+    </section>
+  );
+}
+
+function Field({ label, description, children }: {
+  label: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <div>
+        <p className="text-xs font-medium text-foreground">{label}</p>
+        {description && (
+          <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{description}</p>
         )}
       </div>
       {children}
@@ -60,10 +84,10 @@ export function AdvancedPanel() {
   const setLogLineLimit = useConnectionStore((state) => state.setLogLineLimit);
   const clearLogs = useConnectionStore((state) => state.clearLogs);
   const [open, setOpen] = useState(false);
-  const locked = status.state !== "Idle" && status.state !== "Error";
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const locked = status.state !== "Idle" && status.state !== "Error";
 
   useEffect(() => {
     if (autoScroll && viewportRef.current) {
@@ -83,200 +107,199 @@ export function AdvancedPanel() {
   };
 
   return (
-    <div className="w-full max-w-sm">
+    <div className="w-full">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary">
-          <Settings2 size={14} />
-          Advanced
+        <CollapsibleTrigger className="group flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl bg-white/[0.035] px-4 text-left ring-1 ring-white/10 outline-none transition hover:bg-white/[0.055] focus-visible:ring-2 focus-visible:ring-primary">
+          <span className="flex min-w-0 items-center gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/5 text-muted-foreground">
+              <Settings2 size={17} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-foreground">More settings</span>
+              <span className="block truncate text-[11px] text-muted-foreground">
+                Network, identity, routing and Aether 1.9 tuning
+              </span>
+            </span>
+          </span>
           <ChevronDown
-            size={14}
-            className="transition-transform duration-150 data-[state=open]:rotate-180"
-            data-state={open ? "open" : "closed"}
+            size={17}
+            className="shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]:rotate-180"
           />
         </CollapsibleTrigger>
+
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:duration-100 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-75">
-          <div className="flex flex-col gap-4 pb-2">
-            <FieldRow
-              label="Protocol"
-              tooltip="MASQUE disguises traffic as normal HTTPS. WireGuard is lighter and faster. gool nests two WireGuard tunnels at a speed cost."
+          <div className="flex flex-col gap-3 pt-3 pb-2">
+            <SectionCard
+              icon={<SlidersHorizontal size={17} />}
+              title="Connection behavior"
+              description="Less common choices that change how Aether discovers and disguises a route."
             >
-              <ProtocolSelect />
-            </FieldRow>
-            <FieldRow label="Scan Mode">
-              <ScanModeToggle />
-            </FieldRow>
-            <FieldRow
-              label="IP Version"
-              tooltip="Which address families to search for working routes. IPv4 is the safest default on most networks."
-            >
-              <IpVersionToggle />
-            </FieldRow>
-            <FieldRow
-              label="MASQUE Transport"
-              tooltip="HTTP/3 has the fastest handshake; HTTP/2 works where UDP is blocked or throttled."
-            >
-              <MasqueTransportToggle />
-            </FieldRow>
-            <FieldRow
-              label="Obfuscation"
-              tooltip="Disguises the handshake so DPI cannot fingerprint the protocol."
-            >
-              <NoizeProfileToggle />
-            </FieldRow>
-            <FieldRow
-              label="SOCKS5 Proxy"
-              tooltip="The local address exposed by Aether. The platform tunnel consumes it without modifying the core."
-            >
-              <BindAddressField />
-            </FieldRow>
-            <FieldRow
-              label="System-wide tunnel"
-              tooltip="Routes applications through Aether using sing-box on desktop and Android VpnService with HEV on mobile."
-            >
-              <SystemTunnelToggle />
-            </FieldRow>
-
-            {isAndroid && (
-              <FieldRow
-                label="VPN MTU"
-                tooltip="1280 is the safest dual-stack value. Increase it only when the current network handles larger packets reliably."
+              <Field
+                label="IP version"
+                description="IPv4 is the safest default. Dual-stack scans both address families."
               >
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1280}
-                  max={1500}
-                  step={4}
-                  value={mtu}
+                <IpVersionToggle />
+              </Field>
+              <Field
+                label="Obfuscation"
+                description="Aether 1.9 supports six profiles. Start with Firewall for MASQUE and Balanced for WireGuard."
+              >
+                <NoizeProfileToggle />
+              </Field>
+              <div className="flex min-h-12 items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-medium text-foreground">Quick reconnect</p>
+                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                    Re-test the last working gateway before doing a fresh scan.
+                  </p>
+                </div>
+                <Switch
+                  checked={quickReconnect}
+                  onCheckedChange={setQuickReconnect}
                   disabled={locked}
-                  onChange={(event) => setMtu(Number(event.target.value) || 1280)}
-                  className="h-9 w-full rounded-md bg-black/20 px-3 text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
-                  aria-label="VPN MTU"
+                  aria-label="Quick reconnect"
                 />
-              </FieldRow>
-            )}
+              </div>
+            </SectionCard>
 
-            {isAndroid && <CoreAdvancedSettings />}
+            <SectionCard
+              icon={<Network size={17} />}
+              title="Device & network"
+              description="System-wide routing, local listeners, DNS and route policy."
+            >
+              <Field label="Device tunnel">
+                <SystemTunnelToggle />
+              </Field>
+              <Field
+                label="SOCKS5 listener"
+                description="The loopback proxy consumed by the device TUN. LAN binding is an explicit advanced choice."
+              >
+                <BindAddressField />
+              </Field>
+              {isAndroid && (
+                <Field
+                  label="VPN MTU"
+                  description="1280 is the conservative dual-stack value. Raise it only on networks that handle larger packets reliably."
+                >
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1280}
+                    max={1500}
+                    step={4}
+                    value={mtu}
+                    disabled={locked}
+                    onChange={(event) => setMtu(Number(event.target.value) || 1280)}
+                    className="min-h-11 w-full rounded-xl bg-black/20 px-3 text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+                    aria-label="VPN MTU"
+                  />
+                </Field>
+              )}
+              <Field
+                label="DNS & routing"
+                description="Direct/block lists remain effective behind the system tunnel because domain sniffing is enabled by default."
+              >
+                <RoutingSettings />
+              </Field>
+            </SectionCard>
 
-            <FieldRow
-              label="Zero Trust (organization)"
-              tooltip="Connect as a managed Cloudflare Zero Trust device. Leave the team empty for normal one-click mode."
+            <SectionCard
+              icon={<ShieldCheck size={17} />}
+              title="Identity"
+              description="Optional Cloudflare Zero Trust enrollment. Normal consumer WARP needs nothing here."
             >
               <ZeroTrustSettings />
-            </FieldRow>
-            <FieldRow
-              label="DNS & Routing"
-              tooltip="Aether 1.5 DNS, direct, block and route-file controls."
+            </SectionCard>
+
+            <SectionCard
+              icon={<SlidersHorizontal size={17} />}
+              title="Core tuning"
+              description="Aether 1.9 features and expert recovery controls. Defaults are intentionally conservative."
             >
-              <RoutingSettings />
-            </FieldRow>
+              <CoreAdvancedSettings />
+            </SectionCard>
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                Quick reconnect
-                <Tooltip>
-                  <TooltipTrigger aria-label="About Quick reconnect">
-                    <Info size={12} />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Re-tests the last working gateway first. Disable it to force a fresh scan.
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <Switch
-                checked={quickReconnect}
-                onCheckedChange={setQuickReconnect}
-                disabled={locked}
-                aria-label="Quick reconnect"
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                Live logs
-                <Tooltip>
-                  <TooltipTrigger aria-label="About Live logs">
-                    <Info size={12} />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Off by default. Captured lines stay in memory only and are never written to storage.
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <Switch
-                checked={loggingEnabled}
-                onCheckedChange={(enabled) => void setLoggingEnabled(enabled)}
-                aria-label="Live logs"
-              />
-            </div>
-
-            {loggingEnabled && (
-              <>
-                <div className="flex items-center gap-2">
-                  <div className="h-px flex-1 bg-border" />
-                  <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
-                    Logs
-                  </span>
-                  <div className="h-px flex-1 bg-border" />
+            <SectionCard
+              icon={<FileTerminal size={17} />}
+              title="Diagnostics"
+              description="Live logs are opt-in and memory-only, so normal Android sessions do not pay the polling cost."
+            >
+              <div className="flex min-h-12 items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-medium text-foreground">Live logs</p>
+                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                    Enable only while troubleshooting a connection.
+                  </p>
                 </div>
+                <Switch
+                  checked={loggingEnabled}
+                  onCheckedChange={(enabled) => void setLoggingEnabled(enabled)}
+                  aria-label="Live logs"
+                />
+              </div>
 
-                <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                  <span className="font-mono">
-                    {logs.length} / {logLineLimit} lines
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={logLineLimit}
-                      onChange={(event) => setLogLineLimit(Number(event.target.value) as LogLineLimit)}
-                      className="h-7 rounded-md bg-black/20 px-1.5 text-[10px] text-foreground ring-1 ring-white/10 outline-none focus:ring-primary"
-                      aria-label="Maximum log lines"
-                    >
-                      <option value={100}>100</option>
-                      <option value={250}>250</option>
-                      <option value={500}>500</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => void copyLogs()}
-                      disabled={logs.length === 0}
-                      className="inline-flex h-7 items-center gap-1 rounded-md px-2 ring-1 ring-white/10 hover:bg-white/5 disabled:opacity-40"
-                      aria-label="Copy logs"
-                    >
-                      {copied ? <Check size={12} /> : <Copy size={12} />}
-                      {copied ? "Copied" : "Copy"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={clearLogs}
-                      disabled={logs.length === 0}
-                      className="inline-flex size-7 items-center justify-center rounded-md ring-1 ring-white/10 hover:bg-white/5 disabled:opacity-40"
-                      aria-label="Clear logs"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+              {loggingEnabled && (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span className="font-mono">
+                      {logs.length} / {logLineLimit} lines
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={logLineLimit}
+                        onChange={(event) =>
+                          setLogLineLimit(Number(event.target.value) as LogLineLimit)
+                        }
+                        className="min-h-10 rounded-lg bg-black/20 px-2 text-[11px] text-foreground ring-1 ring-white/10 outline-none focus:ring-primary"
+                        aria-label="Maximum log lines"
+                      >
+                        <option value={100}>100</option>
+                        <option value={250}>250</option>
+                        <option value={500}>500</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void copyLogs()}
+                        disabled={logs.length === 0}
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-3 text-foreground ring-1 ring-white/10 hover:bg-white/5 disabled:opacity-40"
+                        aria-label="Copy logs"
+                      >
+                        {copied ? <Check size={13} /> : <Copy size={13} />}
+                        {copied ? "Copied" : "Copy"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearLogs}
+                        disabled={logs.length === 0}
+                        className="inline-flex size-10 items-center justify-center rounded-lg text-foreground ring-1 ring-white/10 hover:bg-white/5 disabled:opacity-40"
+                        aria-label="Clear logs"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div
-                  ref={viewportRef}
-                  onScroll={(event) => {
-                    const element = event.currentTarget;
-                    setAutoScroll(
-                      element.scrollHeight - element.scrollTop - element.clientHeight < 24,
-                    );
-                  }}
-                  className="max-h-64 overflow-y-auto rounded-md bg-black/20 p-2 font-mono text-xs text-muted-foreground ring-1 ring-white/10"
-                >
-                  {logs.length === 0 ? (
-                    <p className="text-status-idle">No output yet.</p>
-                  ) : (
-                    logs.map((log, index) => (
-                      <p key={`${log.timestamp}-${index}`}>{log.line}</p>
-                    ))
-                  )}
-                </div>
-              </>
-            )}
+                  <div
+                    ref={viewportRef}
+                    onScroll={(event) => {
+                      const element = event.currentTarget;
+                      setAutoScroll(
+                        element.scrollHeight - element.scrollTop - element.clientHeight < 24,
+                      );
+                    }}
+                    className="max-h-72 overflow-y-auto rounded-xl bg-black/25 p-3 font-mono text-xs leading-5 text-muted-foreground ring-1 ring-white/10"
+                  >
+                    {logs.length === 0 ? (
+                      <p className="text-status-idle">No output yet.</p>
+                    ) : (
+                      logs.map((log, index) => (
+                        <p key={`${log.timestamp}-${index}`}>{log.line}</p>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </SectionCard>
           </div>
         </CollapsibleContent>
       </Collapsible>

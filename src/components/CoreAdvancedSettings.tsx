@@ -4,26 +4,33 @@ import type { ConnectionProfile, PerfProfile } from "@/types/connection";
 
 function TextField({
   label,
+  description,
   value,
   placeholder,
   disabled,
+  type = "text",
   onChange,
 }: {
   label: string;
+  description?: string;
   value: string;
   placeholder?: string;
   disabled: boolean;
+  type?: "text" | "password";
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-      {label}
+    <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">{label}</span>
+      {description && <span className="text-[11px] leading-4">{description}</span>}
       <input
+        type={type}
         value={value}
         placeholder={placeholder}
         disabled={disabled}
+        autoComplete="off"
         onChange={(event) => onChange(event.target.value)}
-        className="h-8 rounded-md bg-black/20 px-2 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+        className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus:ring-primary disabled:opacity-50"
       />
     </label>
   );
@@ -45,8 +52,8 @@ function NumberField({
   onChange: (value: number) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-      {label}
+    <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">{label}</span>
       <input
         type="number"
         inputMode="numeric"
@@ -57,7 +64,7 @@ function NumberField({
         onChange={(event) =>
           onChange(Math.min(max, Math.max(min, Number(event.target.value) || min)))
         }
-        className="h-8 rounded-md bg-black/20 px-2 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+        className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
       />
     </label>
   );
@@ -77,12 +84,29 @@ function BooleanField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <p className="text-xs text-foreground">{label}</p>
-        <p className="text-[10px] leading-relaxed text-muted-foreground">{description}</p>
+    <div className="flex min-h-12 items-center justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-foreground">{label}</p>
+        <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{description}</p>
       </div>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
+      <Switch
+        className="shrink-0"
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onChange}
+        aria-label={label}
+      />
+    </div>
+  );
+}
+
+function Divider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <span className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+        {label}
+      </span>
+      <div className="h-px flex-1 bg-white/8" />
     </div>
   );
 }
@@ -94,47 +118,83 @@ export function CoreAdvancedSettings() {
   const locked = status.state !== "Idle" && status.state !== "Error";
   const masqueFamily = profile.protocol === "auto" || profile.protocol === "masque";
   const wireGuardFamily = profile.protocol === "wireguard" || profile.protocol === "gool";
+  const gool = profile.protocol === "gool";
 
   const set = <K extends keyof ConnectionProfile>(field: K, value: ConnectionProfile[K]) =>
     setField(field, value);
 
   return (
-    <details className="rounded-md bg-black/10 p-3 ring-1 ring-white/10">
-      <summary className="cursor-pointer select-none text-xs font-medium text-foreground">
-        Expert core controls
+    <details className="group rounded-2xl bg-black/15 p-3.5 ring-1 ring-white/10">
+      <summary className="cursor-pointer list-none select-none text-xs font-semibold text-foreground marker:hidden">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p>Aether 1.9 expert controls</p>
+            <p className="mt-1 text-[11px] font-normal leading-4 text-muted-foreground">
+              Chaining, manual endpoints, validation and recovery behavior.
+            </p>
+          </div>
+          <span className="text-[10px] text-muted-foreground group-open:hidden">Open</span>
+          <span className="hidden text-[10px] text-muted-foreground group-open:inline">Close</span>
+        </div>
       </summary>
-      <div className="mt-3 flex flex-col gap-3">
-        <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-          Performance profile
-          <select
-            value={profile.perf_profile}
-            disabled={locked}
-            onChange={(event) => set("perf_profile", event.target.value as PerfProfile)}
-            className="h-8 rounded-md bg-surface-2 px-2 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
-          >
-            <option value="auto">Auto</option>
-            <option value="low">Low power</option>
-            <option value="medium">Balanced resources</option>
-            <option value="high">High performance</option>
-          </select>
-        </label>
 
+      <div className="mt-4 flex flex-col gap-4">
+        <Divider label="Proxy & chaining" />
         <TextField
-          label="Forced peer (ip:port)"
-          value={profile.peer}
-          placeholder="Automatic scan"
+          label="Upstream proxy"
+          description="Chains Aether behind an existing SOCKS5 or HTTP proxy. Credentials are session-only and are not saved."
+          value={profile.upstream}
+          placeholder="socks5://127.0.0.1:1080"
           disabled={locked}
-          onChange={(value) => set("peer", value)}
+          type="password"
+          onChange={(value) => set("upstream", value)}
+        />
+        <TextField
+          label="HTTP CONNECT listener"
+          description="Optional local HTTP proxy served by the same Aether tunnel. Keep it on loopback unless you intentionally share it."
+          value={profile.http_proxy}
+          placeholder="127.0.0.1:1820"
+          disabled={locked}
+          onChange={(value) => set("http_proxy", value)}
         />
 
-        {profile.protocol === "gool" && (
+        <Divider label="Endpoints" />
+        {!gool && (
           <TextField
-            label="Outer WireGuard peer"
-            value={profile.wg_peer}
-            placeholder="Automatic outer peer"
+            label="Forced peer"
+            description="Skips endpoint discovery and forces a single ip:port. Leave empty for normal scanning."
+            value={profile.peer}
+            placeholder="Automatic scan"
             disabled={locked}
-            onChange={(value) => set("wg_peer", value)}
+            onChange={(value) => set("peer", value)}
           />
+        )}
+        {gool && (
+          <>
+            <TextField
+              label="WARP-in-WARP outer peer"
+              description="The first hop your network sees. Aether 1.9 can scan it when left empty."
+              value={profile.wiw_outer}
+              placeholder="162.159.192.1:2408"
+              disabled={locked || profile.wiw_scan}
+              onChange={(value) => set("wiw_outer", value)}
+            />
+            <TextField
+              label="WARP-in-WARP inner peer"
+              description="Second hop reached through the outer tunnel. It must differ from the outer address."
+              value={profile.wiw_inner}
+              placeholder="188.114.96.1:2408"
+              disabled={locked || profile.wiw_scan}
+              onChange={(value) => set("wiw_inner", value)}
+            />
+            <BooleanField
+              label="Scan both WARP-in-WARP hops"
+              description="Ignores stored/manual WARP-in-WARP endpoints and discovers two fresh hops."
+              checked={profile.wiw_scan}
+              disabled={locked}
+              onChange={(value) => set("wiw_scan", value)}
+            />
+          </>
         )}
 
         {masqueFamily && (
@@ -148,14 +208,15 @@ export function CoreAdvancedSettings() {
             />
             <TextField
               label="Encrypted Client Hello"
+              description="Use auto or a base64 ECH config only when the network requires it."
               value={profile.ech}
-              placeholder="Empty, auto, or base64 ECH config"
+              placeholder="Empty / auto / base64"
               disabled={locked}
               onChange={(value) => set("ech", value)}
             />
             <BooleanField
               label="Fragment HTTP/2 ClientHello"
-              description="Splits the TLS ClientHello to resist simple DPI on TCP networks."
+              description="Splits the TLS ClientHello to resist simple DPI on TCP-only networks."
               checked={profile.fragment}
               disabled={locked || !profile.masque_http2}
               onChange={(value) => set("fragment", value)}
@@ -170,7 +231,7 @@ export function CoreAdvancedSettings() {
                   onChange={(value) => set("fragment_size", value)}
                 />
                 <TextField
-                  label="Fragment delay ms"
+                  label="Delay (ms)"
                   value={profile.fragment_delay}
                   placeholder="2-10"
                   disabled={locked || !profile.masque_http2}
@@ -181,9 +242,10 @@ export function CoreAdvancedSettings() {
           </>
         )}
 
+        <Divider label="Reliability" />
         <div className="grid grid-cols-2 gap-2">
           <NumberField
-            label="Validation seconds"
+            label="Validate (s)"
             value={profile.validate_secs}
             min={1}
             max={120}
@@ -191,7 +253,7 @@ export function CoreAdvancedSettings() {
             onChange={(value) => set("validate_secs", value)}
           />
           <NumberField
-            label="Reconnect delay"
+            label="Reconnect (s)"
             value={profile.reconnect_secs}
             min={1}
             max={60}
@@ -203,7 +265,7 @@ export function CoreAdvancedSettings() {
         {wireGuardFamily && (
           <>
             <NumberField
-              label="WireGuard keepalive seconds"
+              label="WireGuard keepalive (s)"
               value={profile.keepalive}
               min={1}
               max={120}
@@ -211,8 +273,8 @@ export function CoreAdvancedSettings() {
               onChange={(value) => set("keepalive", value)}
             />
             <BooleanField
-              label="Disable profile retry"
-              description="Do not retry alternate WireGuard obfuscation profiles after a failed scan."
+              label="Disable WireGuard profile retry"
+              description="Stops Aether from trying alternate obfuscation profiles after a failed WireGuard scan."
               checked={profile.no_profile_retry}
               disabled={locked}
               onChange={(value) => set("no_profile_retry", value)}
@@ -220,6 +282,46 @@ export function CoreAdvancedSettings() {
           </>
         )}
 
+        <BooleanField
+          label="Domain sniffing behind TUN"
+          description="Keeps domain routing rules working when the TUN hands Aether only an IP address. Recommended on."
+          checked={profile.route_sniff}
+          disabled={locked}
+          onChange={(value) => set("route_sniff", value)}
+        />
+        {profile.route_sniff && (
+          <NumberField
+            label="Sniff timeout (ms)"
+            value={profile.route_sniff_ms}
+            min={50}
+            max={5000}
+            disabled={locked}
+            onChange={(value) => set("route_sniff_ms", value)}
+          />
+        )}
+        <BooleanField
+          label="Auto-repair rejected identity"
+          description="Lets Aether provision a fresh identity when Cloudflare rejects the saved one. Recommended on."
+          checked={profile.auto_reprovision}
+          disabled={locked}
+          onChange={(value) => set("auto_reprovision", value)}
+        />
+
+        <Divider label="Resources & diagnostics" />
+        <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Performance profile</span>
+          <select
+            value={profile.perf_profile}
+            disabled={locked}
+            onChange={(event) => set("perf_profile", event.target.value as PerfProfile)}
+            className="min-h-11 rounded-xl bg-surface-2 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+          >
+            <option value="auto">Auto</option>
+            <option value="low">Low power</option>
+            <option value="medium">Balanced resources</option>
+            <option value="high">High performance</option>
+          </select>
+        </label>
         <TextField
           label="TLS key-share groups"
           value={profile.tls_groups}
@@ -227,10 +329,9 @@ export function CoreAdvancedSettings() {
           disabled={locked}
           onChange={(value) => set("tls_groups", value)}
         />
-
         <BooleanField
           label="Skip end-to-end data check"
-          description="Unsafe troubleshooting option. A local handshake may succeed while real internet traffic remains blocked."
+          description="Troubleshooting only. A handshake can succeed while real internet traffic is still blocked."
           checked={profile.no_data_check}
           disabled={locked}
           onChange={(value) => set("no_data_check", value)}

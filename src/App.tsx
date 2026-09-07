@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
+import { ShieldCheck } from "lucide-react";
 import { ConnectButton } from "@/components/ConnectButton";
 import { ConnectionStatusLine } from "@/components/ConnectionStatusLine";
+import { QuickConnectionCard } from "@/components/QuickConnectionCard";
 import { CloseToTrayToggle } from "@/components/CloseToTrayToggle";
 import { AmbientBackground } from "@/components/AmbientBackground";
 import { SidecarErrorScreen } from "@/components/SidecarErrorScreen";
@@ -31,48 +33,83 @@ const SCREEN_TRANSITION = isAndroid
       transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const },
     };
 
+function MobileHeader() {
+  return (
+    <header className="mb-2 flex w-full items-center justify-between gap-3 px-0.5">
+      <div>
+        <p className="text-[10px] font-semibold tracking-[0.18em] text-primary uppercase">
+          Aether
+        </p>
+        <h1 className="mt-0.5 text-lg font-semibold tracking-tight text-foreground">
+          Private connection
+        </h1>
+      </div>
+      <span className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-status-connected/8 px-3 text-[11px] font-medium text-status-connected ring-1 ring-status-connected/15">
+        <ShieldCheck size={13} />
+        Device VPN
+      </span>
+    </header>
+  );
+}
+
 function MainScreen() {
   const attemptId = useConnectionStore((state) => state.attemptId);
-  const tunnelReady = useSystemTunnelStore(
-    (state) => state.loaded && state.selection === "native",
-  );
+  const tunnelLoaded = useSystemTunnelStore((state) => state.loaded);
+  const tunnelSelection = useSystemTunnelStore((state) => state.selection);
   const tunnelError = useSystemTunnelStore((state) => state.error);
-  const mobileSafeArea = isAndroid
-    ? {
-        paddingTop: "max(1rem, env(safe-area-inset-top, 0px))",
-        paddingBottom: "calc(max(1.5rem, env(safe-area-inset-bottom, 0px)) + 1.5rem)",
-        scrollPaddingBottom: "calc(max(1.5rem, env(safe-area-inset-bottom, 0px)) + 1.5rem)",
-      }
-    : undefined;
+  const mobileTunnelReady = !isAndroid || (tunnelLoaded && tunnelSelection === "native");
 
   return (
-    <div
-      className={`relative z-10 flex h-full flex-col items-center overflow-y-auto ${isAndroid ? "px-5" : "p-6"}`}
-      style={mobileSafeArea}
-    >
-      <div
-        className={
-          isAndroid
-            ? "flex min-h-72 w-full shrink-0 flex-col items-center justify-center gap-4 py-4"
-            : "flex flex-1 flex-col items-center justify-center gap-6"
-        }
-      >
-        {isAndroid && !tunnelReady ? (
-          <div className="grid size-40 place-items-center rounded-full bg-surface-2 text-center ring-1 ring-white/10">
-            <span className="max-w-24 text-xs leading-5 text-muted-foreground">
-              {tunnelError ? "VPN tunnel unavailable" : "Preparing VPN tunnel"}
-            </span>
+    <div className="app-scroll relative z-10 h-full overflow-y-auto overscroll-contain">
+      <div className="mx-auto flex w-full max-w-[34rem] flex-col gap-3 px-4 sm:px-5">
+        {isAndroid && <MobileHeader />}
+
+        <section className="connection-hero relative overflow-hidden rounded-[2rem] bg-surface-1/72 px-4 py-5 ring-1 ring-white/10 backdrop-blur-sm sm:px-6 sm:py-6">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent"
+          />
+          <div className="flex flex-col items-center gap-4 text-center">
+            {!mobileTunnelReady ? (
+              <div className="grid min-h-32 w-full place-items-center rounded-3xl bg-black/15 px-6 ring-1 ring-white/8">
+                <div className="max-w-64">
+                  <div className="mx-auto mb-3 grid size-11 place-items-center rounded-2xl bg-white/5 text-muted-foreground ring-1 ring-white/10">
+                    <ShieldCheck size={20} />
+                  </div>
+                  <p className="text-sm font-medium text-foreground">
+                    {tunnelError ? "Device VPN needs attention" : "Preparing device VPN"}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                    {tunnelError
+                      ? "Open More settings to retry the Android VPN runtime."
+                      : "Aether is loading the native tunnel before Connect becomes available."}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <ConnectButton />
+            )}
+            <ConnectionStatusLine />
+            <AccessCodePrompt key={attemptId} />
           </div>
-        ) : (
-          <ConnectButton />
+        </section>
+
+        <QuickConnectionCard />
+
+        <Suspense
+          fallback={
+            <div className="min-h-14 w-full rounded-2xl bg-white/[0.025] ring-1 ring-white/8" />
+          }
+        >
+          <AdvancedPanel />
+        </Suspense>
+
+        {!isAndroid && (
+          <div className="px-1 pb-1">
+            <CloseToTrayToggle />
+          </div>
         )}
-        <ConnectionStatusLine />
-        <AccessCodePrompt key={attemptId} />
       </div>
-      <Suspense fallback={<div className="h-9 w-full max-w-sm" aria-hidden="true" />}>
-        <AdvancedPanel />
-      </Suspense>
-      {!isAndroid && <CloseToTrayToggle />}
     </div>
   );
 }
@@ -93,14 +130,16 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (isAndroid) void loadSystemTunnel();
+    // Load on every platform before the user can connect. Android enforces the
+    // native VpnService path; desktop applies the one-time full-device default.
+    void loadSystemTunnel();
   }, [loadSystemTunnel]);
 
   return (
     <TooltipProvider>
       <MotionConfig reducedMotion={isAndroid ? "always" : "user"}>
         <div
-          className={`relative flex h-svh w-full flex-col overflow-hidden bg-background${isAndroid ? " platform-android" : ""}`}
+          className={`relative flex h-svh w-full flex-col overflow-hidden bg-background${isAndroid ? " platform-android" : " platform-desktop"}`}
         >
           <AmbientBackground />
           {!isAndroid && <TitleBar />}

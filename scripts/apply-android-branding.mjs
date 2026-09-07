@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "src-tauri", "icons", "icon.png");
-const resRoot = path.join(root, "src-tauri", "gen", "android", "app", "src", "main", "res");
+const appMain = path.join(root, "src-tauri", "gen", "android", "app", "src", "main");
+const resRoot = path.join(appMain, "res");
+const manifestPath = path.join(appMain, "AndroidManifest.xml");
 
 if (!fs.existsSync(source)) {
   throw new Error("Canonical icon.png is missing; run npm run prepare:app-icon first");
@@ -70,4 +72,29 @@ fs.writeFileSync(
 `,
 );
 
-console.log("Applied Android launcher branding from src-tauri/icons/icon.png");
+// Tauri regenerates this manifest during `android init`, so apply the keyboard
+// behavior here rather than hand-editing generated sources. Android's current
+// edge-to-edge guidance requires interactive content to react to IME/system
+// insets; adjustResize lets the WebView viewport shrink when expert text fields
+// open the software keyboard instead of hiding controls below it.
+if (fs.existsSync(manifestPath)) {
+  let manifest = fs.readFileSync(manifestPath, "utf8");
+  const activityPattern = /<activity\b[\s\S]*?android:name="[^"]*MainActivity"[\s\S]*?>/;
+  const match = manifest.match(activityPattern)?.[0];
+  if (!match) {
+    throw new Error("Generated Android MainActivity was not found in AndroidManifest.xml");
+  }
+  let patched = match;
+  if (/android:windowSoftInputMode="[^"]*"/.test(patched)) {
+    patched = patched.replace(
+      /android:windowSoftInputMode="[^"]*"/,
+      'android:windowSoftInputMode="adjustResize"',
+    );
+  } else {
+    patched = patched.replace(/>$/, '\n            android:windowSoftInputMode="adjustResize">');
+  }
+  manifest = manifest.replace(match, patched);
+  fs.writeFileSync(manifestPath, manifest);
+}
+
+console.log("Applied Android launcher branding and mobile window behavior");

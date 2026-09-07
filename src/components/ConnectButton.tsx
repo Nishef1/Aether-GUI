@@ -30,29 +30,16 @@ function phaseOf(status: ConnectionStatus): Phase {
 const SHAKE_VARIANTS: Variants = {
   rest: { x: 0 },
   error: {
-    x: [0, -6, 6, -4, 4, 0],
-    transition: { x: { duration: 0.4, ease: "easeInOut" } },
+    x: [0, -5, 5, -3, 3, 0],
+    transition: { x: { duration: 0.36, ease: "easeInOut" } },
   },
 };
 
-const RING_SHADOW: Record<Phase, string> = {
-  idle: "0 0 0 3px var(--color-status-idle)",
-  connecting: "0 0 0 3px var(--color-status-connecting)",
-  connected: "0 0 0 1px color-mix(in oklch, var(--color-status-connected) 40%, transparent)",
-  error: "0 0 0 3px var(--color-status-error)",
-};
-
-const RING_ANIM: Record<Phase, string> = {
-  idle: "anim-ring-breathe",
-  connecting: "anim-ring-pulse-fast",
-  connected: "anim-ring-pulse-slow",
-  error: "",
-};
-
-const GLOW: Partial<Record<Phase, string>> = {
-  connecting:
-    "0 0 20px 3px color-mix(in oklch, var(--color-status-connecting) 50%, transparent)",
-  connected: "0 0 32px 6px var(--color-status-connected)",
+const STATUS_COLOR: Record<Phase, string> = {
+  idle: "var(--color-status-idle)",
+  connecting: "var(--color-status-connecting)",
+  connected: "var(--color-status-connected)",
+  error: "var(--color-status-error)",
 };
 
 const ICONS: Record<Phase, typeof Power> = {
@@ -76,9 +63,7 @@ export function ConnectButton() {
   const focused = useWindowFocused();
   const phase = phaseOf(status);
   const Icon = ICONS[phase];
-  const playState = {
-    animationPlayState: focused ? ("running" as const) : ("paused" as const),
-  };
+  const color = STATUS_COLOR[phase];
 
   const handleClick = () => {
     if (phase === "idle" || phase === "error") void connect();
@@ -91,52 +76,51 @@ export function ConnectButton() {
       aria-label={ARIA_LABEL[phase]}
       onClick={handleClick}
       disabled={status.state === "Disconnecting"}
-      whileTap={{ scale: 0.97 }}
+      whileTap={{ scale: 0.965 }}
       animate={phase === "error" ? "error" : "rest"}
       variants={SHAKE_VARIANTS}
-      className="relative flex size-40 items-center justify-center rounded-full text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none"
+      className={cn(
+        "connect-orb relative grid shrink-0 place-items-center rounded-full outline-none",
+        "size-[8.5rem] sm:size-36",
+        "focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-4 focus-visible:ring-offset-background",
+        "disabled:cursor-wait",
+      )}
     >
       <span
         aria-hidden
+        className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_35%_28%,rgba(255,255,255,0.13),transparent_38%),linear-gradient(145deg,var(--color-surface-2),var(--color-surface-1))] shadow-[0_18px_45px_rgba(0,0,0,0.38)] ring-1 ring-white/12"
+      />
+      <span
+        aria-hidden
         className={cn(
-          "absolute inset-0 rounded-full bg-surface-2",
-          !isAndroid && RING_ANIM[phase],
+          "absolute inset-[-3px] rounded-full border",
+          phase === "connecting" && !isAndroid && "anim-ring-pulse-fast",
+          phase === "connected" && !isAndroid && "anim-ring-pulse-slow",
+          phase === "idle" && !isAndroid && "anim-ring-breathe",
         )}
         style={{
-          boxShadow: RING_SHADOW[phase],
-          transition: "box-shadow 0.15s ease",
-          willChange: isAndroid ? "auto" : "transform, opacity",
-          ...(!isAndroid ? playState : {}),
+          borderColor: color,
+          boxShadow:
+            phase === "connected"
+              ? `0 0 34px color-mix(in oklch, ${color} 32%, transparent)`
+              : phase === "connecting"
+                ? `0 0 22px color-mix(in oklch, ${color} 28%, transparent)`
+                : undefined,
+          animationPlayState: focused ? "running" : "paused",
         }}
       />
-
-      {!isAndroid && GLOW[phase] && (
-        <span
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute inset-0 rounded-full",
-            phase === "connecting" ? "anim-glow-fast" : "anim-glow-slow",
-          )}
-          style={{ boxShadow: GLOW[phase], willChange: "transform, opacity", ...playState }}
-        />
-      )}
 
       {!isAndroid && (
         <AnimatePresence>
           {(phase === "connecting" || phase === "connected") && (
             <motion.span
-              key={phase}
+              key={`${phase}-ripple`}
               aria-hidden
-              className="pointer-events-none absolute inset-0 rounded-full border-2"
-              style={{
-                borderColor:
-                  phase === "connected"
-                    ? "var(--color-status-connected)"
-                    : "var(--color-status-connecting)",
-              }}
-              initial={{ scale: 0.9, opacity: 0.55 }}
-              animate={{ scale: phase === "connected" ? 2 : 1.7, opacity: 0 }}
-              transition={{ duration: phase === "connected" ? 0.9 : 0.7, ease: "easeOut" }}
+              className="pointer-events-none absolute inset-0 rounded-full border"
+              style={{ borderColor: color }}
+              initial={{ scale: 0.96, opacity: 0.35 }}
+              animate={{ scale: phase === "connected" ? 1.55 : 1.35, opacity: 0 }}
+              transition={{ duration: 0.85, ease: "easeOut" }}
             />
           )}
         </AnimatePresence>
@@ -145,25 +129,22 @@ export function ConnectButton() {
       <AnimatePresence mode="wait">
         <motion.span
           key={phase}
-          initial={isAndroid ? false : { opacity: 0, scale: 0.8 }}
+          initial={isAndroid ? false : { opacity: 0, scale: 0.88 }}
           animate={{ opacity: 1, scale: 1 }}
-          exit={isAndroid ? undefined : { opacity: 0, scale: 0.8 }}
-          transition={{ duration: isAndroid ? 0 : 0.1, ease: [0.4, 0, 0.2, 1] }}
-          className="relative flex items-center justify-center"
+          exit={isAndroid ? undefined : { opacity: 0, scale: 0.88 }}
+          transition={{ duration: isAndroid ? 0 : 0.12 }}
+          className="relative grid place-items-center"
         >
           <Icon
-            size={48}
+            size={isAndroid ? 42 : 46}
             strokeWidth={2}
-            style={phase === "connecting" && !isAndroid ? playState : undefined}
-            className={
-              phase === "connecting"
-                ? cn("text-status-connecting", !isAndroid && "animate-spin")
-                : phase === "connected"
-                  ? "text-status-connected"
-                  : phase === "error"
-                    ? "text-status-error"
-                    : "text-status-idle"
-            }
+            className={cn(
+              phase === "connecting" && !isAndroid && "animate-spin",
+              phase === "connecting" && "text-status-connecting",
+              phase === "connected" && "text-status-connected",
+              phase === "error" && "text-status-error",
+              phase === "idle" && "text-status-idle",
+            )}
           />
         </motion.span>
       </AnimatePresence>

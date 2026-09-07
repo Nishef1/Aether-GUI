@@ -5,153 +5,200 @@
 @import "@fontsource-variable/jetbrains-mono";
 
 @theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: 'Inter Variable', system-ui, sans-serif;
-    --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary: var(--primary);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
-
-    /* Elevation scale (background lightens upward instead of using
-       box-shadows, which barely read on dark surfaces) and status colors —
-       not part of shadcn's default semantic set, used directly by the
-       hand-built ConnectButton/LogsPanel rather than shadcn primitives. */
-    --color-surface-1: var(--surface-1);
-    --color-surface-2: var(--surface-2);
-    --color-surface-3: var(--surface-3);
-    --color-surface-4: var(--surface-4);
-    --color-status-connected: var(--status-connected);
-    --color-status-connecting: var(--status-connecting);
-    --color-status-error: var(--status-error);
-    --color-status-idle: var(--status-idle);
+  --font-heading: var(--font-sans);
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-status-connected: var(--status-connected);
+  --color-status-connecting: var(--status-connecting);
+  --color-status-error: var(--status-error);
+  --color-status-idle: var(--status-idle);
 }
 
-/* Fixed dark brand theme only — deliberately no light-mode `:root` block or
-   `.dark` class toggle, per the approved design (this is a single-theme
-   utility app, not a themeable product). */
 :root {
-    --background: #0d0d0f;
-    --foreground: #f2f2f2;
-    --card: #1a1a1a;
-    --card-foreground: #f2f2f2;
-    --popover: #1e1e1e;
-    --popover-foreground: #f2f2f2;
-    --primary: #f2711c;
-    /* Near-black, NOT white — white-on-orange measures 2.62:1 and fails
-       WCAG AA outright (verified during design). */
-    --primary-foreground: #0d0d0f;
-    --secondary: #242424;
-    --secondary-foreground: #f2f2f2;
-    --muted: #1e1e1e;
-    --muted-foreground: #a3a3a3;
-    --accent: #2a2a2a;
-    --accent-foreground: #f2f2f2;
-    --destructive: #ef4444;
-    --border: color-mix(in oklch, white 8%, transparent);
-    --input: color-mix(in oklch, white 12%, transparent);
-    --ring: #f2711c;
-    --radius: 0.625rem;
-    --sidebar: #1a1a1a;
-    --sidebar-foreground: #f2f2f2;
-    --sidebar-primary: #f2711c;
-    --sidebar-primary-foreground: #0d0d0f;
-    --sidebar-accent: #2a2a2a;
-    --sidebar-accent-foreground: #f2f2f2;
-    --sidebar-border: color-mix(in oklch, white 8%, transparent);
-    --sidebar-ring: #f2711c;
-
-    --surface-1: #1a1a1a;
-    --surface-2: #1e1e1e;
-    --surface-3: #242424;
-    --surface-4: #2a2a2a;
-    --status-connected: #2dd4bf;
-    --status-connecting: #f2711c;
-    --status-error: #ef4444;
-    --status-idle: #6b7280;
+  color-scheme: dark;
+  --background: #0d0d0f;
+  --foreground: #f4f4f5;
+  --card: #18181b;
+  --card-foreground: #f4f4f5;
+  --popover: #1d1d20;
+  --popover-foreground: #f4f4f5;
+  --primary: #f2711c;
+  --primary-foreground: #0d0d0f;
+  --secondary: #232326;
+  --secondary-foreground: #f4f4f5;
+  --muted: #1d1d20;
+  --muted-foreground: #a1a1aa;
+  --accent: #29292d;
+  --accent-foreground: #f4f4f5;
+  --destructive: #ef4444;
+  --border: color-mix(in oklch, white 8%, transparent);
+  --input: color-mix(in oklch, white 12%, transparent);
+  --ring: #f2711c;
+  --radius: 0.75rem;
+  --sidebar: #18181b;
+  --sidebar-foreground: #f4f4f5;
+  --sidebar-primary: #f2711c;
+  --sidebar-primary-foreground: #0d0d0f;
+  --sidebar-accent: #29292d;
+  --sidebar-accent-foreground: #f4f4f5;
+  --sidebar-border: color-mix(in oklch, white 8%, transparent);
+  --sidebar-ring: #f2711c;
+  --surface-1: #18181b;
+  --surface-2: #1d1d20;
+  --surface-3: #232326;
+  --surface-4: #29292d;
+  --status-connected: #2dd4bf;
+  --status-connecting: #f2711c;
+  --status-error: #ef4444;
+  --status-idle: #71717a;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+  }
+
+  html {
+    @apply font-sans;
+    background: var(--background);
+  }
+
   body {
     @apply bg-background text-foreground;
-    }
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
   html,
   body,
   #root {
     height: 100%;
     overflow: hidden;
     overscroll-behavior: none;
-    }
-  html {
-    @apply font-sans;
-    }
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
 }
 
-/* Radix's Collapsible exposes the measured content height as this CSS var
-   specifically so height can be animated without JS measurement — no Motion
-   dependency needed for this interaction (see LogsPanel.tsx). */
+/* The background intentionally spans underneath Android system bars. Only
+   interactive content receives safe-area insets, matching Android's current
+   edge-to-edge guidance without stacking multiple inset mechanisms. */
+.app-scroll {
+  padding-block: 1rem 1.25rem;
+  scroll-padding-block: 1rem 1.25rem;
+}
 
-/* All LOOPING animation lives here as pure CSS on compositor-promoted layers
-   (transform/opacity only) — Chromium runs these entirely off the main
-   thread, unlike Motion's JS-driven loops which cost a style recalc every
-   frame at 60fps (measured: ~40% of a core). Components pause them with
-   [animation-play-state:paused] while the window is unfocused. Motion is
-   reserved for one-shot transitions. */
+.platform-android .app-scroll {
+  padding-top: max(0.875rem, env(safe-area-inset-top, 0px));
+  padding-bottom: calc(max(1rem, env(safe-area-inset-bottom, 0px)) + 0.875rem);
+  scroll-padding-top: max(0.875rem, env(safe-area-inset-top, 0px));
+  scroll-padding-bottom: calc(max(1rem, env(safe-area-inset-bottom, 0px)) + 1rem);
+}
+
+/* WebView pixels track Android dp closely at the CSS viewport level. Keep
+   phone controls at the 48dp touch-target floor; desktop remains denser. */
+.platform-android :where(button, input, select, [role="button"], [role="combobox"]) {
+  min-height: 48px;
+}
+
+.platform-android :where(button, [role="button"]) {
+  min-width: 48px;
+}
+
+.platform-android .connect-orb {
+  min-width: 8.5rem;
+  min-height: 8.5rem;
+}
+
+.platform-android input,
+.platform-android select {
+  font-size: 16px;
+}
+
+.platform-android [data-slot="tooltip-content"] {
+  display: none;
+}
+
+.connection-hero {
+  box-shadow:
+    0 24px 60px rgb(0 0 0 / 0.24),
+    inset 0 1px rgb(255 255 255 / 0.025);
+}
+
+.platform-desktop .app-scroll {
+  scrollbar-gutter: stable;
+}
+
 @keyframes ring-breathe {
   0%, 100% { transform: scale(1); opacity: 0.55; }
-  50% { transform: scale(1.015); opacity: 0.7; }
+  50% { transform: scale(1.015); opacity: 0.72; }
 }
+
 @keyframes ring-pulse-fast {
   0%, 100% { transform: scale(1); opacity: 0.7; }
-  50% { transform: scale(1.08); opacity: 1; }
+  50% { transform: scale(1.055); opacity: 1; }
 }
+
 @keyframes ring-pulse-slow {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.03); }
+  0%, 100% { transform: scale(1); opacity: 0.72; }
+  50% { transform: scale(1.025); opacity: 1; }
 }
+
 @keyframes glow-pulse {
   0%, 100% { transform: scale(1); opacity: 0.55; }
   50% { transform: scale(1.04); opacity: 1; }
 }
+
 @keyframes orb-drift-a {
-  0%, 100% { transform: translate(0, 0); opacity: 0.14; }
-  50% { transform: translate(20px, -15px); opacity: 0.22; }
+  0%, 100% { transform: translate(0, 0); opacity: 0.12; }
+  50% { transform: translate(20px, -15px); opacity: 0.2; }
 }
+
 @keyframes orb-drift-b {
-  0%, 100% { transform: translate(0, 0); opacity: 0.1; }
-  50% { transform: translate(-25px, 18px); opacity: 0.16; }
+  0%, 100% { transform: translate(0, 0); opacity: 0.08; }
+  50% { transform: translate(-25px, 18px); opacity: 0.14; }
 }
 
 .anim-ring-breathe { animation: ring-breathe 4.5s ease-in-out infinite; }
@@ -162,10 +209,10 @@
 .anim-orb-a { animation: orb-drift-a 10s ease-in-out infinite; }
 .anim-orb-b { animation: orb-drift-b 13s ease-in-out infinite; }
 
-/* The decorative loops (idle breathing, background orbs) honor reduced
-   motion; the connecting/connected pulses are active state feedback and are
-   deliberately left running (matches the original Motion behavior). */
 @media (prefers-reduced-motion: reduce) {
-  .anim-ring-breathe, .anim-orb-a, .anim-orb-b { animation: none; }
+  .anim-ring-breathe,
+  .anim-orb-a,
+  .anim-orb-b {
+    animation: none;
+  }
 }
-
