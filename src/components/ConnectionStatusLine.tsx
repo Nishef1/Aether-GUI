@@ -185,7 +185,7 @@ export function ConnectionStatusLine() {
     telemetry.public_ip || telemetry.country_code || telemetry.latency_ms != null,
   );
   const country = telemetry.country_code
-    ? `${countryFlag(telemetry.country_code)} ${countryName(telemetry.country_code)}`
+    ? `${countryFlag(telemetry.country_code)} Approx. ${countryName(telemetry.country_code)}`
     : null;
 
   return (
@@ -243,15 +243,18 @@ export function ConnectionStatusLine() {
       {connectionReady && hasEgressInfo && (
         <div
           className="flex max-w-sm flex-wrap items-center justify-center gap-x-2 gap-y-1 font-mono text-[10px] text-muted-foreground"
-          aria-label="Tunnel exit information"
+          aria-label="Tunnel egress information"
         >
           {country && (
-            <span className="inline-flex items-center gap-1" title="Tunnel exit country">
+            <span
+              className="inline-flex items-center gap-1"
+              title="Approximate geolocation of the tunnel egress IP; WARP does not select an exit country"
+            >
               <Globe2 size={11} aria-hidden="true" />
               {country}
             </span>
           )}
-          {telemetry.public_ip && <span title="Public tunnel exit IP">{telemetry.public_ip}</span>}
+          {telemetry.public_ip && <span title="Verified public tunnel egress IP">{telemetry.public_ip}</span>}
           {telemetry.latency_ms != null && (
             <span
               className="inline-flex items-center gap-1"
