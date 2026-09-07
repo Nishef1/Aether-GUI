@@ -16,16 +16,18 @@ internal data class EgressProbeResult(
     val countryCode: String?,
     val latencyMs: Long,
     val provider: String = "unknown",
+    /** true = exact underlay/tunnel addresses differ; null = direct baseline unavailable. */
+    val identityChanged: Boolean? = null,
 )
 
 /**
  * End-to-end SOCKS verification used as the definition of Connected.
  *
- * A local listening port is not enough: WireGuard can finish its direct raw-DNS
- * validation while the reusable netstack behind SOCKS is still unable to resolve
- * a domain or establish TCP. This probe talks SOCKS5 manually so failures can be
- * classified as proxy handshake, remote DNS, TCP, TLS, or HTTP instead of being
- * flattened into Java's generic "Connect timed out" message.
+ * The primary identity providers are deliberately not Cloudflare-owned. WARP
+ * normally preserves approximate geography even though it replaces the user's
+ * public IP, so country equality is not evidence of a leak. We compare the exact
+ * neutral-provider address seen outside Aether with the exact address seen
+ * through SOCKS and fail closed only when those addresses are identical.
  */
 internal object AndroidEgressProbe {
     private const val CONNECT_TIMEOUT_MS = 6_000
@@ -42,17 +44,28 @@ internal object AndroidEgressProbe {
         val hostHeader: String = host,
     )
 
-    private val domainProviders = listOf(
+    private val identityProviders = listOf(
         Provider(
-            label = "cloudflare-domain-tls",
-            host = "www.cloudflare.com",
+            label = "aws-checkip",
+            host = "checkip.amazonaws.com",
             port = 443,
-            path = "/cdn-cgi/trace",
+            path = "/",
             tls = true,
             useDomainAddress = true,
         ),
         Provider(
-            label = "ip-api-domain-http",
+            label = "ipify",
+            host = "api.ipify.org",
+            port = 443,
+            path = "/",
+            tls = true,
+            useDomainAddress = true,
+        ),
+        // Kept as a last non-TLS fallback because some filtered networks break
+        // one of the neutral HTTPS endpoints. This is still reached through the
+        // encrypted Aether tunnel, not over the device underlay.
+        Provider(
+            label = "ip-api",
             host = "ip-api.com",
             port = 80,
             path = "/json/?fields=status,query,countryCode",
@@ -62,12 +75,17 @@ internal object AndroidEgressProbe {
     )
 
     fun probe(bindAddress: String): EgressProbeResult {
+        val underlayIp = AndroidEgressIdentityGuard.underlayPublicIp()
         val (proxyHost, proxyPort) = splitHostPort(bindAddress)
         val failures = mutableListOf<String>()
 
-        for (provider in domainProviders) {
+        for (provider in identityProviders) {
             val result = runCatching { probeProvider(proxyHost, proxyPort, provider) }
-            if (result.isSuccess) return result.getOrThrow()
+            if (result.isSuccess) {
+                val probe = result.getOrThrow()
+                val identity = AndroidEgressIdentityGuard.compare(underlayIp, probe.publicIp)
+                return probe.copy(identityChanged = identity.changed)
+            }
             failures += "${provider.label}: ${result.exceptionOrNull()?.message ?: "unknown error"}"
         }
 
@@ -83,7 +101,7 @@ internal object AndroidEgressProbe {
         if (literal.isSuccess) {
             error(
                 "SOCKS TCP works through $LITERAL_TCP_LABEL, but remote DNS/domain " +
-                    "egress failed (${failures.joinToString(" | ")})"
+                    "egress failed (${failures.joinToString(" | ")})",
             )
         }
 
@@ -111,7 +129,8 @@ internal object AndroidEgressProbe {
             val writer = it.outputStream.bufferedWriter(Charsets.US_ASCII)
             writer.write("GET ${provider.path} HTTP/1.1\r\n")
             writer.write("Host: ${provider.hostHeader}\r\n")
-            writer.write("User-Agent: Aether-Android/2\r\n")
+            writer.write("User-Agent: Aether-Android/3\r\n")
+            writer.write("Accept: text/plain, application/json\r\n")
             writer.write("Connection: close\r\n\r\n")
             writer.flush()
 
@@ -125,7 +144,8 @@ internal object AndroidEgressProbe {
                 error("HTTP response was not successful (status=${status ?: "missing"})")
             }
 
-            val ip = parsePublicIp(response)
+            val body = response.substringAfter("\r\n\r\n", response.substringAfter("\n\n", ""))
+            val ip = parsePublicIp(body.ifBlank { response })
                 ?: error("HTTP response did not contain a public IP")
             val country = parseCountry(response)
             return EgressProbeResult(
@@ -234,10 +254,12 @@ internal object AndroidEgressProbe {
             ?.groupValues
             ?.getOrNull(1)
             ?.trim()
-        return listOfNotNull(trace, json).firstOrNull { value ->
-            (value.contains('.') || value.contains(':')) &&
-                runCatching { InetAddress.getByName(value) }.isSuccess
-        }
+        val plain = response
+            .lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .firstNotNullOfOrNull(AndroidEgressIdentityGuard::parseIp)
+        return listOfNotNull(plain, trace, json).firstNotNullOfOrNull(AndroidEgressIdentityGuard::parseIp)
     }
 
     private fun parseCountry(response: String): String? {
