@@ -1,4 +1,6 @@
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+#[cfg(windows)]
+use tauri::Emitter;
 
 /// Emits `app://focused` (bool) whenever the app gains or loses the
 /// foreground. Exists because neither signal the webview can see is
@@ -37,8 +39,8 @@ pub fn spawn_watcher(app: AppHandle) {
         }
     });
 
-    // ponytail: non-Windows keeps the JS-side tauri focus events only —
-    // revisit if Linux/macOS users report the same background-CPU issue.
+    // Non-Windows keeps the JS-side Tauri focus events only. Revisit if
+    // Linux/macOS report the same background-CPU behavior as WebView2.
     #[cfg(not(windows))]
     let _ = app;
 }
