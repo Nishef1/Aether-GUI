@@ -23,8 +23,15 @@ export type ConnectionStatus =
 export type Protocol = "auto" | "masque" | "wireguard" | "gool";
 export type ScanMode = "turbo" | "balanced" | "thorough" | "stealth" | "ironclad";
 export type IpVersion = "v4" | "v6" | "both";
-export type MasqueNoize = "firewall" | "gfw" | "off";
-export type WgNoize = "balanced" | "aggressive" | "light" | "off";
+export type NoizeProfile =
+  | "off"
+  | "light"
+  | "firewall"
+  | "balanced"
+  | "gfw"
+  | "aggressive";
+export type MasqueNoize = NoizeProfile;
+export type WgNoize = NoizeProfile;
 export type ZeroTrustAuth = "email" | "service" | "token";
 export type SystemTunnelSelection = "off" | "singbox" | "native";
 export type PerfProfile = "auto" | "low" | "medium" | "high";
@@ -45,10 +52,17 @@ export interface ConnectionProfile {
   masque_noize: MasqueNoize;
   wg_noize: WgNoize;
   bind_address: string;
+  http_proxy: string;
+  /** Aether's outbound chaining proxy. May contain credentials; never persist it. */
+  upstream: string;
   dns: string;
   mtu: number;
   peer: string;
+  /** Legacy outer WireGuard peer; retained for old saved profiles. */
   wg_peer: string;
+  wiw_outer: string;
+  wiw_inner: string;
+  wiw_scan: boolean;
   h2_peer: string;
   ech: string;
   no_data_check: boolean;
@@ -61,6 +75,9 @@ export interface ConnectionProfile {
   no_profile_retry: boolean;
   tls_groups: string;
   perf_profile: PerfProfile;
+  route_sniff: boolean;
+  route_sniff_ms: number;
+  auto_reprovision: boolean;
   zero_trust_team: string;
   zero_trust_auth: ZeroTrustAuth;
   access_email: string;

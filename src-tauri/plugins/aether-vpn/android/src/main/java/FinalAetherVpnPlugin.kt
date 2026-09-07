@@ -3,7 +3,6 @@ package com.cluvexstudio.aethergui.vpn
 import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.Service
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
@@ -44,10 +43,15 @@ class FinalVpnProfileArgs {
     var dnsServer: String = "1.1.1.1"
     var dns: String = ""
     var bindAddress: String = "127.0.0.1:1819"
+    var httpProxy: String = ""
+    var upstream: String = ""
     var webrtcLeakProtection: Boolean = false
     var mtu: Int = 1280
     var peer: String = ""
     var wgPeer: String = ""
+    var wiwOuter: String = ""
+    var wiwInner: String = ""
+    var wiwScan: Boolean = false
     var h2Peer: String = ""
     var ech: String = ""
     var noDataCheck: Boolean = false
@@ -60,6 +64,9 @@ class FinalVpnProfileArgs {
     var noProfileRetry: Boolean = false
     var tlsGroups: String = ""
     var perfProfile: String = "auto"
+    var routeSniff: Boolean = true
+    var routeSniffMs: Int = 400
+    var autoReprovision: Boolean = true
     var zeroTrustTeam: String = ""
     var zeroTrustAuth: String = "email"
     var accessEmail: String = ""
@@ -119,6 +126,8 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             putExtra(FinalAetherVpnService.EXTRA_IP_VERSION, profile.ipVersion)
             putExtra(FinalAetherVpnService.EXTRA_CONNECTION_MODE, profile.connectionMode)
             putExtra(FinalAetherVpnService.EXTRA_BIND_ADDRESS, profile.bindAddress)
+            putExtra(FinalAetherVpnService.EXTRA_HTTP_PROXY, profile.httpProxy)
+            putExtra(FinalAetherVpnService.EXTRA_UPSTREAM, profile.upstream)
             putExtra(FinalAetherVpnService.EXTRA_DNS_SERVER, profile.dnsServer)
             putExtra(FinalAetherVpnService.EXTRA_DNS, profile.dns)
             putExtra(FinalAetherVpnService.EXTRA_QUICK_RECONNECT, profile.quickReconnect)
@@ -129,6 +138,9 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             putExtra(FinalAetherVpnService.EXTRA_MTU, profile.mtu)
             putExtra(FinalAetherVpnService.EXTRA_PEER, profile.peer)
             putExtra(FinalAetherVpnService.EXTRA_WG_PEER, profile.wgPeer)
+            putExtra(FinalAetherVpnService.EXTRA_WIW_OUTER, profile.wiwOuter)
+            putExtra(FinalAetherVpnService.EXTRA_WIW_INNER, profile.wiwInner)
+            putExtra(FinalAetherVpnService.EXTRA_WIW_SCAN, profile.wiwScan)
             putExtra(FinalAetherVpnService.EXTRA_H2_PEER, profile.h2Peer)
             putExtra(FinalAetherVpnService.EXTRA_ECH, profile.ech)
             putExtra(FinalAetherVpnService.EXTRA_NO_DATA_CHECK, profile.noDataCheck)
@@ -141,6 +153,9 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             putExtra(FinalAetherVpnService.EXTRA_NO_PROFILE_RETRY, profile.noProfileRetry)
             putExtra(FinalAetherVpnService.EXTRA_TLS_GROUPS, profile.tlsGroups)
             putExtra(FinalAetherVpnService.EXTRA_PERF_PROFILE, profile.perfProfile)
+            putExtra(FinalAetherVpnService.EXTRA_ROUTE_SNIFF, profile.routeSniff)
+            putExtra(FinalAetherVpnService.EXTRA_ROUTE_SNIFF_MS, profile.routeSniffMs)
+            putExtra(FinalAetherVpnService.EXTRA_AUTO_REPROVISION, profile.autoReprovision)
             putExtra(FinalAetherVpnService.EXTRA_ZERO_TRUST_TEAM, profile.zeroTrustTeam)
             putExtra(FinalAetherVpnService.EXTRA_ZERO_TRUST_AUTH, profile.zeroTrustAuth)
             putExtra(FinalAetherVpnService.EXTRA_ACCESS_EMAIL, profile.accessEmail)
@@ -158,7 +173,10 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve(FinalAetherVpnService.snapshot().toJsObject())
         } catch (error: Throwable) {
             FinalAetherVpnService.markStartFailed(error)
-            invoke.reject(error.message ?: "Android refused to start the VPN service", "aetherServiceStartFailed")
+            invoke.reject(
+                error.message ?: "Android refused to start the VPN service",
+                "aetherServiceStartFailed",
+            )
         }
     }
 
@@ -172,7 +190,10 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             activity.startService(intent)
             invoke.resolve(FinalAetherVpnService.snapshot().toJsObject())
         } catch (error: Throwable) {
-            invoke.reject(error.message ?: "Android refused to stop the VPN service", "aetherServiceStopFailed")
+            invoke.reject(
+                error.message ?: "Android refused to stop the VPN service",
+                "aetherServiceStopFailed",
+            )
         }
     }
 
@@ -189,7 +210,8 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
-    fun telemetry(invoke: Invoke) = invoke.resolve(FinalAetherVpnService.telemetrySnapshot().toJsObject())
+    fun telemetry(invoke: Invoke) =
+        invoke.resolve(FinalAetherVpnService.telemetrySnapshot().toJsObject())
 
     @Command
     fun logs(invoke: Invoke) {
@@ -213,7 +235,9 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     fun setLogging(invoke: Invoke) {
         val args = invoke.parseArgs(FinalLoggingArgs::class.java)
         FinalAetherVpnService.setLoggingEnabled(args.enabled)
-        invoke.resolve(JSObject().apply { put("enabled", FinalAetherVpnService.isLoggingEnabled()) })
+        invoke.resolve(JSObject().apply {
+            put("enabled", FinalAetherVpnService.isLoggingEnabled())
+        })
     }
 
     @Command
@@ -221,7 +245,9 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.parseArgs(FinalAccessCodeArgs::class.java)
         runCatching { FinalAetherVpnService.submitAccessCode(args.code) }
             .onSuccess { invoke.resolve(JSObject()) }
-            .onFailure { invoke.reject(it.message ?: "Access code could not be submitted", "accessCodeFailed") }
+            .onFailure {
+                invoke.reject(it.message ?: "Access code could not be submitted", "accessCodeFailed")
+            }
     }
 
     @Command
@@ -236,20 +262,58 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
         if (!AndroidTransportPolicy.isValidMtu(profile.mtu)) {
             return "MTU must be between ${AndroidTransportPolicy.MIN_MTU} and ${AndroidTransportPolicy.MAX_MTU}"
         }
-        if (profile.validateSecs !in 1..120) return "Validation timeout must be between 1 and 120 seconds"
-        if (profile.reconnectSecs !in 1..60) return "Reconnect delay must be between 1 and 60 seconds"
-        if (profile.keepalive !in 1..120) return "WireGuard keepalive must be between 1 and 120 seconds"
-        if (profile.perfProfile !in setOf("auto", "low", "medium", "high")) return "Unknown performance profile"
+        if (profile.validateSecs !in 1..120) {
+            return "Validation timeout must be between 1 and 120 seconds"
+        }
+        if (profile.reconnectSecs !in 1..60) {
+            return "Reconnect delay must be between 1 and 60 seconds"
+        }
+        if (profile.keepalive !in 1..120) {
+            return "WireGuard keepalive must be between 1 and 120 seconds"
+        }
+        if (profile.routeSniffMs !in 50..5000) {
+            return "Route sniff timeout must be between 50 and 5000 milliseconds"
+        }
+        if (profile.perfProfile !in setOf("auto", "low", "medium", "high")) {
+            return "Unknown performance profile"
+        }
+        val allowedNoize = setOf("off", "light", "firewall", "balanced", "gfw", "aggressive")
+        if (profile.masqueNoize !in allowedNoize || profile.wgNoize !in allowedNoize) {
+            return "Unknown traffic obfuscation profile"
+        }
+        if (profile.httpProxy.isNotBlank()) {
+            val address = parseSocketAddress(profile.httpProxy)
+                ?: return "HTTP proxy listen address must be ip:port"
+            if (!address.address.isLoopbackAddress) {
+                return "Android HTTP proxy listener must stay on loopback"
+            }
+        }
         if (profile.zeroTrustTeam.isBlank()) return null
         return when (profile.zeroTrustAuth.lowercase()) {
             "email" -> if (profile.accessEmail.isBlank()) "Zero Trust email is required" else null
-            "service" -> if (profile.accessClientId.isBlank() || profile.accessClientSecret.isBlank()) {
+            "service" -> if (
+                profile.accessClientId.isBlank() || profile.accessClientSecret.isBlank()
+            ) {
                 "Zero Trust service-token id and secret are required"
             } else null
             "token" -> if (profile.accessToken.isBlank()) "Zero Trust access token is required" else null
             else -> "Unknown Zero Trust authentication method"
         }
     }
+
+    private fun parseSocketAddress(value: String): InetSocketAddress? = runCatching {
+        val trimmed = value.trim()
+        val split = if (trimmed.startsWith("[")) {
+            val end = trimmed.indexOf(']')
+            if (end <= 1 || end + 2 > trimmed.length || trimmed[end + 1] != ':') return@runCatching null
+            trimmed.substring(1, end) to trimmed.substring(end + 2)
+        } else {
+            val colon = trimmed.lastIndexOf(':')
+            if (colon <= 0) return@runCatching null
+            trimmed.substring(0, colon) to trimmed.substring(colon + 1)
+        }
+        InetSocketAddress(InetAddress.getByName(split.first), split.second.toInt())
+    }.getOrNull()
 }
 
 class FinalAetherVpnService : VpnService() {
@@ -271,6 +335,8 @@ class FinalAetherVpnService : VpnService() {
         val ipVersion: String,
         val connectionMode: String,
         val bindAddress: String,
+        val httpProxy: String,
+        val upstream: String,
         val dnsServer: String,
         val dns: String,
         val quickReconnect: Boolean,
@@ -281,6 +347,9 @@ class FinalAetherVpnService : VpnService() {
         val mtu: Int,
         val peer: String,
         val wgPeer: String,
+        val wiwOuter: String,
+        val wiwInner: String,
+        val wiwScan: Boolean,
         val h2Peer: String,
         val ech: String,
         val noDataCheck: Boolean,
@@ -293,6 +362,9 @@ class FinalAetherVpnService : VpnService() {
         val noProfileRetry: Boolean,
         val tlsGroups: String,
         val perfProfile: String,
+        val routeSniff: Boolean,
+        val routeSniffMs: Int,
+        val autoReprovision: Boolean,
         val zeroTrustTeam: String,
         val zeroTrustAuth: String,
         val accessEmail: String,
@@ -328,7 +400,7 @@ class FinalAetherVpnService : VpnService() {
             ACTION_START -> startCore(intent)
             ACTION_STOP -> requestStop("user request")
         }
-        return Service.START_NOT_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onRevoke() {
@@ -372,21 +444,32 @@ class FinalAetherVpnService : VpnService() {
         startForeground(NOTIFICATION_ID, buildNotification("Starting Aether…"))
 
         val profile = RuntimeProfile(
-            protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "auto",
+            protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "masque",
             scanMode = intent.getStringExtra(EXTRA_SCAN_MODE) ?: "balanced",
             ipVersion = intent.getStringExtra(EXTRA_IP_VERSION) ?: "v4",
             connectionMode = intent.getStringExtra(EXTRA_CONNECTION_MODE) ?: "tunnel",
-            bindAddress = sanitizeBindAddress(intent.getStringExtra(EXTRA_BIND_ADDRESS) ?: DEFAULT_SOCKS_ADDRESS),
-            dnsServer = sanitizeDnsServer(intent.getStringExtra(EXTRA_DNS_SERVER) ?: DEFAULT_DNS_SERVER),
+            bindAddress = sanitizeBindAddress(
+                intent.getStringExtra(EXTRA_BIND_ADDRESS) ?: DEFAULT_SOCKS_ADDRESS,
+            ),
+            httpProxy = intent.getStringExtra(EXTRA_HTTP_PROXY).orEmpty(),
+            upstream = intent.getStringExtra(EXTRA_UPSTREAM).orEmpty(),
+            dnsServer = sanitizeDnsServer(
+                intent.getStringExtra(EXTRA_DNS_SERVER) ?: DEFAULT_DNS_SERVER,
+            ),
             dns = intent.getStringExtra(EXTRA_DNS).orEmpty(),
             quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, false),
             masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, false),
             masqueNoize = intent.getStringExtra(EXTRA_MASQUE_NOIZE) ?: "firewall",
             wgNoize = intent.getStringExtra(EXTRA_WG_NOIZE) ?: "balanced",
             webrtcLeakProtection = intent.getBooleanExtra(EXTRA_WEBRTC_LEAK_PROTECTION, false),
-            mtu = AndroidTransportPolicy.sanitizeMtu(intent.getIntExtra(EXTRA_MTU, AndroidTransportPolicy.DEFAULT_MTU)),
+            mtu = AndroidTransportPolicy.sanitizeMtu(
+                intent.getIntExtra(EXTRA_MTU, AndroidTransportPolicy.DEFAULT_MTU),
+            ),
             peer = intent.getStringExtra(EXTRA_PEER).orEmpty(),
             wgPeer = intent.getStringExtra(EXTRA_WG_PEER).orEmpty(),
+            wiwOuter = intent.getStringExtra(EXTRA_WIW_OUTER).orEmpty(),
+            wiwInner = intent.getStringExtra(EXTRA_WIW_INNER).orEmpty(),
+            wiwScan = intent.getBooleanExtra(EXTRA_WIW_SCAN, false),
             h2Peer = intent.getStringExtra(EXTRA_H2_PEER).orEmpty(),
             ech = intent.getStringExtra(EXTRA_ECH).orEmpty(),
             noDataCheck = intent.getBooleanExtra(EXTRA_NO_DATA_CHECK, false),
@@ -399,6 +482,9 @@ class FinalAetherVpnService : VpnService() {
             noProfileRetry = intent.getBooleanExtra(EXTRA_NO_PROFILE_RETRY, false),
             tlsGroups = intent.getStringExtra(EXTRA_TLS_GROUPS).orEmpty(),
             perfProfile = intent.getStringExtra(EXTRA_PERF_PROFILE) ?: "auto",
+            routeSniff = intent.getBooleanExtra(EXTRA_ROUTE_SNIFF, true),
+            routeSniffMs = intent.getIntExtra(EXTRA_ROUTE_SNIFF_MS, 400).coerceIn(50, 5_000),
+            autoReprovision = intent.getBooleanExtra(EXTRA_AUTO_REPROVISION, true),
             zeroTrustTeam = intent.getStringExtra(EXTRA_ZERO_TRUST_TEAM).orEmpty(),
             zeroTrustAuth = intent.getStringExtra(EXTRA_ZERO_TRUST_AUTH) ?: "email",
             accessEmail = intent.getStringExtra(EXTRA_ACCESS_EMAIL).orEmpty(),
@@ -440,7 +526,10 @@ class FinalAetherVpnService : VpnService() {
             process = processBuilder.start()
             writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
             if (!attachProcess(token, process, writer)) {
-                cleanupResources(RuntimeResources(process = process, writer = writer), "cancel before core attach")
+                cleanupResources(
+                    RuntimeResources(process = process, writer = writer),
+                    "cancel before core attach",
+                )
                 process = null
                 writer = null
                 throw CancellationException("Connection cancelled before core attachment")
@@ -448,10 +537,16 @@ class FinalAetherVpnService : VpnService() {
             processAttached = true
             AndroidVpnRuntime.attachProcessInput(writer)
             startCoreLogReader(process)
-            updateSnapshotIfActive(token, FinalServiceSnapshot("Connecting", socksAddr = profile.bindAddress))
+            updateSnapshotIfActive(
+                token,
+                FinalServiceSnapshot("Connecting", socksAddr = profile.bindAddress),
+            )
             updateNotification("Finding a working route…")
 
-            val startupTimeoutMs = AndroidTransportPolicy.startupTimeoutMs(profile.protocol, profile.scanMode)
+            val startupTimeoutMs = AndroidTransportPolicy.startupTimeoutMs(
+                profile.protocol,
+                profile.scanMode,
+            )
             log("Waiting up to ${startupTimeoutMs / 1000}s for SOCKS readiness")
             if (!waitForSocks(token, profile.bindAddress, process, startupTimeoutMs)) {
                 ensureActive(token)
@@ -460,26 +555,49 @@ class FinalAetherVpnService : VpnService() {
                 error(
                     "Aether SOCKS endpoint did not become ready" +
                         (exit?.let { "; exit=$it" } ?: "; process still running") +
-                        (if (tail.isBlank()) "" else "; recent logs: $tail")
+                        (if (tail.isBlank()) "" else "; recent logs: $tail"),
                 )
             }
 
             ensureActive(token)
-            updateSnapshotIfActive(token, FinalServiceSnapshot("Verifying", socksAddr = profile.bindAddress))
+            updateSnapshotIfActive(
+                token,
+                FinalServiceSnapshot("Verifying", socksAddr = profile.bindAddress),
+            )
             updateNotification("Verifying tunnel egress…")
             val initialProbe = AndroidEgressProbe.probe(profile.bindAddress)
             ensureActive(token)
-            AndroidVpnRuntime.publishProbe(initialProbe.publicIp, initialProbe.countryCode, initialProbe.latencyMs)
+            AndroidVpnRuntime.publishProbe(
+                initialProbe.publicIp,
+                initialProbe.countryCode,
+                initialProbe.latencyMs,
+            )
             val connectedAt = System.currentTimeMillis()
 
             if (profile.connectionMode == "proxy") {
-                updateSnapshotIfActive(token, FinalServiceSnapshot("Connected", socksAddr = profile.bindAddress, connectedAtMs = connectedAt))
+                updateSnapshotIfActive(
+                    token,
+                    FinalServiceSnapshot(
+                        "Connected",
+                        socksAddr = profile.bindAddress,
+                        connectedAtMs = connectedAt,
+                    ),
+                )
                 updateNotification("Connected · SOCKS ${profile.bindAddress}")
             } else {
-                updateSnapshotIfActive(token, FinalServiceSnapshot("StartingTunnel", socksAddr = profile.bindAddress))
+                updateSnapshotIfActive(
+                    token,
+                    FinalServiceSnapshot("StartingTunnel", socksAddr = profile.bindAddress),
+                )
                 tunnel = createSystemTunnel(profile)
                 if (!attachTunnel(token, tunnel)) {
-                    cleanupResources(RuntimeResources(descriptor = tunnel.descriptor, bridge = tunnel.bridge), "cancel before TUN attach")
+                    cleanupResources(
+                        RuntimeResources(
+                            descriptor = tunnel.descriptor,
+                            bridge = tunnel.bridge,
+                        ),
+                        "cancel before TUN attach",
+                    )
                     tunnel = null
                     throw CancellationException("Connection cancelled before TUN attachment")
                 }
@@ -491,20 +609,24 @@ class FinalAetherVpnService : VpnService() {
                         socksAddr = profile.bindAddress,
                         tunAddr = TUN_IPV4_ADDRESS,
                         connectedAtMs = connectedAt,
-                    )
+                    ),
                 )
                 updateNotification("Protected · device tunnel active")
             }
 
             startEgressProbeLoop(token, profile.bindAddress)
             val exitCode = process.waitFor()
-            if (sessionGate.isActive(token)) error("Aether core exited unexpectedly with code $exitCode")
+            if (sessionGate.isActive(token)) {
+                error("Aether core exited unexpectedly with code $exitCode")
+            }
         } catch (_: CancellationException) {
             log("Connection session cancelled")
         } catch (error: Throwable) {
             log("ERROR: ${error.message ?: error}")
             if (sessionGate.isActive(token)) {
-                AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Error", error.message ?: error.toString()))
+                AndroidVpnRuntime.updateSnapshot(
+                    FinalServiceSnapshot("Error", error.message ?: error.toString()),
+                )
                 updateNotification("Connection failed")
             }
         } finally {
@@ -525,10 +647,10 @@ class FinalAetherVpnService : VpnService() {
 
     private fun buildCoreCommand(executable: File, profile: RuntimeProfile): List<String> {
         val command = mutableListOf(executable.absolutePath)
-        when (profile.protocol) {
-            "masque" -> command += "--masque"
-            "wireguard" -> command += "--wg"
-            "gool" -> command += "--gool"
+        command += when (profile.protocol) {
+            "wireguard" -> "--wg"
+            "gool" -> "--gool"
+            else -> "--masque"
         }
         command += when (profile.scanMode) {
             "turbo" -> "--turbo"
@@ -545,28 +667,46 @@ class FinalAetherVpnService : VpnService() {
         command += if (profile.quickReconnect) "--quick-reconnect" else "--no-quick-reconnect"
         command += listOf(
             "--noize",
-            if (profile.protocol == "wireguard" || profile.protocol == "gool") profile.wgNoize else profile.masqueNoize,
-            "--bind", profile.bindAddress,
-            "--validate-secs", profile.validateSecs.toString(),
-            "--reconnect-secs", profile.reconnectSecs.toString(),
-            "--config", File(filesDir, "aether.toml").absolutePath,
-            "--wg-config", File(filesDir, "aether-wg.toml").absolutePath,
-            "--masque-config", File(filesDir, "aether-masque.toml").absolutePath,
+            if (profile.protocol == "wireguard" || profile.protocol == "gool") {
+                profile.wgNoize
+            } else {
+                profile.masqueNoize
+            },
+            "--bind",
+            profile.bindAddress,
+            "--validate-secs",
+            profile.validateSecs.toString(),
+            "--reconnect-secs",
+            profile.reconnectSecs.toString(),
+            "--config",
+            File(filesDir, "aether.toml").absolutePath,
+            "--wg-config",
+            File(filesDir, "aether-wg.toml").absolutePath,
+            "--masque-config",
+            File(filesDir, "aether-masque.toml").absolutePath,
         )
+        addOption(command, "--http-proxy", profile.httpProxy)
         addOption(command, "--peer", profile.peer)
-        addOption(command, "--wg-peer", profile.wgPeer)
+        if (profile.wiwOuter.isBlank()) {
+            addOption(command, "--wg-peer", profile.wgPeer)
+        }
+        addOption(command, "--wiw-outer", profile.wiwOuter)
+        addOption(command, "--wiw-inner", profile.wiwInner)
+        if (profile.wiwScan && profile.protocol == "gool") command += "--wiw-scan"
         if (profile.masqueHttp2) command += "--h2"
         addOption(command, "--h2-peer", profile.h2Peer)
         addOption(command, "--ech", profile.ech)
         if (profile.noDataCheck) command += "--no-data-check"
         addOption(command, "--dns", profile.dns)
-        if (profile.fragment) {
+        if (profile.fragment && profile.masqueHttp2) {
             command += "--fragment"
             addOption(command, "--fragment-size", profile.fragmentSize)
             addOption(command, "--fragment-delay", profile.fragmentDelay)
         }
-        command += listOf("--keepalive", profile.keepalive.toString())
-        if (profile.noProfileRetry) command += "--no-profile-retry"
+        if (profile.protocol == "wireguard" || profile.protocol == "gool") {
+            command += listOf("--keepalive", profile.keepalive.toString())
+            if (profile.noProfileRetry) command += "--no-profile-retry"
+        }
         if (profile.zeroTrustTeam.isNotBlank()) {
             command += listOf("--team", profile.zeroTrustTeam.trim())
             if (profile.zeroTrustGateway) command += "--gateway"
@@ -575,8 +715,13 @@ class FinalAetherVpnService : VpnService() {
         addOption(command, "--route-direct", profile.routeDirect)
         addOption(command, "--routes", profile.routesFile)
         addOption(command, "--tls-groups", profile.tlsGroups)
-        if (profile.perfProfile != "auto") command += listOf("--perf", profile.perfProfile)
-        command += listOf("--log-level", if (AndroidVpnRuntime.isLoggingEnabled()) "info" else "warn")
+        if (profile.perfProfile != "auto") {
+            command += listOf("--perf", profile.perfProfile)
+        }
+        command += listOf(
+            "--log-level",
+            if (AndroidVpnRuntime.isLoggingEnabled()) "info" else "warn",
+        )
         return command
     }
 
@@ -587,13 +732,28 @@ class FinalAetherVpnService : VpnService() {
     private fun configureEnvironment(builder: ProcessBuilder, profile: RuntimeProfile) {
         builder.environment().apply {
             put("RUST_BACKTRACE", "0")
+            put("AETHER_ROUTE_SNIFF", if (profile.routeSniff) "1" else "0")
+            put("AETHER_ROUTE_SNIFF_MS", profile.routeSniffMs.toString())
+            put("AETHER_REPROVISION", if (profile.autoReprovision) "1" else "0")
+            if (profile.upstream.isNotBlank()) {
+                // Upstream URLs may contain credentials; keep them out of argv/log output.
+                put("AETHER_UPSTREAM", profile.upstream.trim())
+            }
             when (profile.zeroTrustAuth.lowercase()) {
-                "email" -> if (profile.accessEmail.isNotBlank()) put("AETHER_ACCESS_EMAIL", profile.accessEmail.trim())
-                "service" -> {
-                    if (profile.accessClientId.isNotBlank()) put("AETHER_ACCESS_CLIENT_ID", profile.accessClientId.trim())
-                    if (profile.accessClientSecret.isNotBlank()) put("AETHER_ACCESS_CLIENT_SECRET", profile.accessClientSecret.trim())
+                "email" -> if (profile.accessEmail.isNotBlank()) {
+                    put("AETHER_ACCESS_EMAIL", profile.accessEmail.trim())
                 }
-                "token" -> if (profile.accessToken.isNotBlank()) put("AETHER_ACCESS_TOKEN", profile.accessToken.trim())
+                "service" -> {
+                    if (profile.accessClientId.isNotBlank()) {
+                        put("AETHER_ACCESS_CLIENT_ID", profile.accessClientId.trim())
+                    }
+                    if (profile.accessClientSecret.isNotBlank()) {
+                        put("AETHER_ACCESS_CLIENT_SECRET", profile.accessClientSecret.trim())
+                    }
+                }
+                "token" -> if (profile.accessToken.isNotBlank()) {
+                    put("AETHER_ACCESS_TOKEN", profile.accessToken.trim())
+                }
             }
         }
     }
@@ -612,7 +772,8 @@ class FinalAetherVpnService : VpnService() {
             .setBlocking(false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
         builder.addDisallowedApplication(packageName)
-        val descriptor = builder.establish() ?: error("Android refused to establish the VPN interface")
+        val descriptor = builder.establish()
+            ?: error("Android refused to establish the VPN interface")
         try {
             val configFile = writeTun2SocksConfig(
                 socksHost = socksHost,
@@ -663,7 +824,7 @@ class FinalAetherVpnService : VpnService() {
               udp-read-write-timeout: 60000
               log-level: warn
               limit-nofile: 8192
-            """.trimIndent() + "\n"
+            """.trimIndent() + "\n",
         )
         return config
     }
@@ -760,13 +921,17 @@ class FinalAetherVpnService : VpnService() {
                 }
             }.onFailure { runCatching { process.destroyForcibly() } }
         }
-        if (resources.process != null || resources.descriptor != null || resources.bridge != null) {
+        if (
+            resources.process != null || resources.descriptor != null || resources.bridge != null
+        ) {
             log("Native resources released: $reason")
         }
     }
 
     private fun ensureActive(token: Long) {
-        if (!sessionGate.isActive(token)) throw CancellationException("VPN session is no longer active")
+        if (!sessionGate.isActive(token)) {
+            throw CancellationException("VPN session is no longer active")
+        }
     }
 
     private fun startCoreLogReader(process: Process) {
@@ -788,10 +953,19 @@ class FinalAetherVpnService : VpnService() {
         }
     }
 
-    private fun waitForSocks(token: Long, bindAddress: String, process: Process, timeoutMs: Long): Boolean {
+    private fun waitForSocks(
+        token: Long,
+        bindAddress: String,
+        process: Process,
+        timeoutMs: Long,
+    ): Boolean {
         val (host, port) = splitHostPort(bindAddress)
         var deadline = SystemClock.elapsedRealtime() + timeoutMs
-        while (SystemClock.elapsedRealtime() < deadline && process.isAlive && sessionGate.isActive(token)) {
+        while (
+            SystemClock.elapsedRealtime() < deadline &&
+            process.isAlive &&
+            sessionGate.isActive(token)
+        ) {
             if (AndroidVpnRuntime.snapshot().state == "AwaitingAccessCode") {
                 Thread.sleep(SOCKS_POLL_INTERVAL_MS)
                 deadline += SOCKS_POLL_INTERVAL_MS
@@ -815,7 +989,11 @@ class FinalAetherVpnService : VpnService() {
                 val result = runCatching { AndroidEgressProbe.probe(bindAddress) }
                 if (sessionGate.isActive(token) && result.isSuccess) {
                     val probe = result.getOrThrow()
-                    AndroidVpnRuntime.publishProbe(probe.publicIp, probe.countryCode, probe.latencyMs)
+                    AndroidVpnRuntime.publishProbe(
+                        probe.publicIp,
+                        probe.countryCode,
+                        probe.latencyMs,
+                    )
                 }
                 var remaining = EGRESS_PROBE_INTERVAL_MS
                 while (remaining > 0 && sessionGate.isActive(token)) {
@@ -860,21 +1038,27 @@ class FinalAetherVpnService : VpnService() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Aether connection", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Aether connection",
+                    NotificationManager.IMPORTANCE_LOW,
+                ),
             )
         }
     }
 
-    private fun buildNotification(text: String) = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.stat_sys_download_done)
-        .setContentTitle("Aether")
-        .setContentText(text)
-        .setOngoing(true)
-        .setOnlyAlertOnce(true)
-        .build()
+    private fun buildNotification(text: String) =
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Aether")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .build()
 
     private fun updateNotification(text: String) {
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, buildNotification(text))
     }
 
     private fun updateSnapshotIfActive(token: Long, snapshot: FinalServiceSnapshot) {
@@ -891,6 +1075,8 @@ class FinalAetherVpnService : VpnService() {
         const val EXTRA_IP_VERSION = "ipVersion"
         const val EXTRA_CONNECTION_MODE = "connectionMode"
         const val EXTRA_BIND_ADDRESS = "bindAddress"
+        const val EXTRA_HTTP_PROXY = "httpProxy"
+        const val EXTRA_UPSTREAM = "upstream"
         const val EXTRA_DNS_SERVER = "dnsServer"
         const val EXTRA_DNS = "dns"
         const val EXTRA_QUICK_RECONNECT = "quickReconnect"
@@ -901,6 +1087,9 @@ class FinalAetherVpnService : VpnService() {
         const val EXTRA_MTU = "mtu"
         const val EXTRA_PEER = "peer"
         const val EXTRA_WG_PEER = "wgPeer"
+        const val EXTRA_WIW_OUTER = "wiwOuter"
+        const val EXTRA_WIW_INNER = "wiwInner"
+        const val EXTRA_WIW_SCAN = "wiwScan"
         const val EXTRA_H2_PEER = "h2Peer"
         const val EXTRA_ECH = "ech"
         const val EXTRA_NO_DATA_CHECK = "noDataCheck"
@@ -913,6 +1102,9 @@ class FinalAetherVpnService : VpnService() {
         const val EXTRA_NO_PROFILE_RETRY = "noProfileRetry"
         const val EXTRA_TLS_GROUPS = "tlsGroups"
         const val EXTRA_PERF_PROFILE = "perfProfile"
+        const val EXTRA_ROUTE_SNIFF = "routeSniff"
+        const val EXTRA_ROUTE_SNIFF_MS = "routeSniffMs"
+        const val EXTRA_AUTO_REPROVISION = "autoReprovision"
         const val EXTRA_ZERO_TRUST_TEAM = "zeroTrustTeam"
         const val EXTRA_ZERO_TRUST_AUTH = "zeroTrustAuth"
         const val EXTRA_ACCESS_EMAIL = "accessEmail"
@@ -937,9 +1129,17 @@ class FinalAetherVpnService : VpnService() {
         private const val SOCKS_POLL_INTERVAL_MS = 200L
         private const val EGRESS_PROBE_INTERVAL_MS = 300_000L
 
-        fun markStartRequested() = AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Launching"))
-        fun markStopRequested() = AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
-        fun markStartFailed(error: Throwable) = AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Error", error.message ?: error.toString()))
+        fun markStartRequested() =
+            AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Launching"))
+
+        fun markStopRequested() =
+            AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
+
+        fun markStartFailed(error: Throwable) =
+            AndroidVpnRuntime.updateSnapshot(
+                FinalServiceSnapshot("Error", error.message ?: error.toString()),
+            )
+
         fun snapshot(): FinalServiceSnapshot = AndroidVpnRuntime.snapshot()
         fun trafficSnapshot(): FinalNativeTraffic = AndroidVpnRuntime.trafficSnapshot()
         fun telemetrySnapshot(): FinalRuntimeTelemetry = AndroidVpnRuntime.telemetrySnapshot()

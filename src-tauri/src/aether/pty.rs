@@ -86,10 +86,29 @@ pub fn spawn(
     for arg in profile.as_args() {
         command.arg(arg);
     }
+
     command.env(
         "AETHER_MASQUE_HTTP2",
         if profile.masque_http2 { "1" } else { "0" },
     );
+    command.env(
+        "AETHER_ROUTE_SNIFF",
+        if profile.route_sniff { "1" } else { "0" },
+    );
+    command.env(
+        "AETHER_ROUTE_SNIFF_MS",
+        profile.route_sniff_ms.clamp(50, 5_000).to_string(),
+    );
+    command.env(
+        "AETHER_REPROVISION",
+        if profile.auto_reprovision { "1" } else { "0" },
+    );
+    if !profile.upstream.trim().is_empty() {
+        // Upstream URLs may contain credentials. Keep them out of argv/process
+        // listings and out of the persisted successful profile.
+        command.env("AETHER_UPSTREAM", profile.upstream.trim());
+    }
+
     match profile.zero_trust_auth {
         ZeroTrustAuth::Service
             if !profile.access_client_id.trim().is_empty()
@@ -208,7 +227,7 @@ fn read_loop(
                             let _ = writer.flush();
                         }
                         let _ = log_tx.send(LogEvent {
-                            line: format!("[gui] answered {section} \u{2192} {answer}"),
+                            line: format!("[gui] answered {section} → {answer}"),
                             timestamp: now_millis(),
                         });
                         answered.insert(section);
@@ -256,11 +275,6 @@ fn drain_lines(buf: &mut String) -> Vec<String> {
     lines
 }
 
-/// Removes the terminal control sequences emitted by colored Rust logs and by
-/// Windows' PTY title command. CSI sequences end on a final byte in @..~, and
-/// OSC sequences end on BEL or ST (ESC + backslash). Unknown two-byte escape
-/// sequences are dropped conservatively instead of leaking control bytes into
-/// the UI or copied diagnostics.
 fn strip_terminal_sequences(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();

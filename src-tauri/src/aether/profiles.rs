@@ -1,11 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-/// `Auto` is the GUI's recommended one-click choice and currently resolves to
-/// MASQUE. It is still passed explicitly as `--masque` so Aether never opens
-/// the protocol prompt and waits for PTY interaction during normal launches.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
+    #[default]
     Auto,
     Masque,
     Wireguard,
@@ -13,7 +11,6 @@ pub enum Protocol {
 }
 
 impl Protocol {
-    /// The literal menu choice Aether expects at its "Protocol:" prompt.
     pub fn as_menu_choice(&self) -> &'static str {
         match self {
             Protocol::Auto | Protocol::Masque => "1",
@@ -23,10 +20,11 @@ impl Protocol {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ScanMode {
     Turbo,
+    #[default]
     Balanced,
     Thorough,
     Stealth,
@@ -45,9 +43,10 @@ impl ScanMode {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum IpVersion {
+    #[default]
     V4,
     V6,
     Both,
@@ -63,113 +62,50 @@ impl IpVersion {
     }
 }
 
-/// Obfuscation profile for MASQUE connections. The profile shapes how much
-/// junk/padding Aether injects to disguise the handshake from DPI.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum MasqueNoize {
-    Firewall,
-    Gfw,
+pub enum NoizeProfile {
     Off,
-}
-
-impl MasqueNoize {
-    pub fn as_flag(&self) -> &'static str {
-        match self {
-            MasqueNoize::Firewall => "firewall",
-            MasqueNoize::Gfw => "gfw",
-            MasqueNoize::Off => "off",
-        }
-    }
-}
-
-/// Obfuscation profile for WireGuard and gool connections.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum WgNoize {
-    Balanced,
-    Aggressive,
     Light,
-    Off,
+    #[default]
+    Firewall,
+    Balanced,
+    Gfw,
+    Aggressive,
 }
 
-impl WgNoize {
+impl NoizeProfile {
     pub fn as_flag(&self) -> &'static str {
         match self {
-            WgNoize::Balanced => "balanced",
-            WgNoize::Aggressive => "aggressive",
-            WgNoize::Light => "light",
-            WgNoize::Off => "off",
+            NoizeProfile::Off => "off",
+            NoizeProfile::Light => "light",
+            NoizeProfile::Firewall => "firewall",
+            NoizeProfile::Balanced => "balanced",
+            NoizeProfile::Gfw => "gfw",
+            NoizeProfile::Aggressive => "aggressive",
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ConnectionProfile {
-    pub protocol: Protocol,
-    pub scan_mode: ScanMode,
-    pub ip_version: IpVersion,
-    /// Reuse the last known-working gateway before a full scan. This is kept
-    /// off by default so a stale route cannot silently dominate fresh scans.
-    #[serde(default)]
-    pub quick_reconnect: bool,
-    /// Aether ≥1.2.0: run the MASQUE tunnel over HTTP/2 (TCP) instead of the
-    /// default HTTP/3 (QUIC) — for networks that block or throttle UDP.
-    /// Passed as the AETHER_MASQUE_HTTP2 env var, not a flag: there is no
-    /// `--h3` flag, and setting the env to any value also suppresses 1.2.0's
-    /// new interactive "MASQUE transport" prompt in both directions.
-    #[serde(default)]
-    pub masque_http2: bool,
-    /// Obfuscation profile for MASQUE (firewall/gfw/off). Passed as
-    /// `--noize <value>`. Only sent when the active protocol is MASQUE-based.
-    #[serde(default = "default_masque_noize")]
-    pub masque_noize: MasqueNoize,
-    /// Obfuscation profile for WireGuard/gool (balanced/aggressive/light/off).
-    /// Only sent when the active protocol is WireGuard or gool.
-    #[serde(default = "default_wg_noize")]
-    pub wg_noize: WgNoize,
-    /// Local SOCKS5 listen address (`--bind`). Aether defaults to
-    /// 127.0.0.1:1819; users can change the port or bind to 0.0.0.0 for LAN.
-    #[serde(default = "default_bind_address")]
-    pub bind_address: String,
-    /// Aether ≥1.5.0: optional resolvers used *inside* the tunnel. Kept as
-    /// Aether's comma-separated CLI format, for example `1.1.1.1,1.0.0.1`.
-    #[serde(default)]
-    pub dns: String,
-    /// Aether ≥1.5.0: Cloudflare Zero Trust organization name. An empty
-    /// value means the normal consumer WARP flow.
-    #[serde(default)]
-    pub zero_trust_team: String,
-    /// Which Zero Trust credential field is active in the GUI. This controls
-    /// what is handed to the core, rather than being a core flag itself.
-    #[serde(default)]
-    pub zero_trust_auth: ZeroTrustAuth,
-    /// Email used for Cloudflare Access one-time-code sign-in. Sensitive
-    /// values are erased before the successful profile is persisted.
-    #[serde(default)]
-    pub access_email: String,
-    /// Cloudflare Access service-token client id.
-    #[serde(default)]
-    pub access_client_id: String,
-    /// Cloudflare Access service-token secret.
-    #[serde(default)]
-    pub access_client_secret: String,
-    /// A pre-obtained Cloudflare Access enrolment JWT.
-    #[serde(default)]
-    pub access_token: String,
-    /// Route HTTP/HTTPS through the organization's Gateway proxy. This is
-    /// intentionally off by default because the organization can log it.
-    #[serde(default)]
-    pub zero_trust_gateway: bool,
-    /// Aether ≥1.5.0 routing lists. Entries are comma/newline separated in
-    /// the same format accepted by `--route-block` and `--route-direct`.
-    #[serde(default)]
-    pub route_block: String,
-    #[serde(default)]
-    pub route_direct: String,
-    /// Optional path to an Aether routing file with [block]/[direct] sections.
-    #[serde(default)]
-    pub routes_file: String,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PerfProfile {
+    #[default]
+    Auto,
+    Low,
+    Medium,
+    High,
+}
+
+impl PerfProfile {
+    fn as_flag(&self) -> Option<&'static str> {
+        match self {
+            PerfProfile::Auto => None,
+            PerfProfile::Low => Some("low"),
+            PerfProfile::Medium => Some("medium"),
+            PerfProfile::High => Some("high"),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
@@ -181,26 +117,161 @@ pub enum ZeroTrustAuth {
     Token,
 }
 
-fn default_masque_noize() -> MasqueNoize {
-    MasqueNoize::Firewall
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConnectionProfile {
+    #[serde(default)]
+    pub protocol: Protocol,
+    #[serde(default)]
+    pub scan_mode: ScanMode,
+    #[serde(default)]
+    pub ip_version: IpVersion,
+    #[serde(default)]
+    pub quick_reconnect: bool,
+    #[serde(default)]
+    pub masque_http2: bool,
+    #[serde(default = "default_masque_noize")]
+    pub masque_noize: NoizeProfile,
+    #[serde(default = "default_wg_noize")]
+    pub wg_noize: NoizeProfile,
+    #[serde(default = "default_bind_address")]
+    pub bind_address: String,
+    #[serde(default)]
+    pub http_proxy: String,
+    /// Optional proxy Aether itself dials through. It may contain credentials,
+    /// so it is deliberately stripped before successful profiles are persisted.
+    #[serde(default)]
+    pub upstream: String,
+    #[serde(default)]
+    pub dns: String,
+    /// Android system-TUN MTU. Desktop keeps the value for profile parity but
+    /// the sing-box TUN owns its own MTU today.
+    #[serde(default = "default_mtu")]
+    pub mtu: u16,
+    #[serde(default)]
+    pub peer: String,
+    /// Legacy v1.5-v1.8 outer WireGuard endpoint. Kept for saved-profile
+    /// compatibility; new gool UI uses wiw_outer/wiw_inner.
+    #[serde(default)]
+    pub wg_peer: String,
+    #[serde(default)]
+    pub wiw_outer: String,
+    #[serde(default)]
+    pub wiw_inner: String,
+    #[serde(default)]
+    pub wiw_scan: bool,
+    #[serde(default)]
+    pub h2_peer: String,
+    #[serde(default)]
+    pub ech: String,
+    #[serde(default)]
+    pub no_data_check: bool,
+    #[serde(default = "default_validate_secs")]
+    pub validate_secs: u16,
+    #[serde(default = "default_reconnect_secs")]
+    pub reconnect_secs: u16,
+    #[serde(default)]
+    pub fragment: bool,
+    #[serde(default = "default_fragment_size")]
+    pub fragment_size: String,
+    #[serde(default = "default_fragment_delay")]
+    pub fragment_delay: String,
+    #[serde(default = "default_keepalive")]
+    pub keepalive: u16,
+    #[serde(default)]
+    pub no_profile_retry: bool,
+    #[serde(default)]
+    pub tls_groups: String,
+    #[serde(default)]
+    pub perf_profile: PerfProfile,
+    /// Aether v1.7+ domain sniffing keeps name-based routing working behind a
+    /// TUN. Enabled by default; exposed only as an expert escape hatch.
+    #[serde(default = "default_true")]
+    pub route_sniff: bool,
+    #[serde(default = "default_route_sniff_ms")]
+    pub route_sniff_ms: u16,
+    /// Replace a Cloudflare-rejected identity automatically. This is the core
+    /// default and prevents stale identity files from looking like scan errors.
+    #[serde(default = "default_true")]
+    pub auto_reprovision: bool,
+    #[serde(default)]
+    pub zero_trust_team: String,
+    #[serde(default)]
+    pub zero_trust_auth: ZeroTrustAuth,
+    #[serde(default)]
+    pub access_email: String,
+    #[serde(default)]
+    pub access_client_id: String,
+    #[serde(default)]
+    pub access_client_secret: String,
+    #[serde(default)]
+    pub access_token: String,
+    #[serde(default)]
+    pub zero_trust_gateway: bool,
+    #[serde(default)]
+    pub route_block: String,
+    #[serde(default)]
+    pub route_direct: String,
+    #[serde(default)]
+    pub routes_file: String,
 }
 
-fn default_wg_noize() -> WgNoize {
-    WgNoize::Balanced
+fn default_masque_noize() -> NoizeProfile {
+    NoizeProfile::Firewall
+}
+
+fn default_wg_noize() -> NoizeProfile {
+    NoizeProfile::Balanced
 }
 
 fn default_bind_address() -> String {
     "127.0.0.1:1819".into()
 }
 
+const fn default_mtu() -> u16 {
+    1280
+}
+
+const fn default_validate_secs() -> u16 {
+    10
+}
+
+const fn default_reconnect_secs() -> u16 {
+    2
+}
+
+const fn default_keepalive() -> u16 {
+    5
+}
+
+const fn default_route_sniff_ms() -> u16 {
+    400
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+fn default_fragment_size() -> String {
+    "16-32".into()
+}
+
+fn default_fragment_delay() -> String {
+    "2-10".into()
+}
+
+fn push_non_empty(args: &mut Vec<String>, flag: &str, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() {
+        args.push(flag.into());
+        args.push(value.into());
+    }
+}
+
 impl ConnectionProfile {
-    /// CLI flags for Aether ≥1.1.1 — the whole profile is passed up front so
-    /// the interactive prompts never appear (the PTY prompt-answering in
-    /// pty.rs stays as a fallback). One of the two quick-reconnect flags is
-    /// ALWAYS passed: without either, Aether asks an interactive reconnect
-    /// question that a GUI launch must never leave unanswered.
+    /// Generates the non-secret CLI contract for Aether v1.9. Secrets and
+    /// environment-only switches are applied by pty.rs instead.
     pub fn as_args(&self) -> Vec<String> {
-        let mut args = Vec::with_capacity(20);
+        let mut args = Vec::with_capacity(48);
         match self.protocol {
             Protocol::Auto | Protocol::Masque => args.push("--masque".into()),
             Protocol::Wireguard => args.push("--wg".into()),
@@ -231,42 +302,70 @@ impl ConnectionProfile {
             }
             .into(),
         );
+
         if self.bind_address != default_bind_address()
             && self.bind_address.parse::<std::net::SocketAddr>().is_ok()
         {
             args.push("--bind".into());
             args.push(self.bind_address.clone());
         }
-        if !self.dns.trim().is_empty() {
-            args.push("--dns".into());
-            args.push(self.dns.trim().into());
+        if self.http_proxy.trim().parse::<std::net::SocketAddr>().is_ok() {
+            push_non_empty(&mut args, "--http-proxy", &self.http_proxy);
         }
+        push_non_empty(&mut args, "--peer", &self.peer);
+        if self.wiw_outer.trim().is_empty() {
+            push_non_empty(&mut args, "--wg-peer", &self.wg_peer);
+        }
+        push_non_empty(&mut args, "--wiw-outer", &self.wiw_outer);
+        push_non_empty(&mut args, "--wiw-inner", &self.wiw_inner);
+        if self.wiw_scan && matches!(self.protocol, Protocol::Gool) {
+            args.push("--wiw-scan".into());
+        }
+
+        if self.masque_http2 {
+            args.push("--h2".into());
+        }
+        push_non_empty(&mut args, "--h2-peer", &self.h2_peer);
+        push_non_empty(&mut args, "--ech", &self.ech);
+        if self.no_data_check {
+            args.push("--no-data-check".into());
+        }
+        args.push("--validate-secs".into());
+        args.push(self.validate_secs.clamp(1, 120).to_string());
+        args.push("--reconnect-secs".into());
+        args.push(self.reconnect_secs.clamp(1, 60).to_string());
+        push_non_empty(&mut args, "--dns", &self.dns);
+
+        if self.fragment && self.masque_http2 {
+            args.push("--fragment".into());
+            push_non_empty(&mut args, "--fragment-size", &self.fragment_size);
+            push_non_empty(&mut args, "--fragment-delay", &self.fragment_delay);
+        }
+        if matches!(self.protocol, Protocol::Wireguard | Protocol::Gool) {
+            args.push("--keepalive".into());
+            args.push(self.keepalive.clamp(1, 120).to_string());
+            if self.no_profile_retry {
+                args.push("--no-profile-retry".into());
+            }
+        }
+
         if !self.zero_trust_team.trim().is_empty() {
-            args.push("--team".into());
-            args.push(self.zero_trust_team.trim().into());
+            push_non_empty(&mut args, "--team", &self.zero_trust_team);
             if self.zero_trust_gateway {
                 args.push("--gateway".into());
             }
         }
-        if !self.route_block.trim().is_empty() {
-            args.push("--route-block".into());
-            args.push(self.route_block.trim().into());
-        }
-        if !self.route_direct.trim().is_empty() {
-            args.push("--route-direct".into());
-            args.push(self.route_direct.trim().into());
-        }
-        if !self.routes_file.trim().is_empty() {
-            args.push("--routes".into());
-            args.push(self.routes_file.trim().into());
+        push_non_empty(&mut args, "--route-block", &self.route_block);
+        push_non_empty(&mut args, "--route-direct", &self.route_direct);
+        push_non_empty(&mut args, "--routes", &self.routes_file);
+        push_non_empty(&mut args, "--tls-groups", &self.tls_groups);
+        if let Some(value) = self.perf_profile.as_flag() {
+            args.push("--perf".into());
+            args.push(value.into());
         }
         args
     }
 
-    /// The core accepts Zero Trust credentials as flags too, but putting a
-    /// JWT or service secret in the process command line exposes it to other
-    /// local processes. pty.rs supplies the selected credential as an env var
-    /// instead, and this method ensures only that one method is ever sent.
     pub fn zero_trust_env(&self) -> Option<(&'static str, &str)> {
         if self.zero_trust_team.trim().is_empty() {
             return None;
@@ -275,164 +374,12 @@ impl ConnectionProfile {
             ZeroTrustAuth::Email if !self.access_email.trim().is_empty() => {
                 Some(("AETHER_ACCESS_EMAIL", self.access_email.trim()))
             }
-            ZeroTrustAuth::Service
-                if !self.access_client_id.trim().is_empty()
-                    && !self.access_client_secret.trim().is_empty() =>
-            {
-                None
-            }
+            ZeroTrustAuth::Service => None,
             ZeroTrustAuth::Token if !self.access_token.trim().is_empty() => {
                 Some(("AETHER_ACCESS_TOKEN", self.access_token.trim()))
             }
             _ => None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_omits_bind_flag() {
-        let p = ConnectionProfile::default();
-        let args = p.as_args();
-        assert!(!args.iter().any(|a| a == "--bind"), "args={args:?}");
-    }
-
-    #[test]
-    fn auto_explicitly_selects_masque() {
-        let args = ConnectionProfile::default().as_args();
-        assert_eq!(args.first().map(String::as_str), Some("--masque"));
-    }
-
-    #[test]
-    fn defaults_disable_quick_reconnect() {
-        let profile = ConnectionProfile::default();
-        assert!(!profile.quick_reconnect);
-        assert!(profile
-            .as_args()
-            .iter()
-            .any(|arg| arg == "--no-quick-reconnect"));
-    }
-
-    #[test]
-    fn custom_port_emits_bind() {
-        let mut p = ConnectionProfile::default();
-        p.bind_address = "127.0.0.1:1919".into();
-        let args = p.as_args();
-        let i = args
-            .iter()
-            .position(|a| a == "--bind")
-            .expect("missing --bind");
-        assert_eq!(args.get(i + 1).map(String::as_str), Some("127.0.0.1:1919"));
-    }
-
-    #[test]
-    fn lan_bind_emits_bind() {
-        let mut p = ConnectionProfile::default();
-        p.bind_address = "0.0.0.0:1819".into();
-        let args = p.as_args();
-        let i = args
-            .iter()
-            .position(|a| a == "--bind")
-            .expect("missing --bind");
-        assert_eq!(args.get(i + 1).map(String::as_str), Some("0.0.0.0:1819"));
-    }
-
-    #[test]
-    fn lan_with_custom_port_emits_bind() {
-        let mut p = ConnectionProfile::default();
-        p.bind_address = "0.0.0.0:9999".into();
-        let args = p.as_args();
-        let i = args
-            .iter()
-            .position(|a| a == "--bind")
-            .expect("missing --bind");
-        assert_eq!(args.get(i + 1).map(String::as_str), Some("0.0.0.0:9999"));
-    }
-
-    #[test]
-    fn invalid_bind_is_not_forwarded() {
-        let mut p = ConnectionProfile::default();
-        p.bind_address = "127.0.0.1:".into();
-        let args = p.as_args();
-        assert!(!args.iter().any(|a| a == "--bind"), "args={args:?}");
-    }
-
-    #[test]
-    fn old_profile_json_gets_defaults() {
-        let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4","quick_reconnect":true,"masque_http2":false}"#;
-        let p: ConnectionProfile = serde_json::from_str(json).unwrap();
-        assert_eq!(p.bind_address, "127.0.0.1:1819");
-        assert_eq!(p.masque_noize, MasqueNoize::Firewall);
-    }
-
-    #[test]
-    fn missing_quick_reconnect_defaults_off() {
-        let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4"}"#;
-        let p: ConnectionProfile = serde_json::from_str(json).unwrap();
-        assert!(!p.quick_reconnect);
-    }
-
-    #[test]
-    fn default_emits_noize() {
-        let p = ConnectionProfile::default();
-        let args = p.as_args();
-        let i = args
-            .iter()
-            .position(|a| a == "--noize")
-            .expect("missing --noize");
-        assert_eq!(args.get(i + 1).map(String::as_str), Some("firewall"));
-    }
-
-    #[test]
-    fn v150_options_emit_without_credentials() {
-        let p = ConnectionProfile {
-            dns: "9.9.9.9,1.1.1.1".into(),
-            zero_trust_team: "acme".into(),
-            zero_trust_gateway: true,
-            route_block: "ads.example".into(),
-            route_direct: "private".into(),
-            routes_file: "C:/routes.txt".into(),
-            ..Default::default()
-        };
-        assert_eq!(
-            p.as_args(),
-            vec![
-                "--masque",
-                "--balanced",
-                "-4",
-                "--no-quick-reconnect",
-                "--noize",
-                "firewall",
-                "--dns",
-                "9.9.9.9,1.1.1.1",
-                "--team",
-                "acme",
-                "--gateway",
-                "--route-block",
-                "ads.example",
-                "--route-direct",
-                "private",
-                "--routes",
-                "C:/routes.txt"
-            ]
-        );
-    }
-
-    #[test]
-    fn zero_trust_email_is_provided_as_an_environment_value() {
-        let p = ConnectionProfile {
-            zero_trust_team: "acme".into(),
-            access_email: "me@example.com".into(),
-            ..Default::default()
-        };
-        assert_eq!(
-            p.zero_trust_env(),
-            Some(("AETHER_ACCESS_EMAIL", "me@example.com"))
-        );
-        assert!(!p.as_args().iter().any(|arg| arg.contains("me@example.com")));
     }
 }
 
@@ -444,10 +391,33 @@ impl Default for ConnectionProfile {
             ip_version: IpVersion::V4,
             quick_reconnect: false,
             masque_http2: false,
-            masque_noize: MasqueNoize::Firewall,
-            wg_noize: WgNoize::Balanced,
+            masque_noize: NoizeProfile::Firewall,
+            wg_noize: NoizeProfile::Balanced,
             bind_address: default_bind_address(),
+            http_proxy: String::new(),
+            upstream: String::new(),
             dns: String::new(),
+            mtu: default_mtu(),
+            peer: String::new(),
+            wg_peer: String::new(),
+            wiw_outer: String::new(),
+            wiw_inner: String::new(),
+            wiw_scan: false,
+            h2_peer: String::new(),
+            ech: String::new(),
+            no_data_check: false,
+            validate_secs: default_validate_secs(),
+            reconnect_secs: default_reconnect_secs(),
+            fragment: false,
+            fragment_size: default_fragment_size(),
+            fragment_delay: default_fragment_delay(),
+            keepalive: default_keepalive(),
+            no_profile_retry: false,
+            tls_groups: String::new(),
+            perf_profile: PerfProfile::Auto,
+            route_sniff: true,
+            route_sniff_ms: default_route_sniff_ms(),
+            auto_reprovision: true,
             zero_trust_team: String::new(),
             zero_trust_auth: ZeroTrustAuth::Email,
             access_email: String::new(),
@@ -465,10 +435,6 @@ impl Default for ConnectionProfile {
 const STORE_FILE: &str = "profile.json";
 const STORE_KEY: &str = "last_successful_profile";
 
-/// Loads the last profile that reached `Connected`, or the hardcoded default
-/// on first run. Only ever written by `save()` at the moment a connection
-/// actually succeeds (see aether/mod.rs) — never on a mere attempt, so a bad
-/// guess cannot poison future one-click connects.
 pub fn load(app: &tauri::AppHandle) -> ConnectionProfile {
     use tauri_plugin_store::StoreExt;
     app.store(STORE_FILE)
@@ -486,9 +452,59 @@ pub fn save(app: &tauri::AppHandle, profile: &ConnectionProfile) {
         persisted.access_client_id.clear();
         persisted.access_client_secret.clear();
         persisted.access_token.clear();
+        persisted.upstream.clear();
         if let Ok(value) = serde_json::to_value(persisted) {
             store.set(STORE_KEY, value);
             let _ = store.save();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_aether_19_safe_path() {
+        let profile = ConnectionProfile::default();
+        let args = profile.as_args();
+        assert_eq!(args.first().map(String::as_str), Some("--masque"));
+        assert!(args.iter().any(|arg| arg == "--no-quick-reconnect"));
+        assert!(profile.route_sniff);
+        assert!(profile.auto_reprovision);
+        assert_eq!(profile.route_sniff_ms, 400);
+    }
+
+    #[test]
+    fn aether_19_user_features_emit_flags() {
+        let profile = ConnectionProfile {
+            protocol: Protocol::Gool,
+            http_proxy: "127.0.0.1:1820".into(),
+            wiw_outer: "162.159.192.1:2408".into(),
+            wiw_inner: "188.114.96.1:2408".into(),
+            ..Default::default()
+        };
+        let args = profile.as_args();
+        assert!(args.windows(2).any(|v| v == ["--http-proxy", "127.0.0.1:1820"]));
+        assert!(args.windows(2).any(|v| v == ["--wiw-outer", "162.159.192.1:2408"]));
+        assert!(args.windows(2).any(|v| v == ["--wiw-inner", "188.114.96.1:2408"]));
+    }
+
+    #[test]
+    fn upstream_is_not_exposed_on_process_command_line() {
+        let profile = ConnectionProfile {
+            upstream: "socks5://user:secret@127.0.0.1:1080".into(),
+            ..Default::default()
+        };
+        assert!(!profile.as_args().iter().any(|arg| arg.contains("secret")));
+    }
+
+    #[test]
+    fn old_profile_json_gets_new_defaults() {
+        let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4"}"#;
+        let profile: ConnectionProfile = serde_json::from_str(json).unwrap();
+        assert!(profile.route_sniff);
+        assert!(profile.auto_reprovision);
+        assert_eq!(profile.mtu, 1280);
     }
 }

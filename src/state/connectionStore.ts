@@ -33,10 +33,15 @@ const DEFAULT_PROFILE: ConnectionProfile = {
   masque_noize: "firewall",
   wg_noize: "balanced",
   bind_address: "127.0.0.1:1819",
+  http_proxy: "",
+  upstream: "",
   dns: "",
   mtu: 1280,
   peer: "",
   wg_peer: "",
+  wiw_outer: "",
+  wiw_inner: "",
+  wiw_scan: false,
   h2_peer: "",
   ech: "",
   no_data_check: false,
@@ -49,6 +54,9 @@ const DEFAULT_PROFILE: ConnectionProfile = {
   no_profile_retry: false,
   tls_groups: "",
   perf_profile: "auto",
+  route_sniff: true,
+  route_sniff_ms: 400,
+  auto_reprovision: true,
   zero_trust_team: "",
   zero_trust_auth: "email",
   access_email: "",
@@ -100,6 +108,22 @@ interface ConnectionState {
   setLogLineLimit: (limit: LogLineLimit) => void;
   clearLogs: () => void;
   retryAfterSidecarError: () => void;
+}
+
+function normalizedProfile(profile: Partial<ConnectionProfile>): ConnectionProfile {
+  return {
+    ...DEFAULT_PROFILE,
+    ...profile,
+    mtu: profile.mtu ?? DEFAULT_PROFILE.mtu,
+    validate_secs: profile.validate_secs ?? DEFAULT_PROFILE.validate_secs,
+    reconnect_secs: profile.reconnect_secs ?? DEFAULT_PROFILE.reconnect_secs,
+    keepalive: profile.keepalive ?? DEFAULT_PROFILE.keepalive,
+    route_sniff: profile.route_sniff ?? DEFAULT_PROFILE.route_sniff,
+    route_sniff_ms: profile.route_sniff_ms ?? DEFAULT_PROFILE.route_sniff_ms,
+    auto_reprovision: profile.auto_reprovision ?? DEFAULT_PROFILE.auto_reprovision,
+    // Upstream URLs can contain credentials and are intentionally session-only.
+    upstream: "",
+  };
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -240,16 +264,15 @@ function androidPollDelay(status: ConnectionStatus): number {
     case "StartingTunnel":
     case "Reconnecting":
     case "Disconnecting":
-      return 500;
+      return 750;
     case "Connected":
     case "Tunneling":
-      return 2_000;
-    default:
       return 3_000;
+    default:
+      return 5_000;
   }
 }
 
-/** Call once from App's top-level effect; returns a cleanup function. */
 export async function initConnectionListeners(): Promise<() => void> {
   let pendingLogs: LogLine[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -280,10 +303,7 @@ export async function initConnectionListeners(): Promise<() => void> {
       invoke<ConnectionStatus>("get_status"),
       invoke<Partial<ConnectionProfile>>("get_default_profile"),
     ]);
-    useConnectionStore.setState({
-      status,
-      profile: { ...DEFAULT_PROFILE, ...profile, mtu: profile.mtu ?? DEFAULT_PROFILE.mtu },
-    });
+    useConnectionStore.setState({ status, profile: normalizedProfile(profile) });
   } catch (error) {
     console.error("Failed to load initial connection state:", error);
   }
@@ -302,7 +322,7 @@ export async function initConnectionListeners(): Promise<() => void> {
         const status = await invoke<ConnectionStatus>("get_status");
         useConnectionStore.setState({ status });
       } catch {
-        // The service may be transitioning between processes.
+        // The foreground service can be between lifecycle states.
       }
 
       if (useConnectionStore.getState().loggingEnabled) {
@@ -316,7 +336,7 @@ export async function initConnectionListeners(): Promise<() => void> {
             batch.entries.map((entry) => ({ timestamp: entry.timestamp, line: entry.line })),
           );
         } catch {
-          // Logging is supplementary.
+          // Logging is supplementary and must never destabilize the VPN.
         }
       }
       scheduleAndroidPoll();

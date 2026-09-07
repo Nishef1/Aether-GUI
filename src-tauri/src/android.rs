@@ -8,7 +8,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_aether_vpn::{AetherVpnExt, VpnProfile, VpnStatus};
 
-const MOBILE_SETTINGS_VERSION: u8 = 2;
+const MOBILE_SETTINGS_VERSION: u8 = 3;
 const DEFAULT_MTU: u16 = 1280;
 const MIN_MTU: u16 = 1280;
 const MAX_MTU: u16 = 1500;
@@ -22,91 +22,50 @@ enum MobileSystemTunnel {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 struct MobileConnectionProfile {
     protocol: String,
     scan_mode: String,
     ip_version: String,
-    #[serde(default)]
     quick_reconnect: bool,
-    #[serde(default)]
     masque_http2: bool,
     masque_noize: String,
     wg_noize: String,
     bind_address: String,
-    #[serde(default)]
+    http_proxy: String,
+    upstream: String,
     dns: String,
-    #[serde(default = "default_mtu")]
     mtu: u16,
-    #[serde(default)]
     peer: String,
-    #[serde(default)]
     wg_peer: String,
-    #[serde(default)]
+    wiw_outer: String,
+    wiw_inner: String,
+    wiw_scan: bool,
     h2_peer: String,
-    #[serde(default)]
     ech: String,
-    #[serde(default)]
     no_data_check: bool,
-    #[serde(default = "default_validate_secs")]
     validate_secs: u16,
-    #[serde(default = "default_reconnect_secs")]
     reconnect_secs: u16,
-    #[serde(default)]
     fragment: bool,
-    #[serde(default = "default_fragment_size")]
     fragment_size: String,
-    #[serde(default = "default_fragment_delay")]
     fragment_delay: String,
-    #[serde(default = "default_keepalive")]
     keepalive: u16,
-    #[serde(default)]
     no_profile_retry: bool,
-    #[serde(default)]
     tls_groups: String,
-    #[serde(default = "default_perf_profile")]
     perf_profile: String,
-    #[serde(default)]
+    route_sniff: bool,
+    route_sniff_ms: u16,
+    auto_reprovision: bool,
     zero_trust_team: String,
-    #[serde(default)]
     zero_trust_auth: String,
-    #[serde(default)]
     access_email: String,
-    #[serde(default)]
     access_client_id: String,
-    #[serde(default)]
     access_client_secret: String,
-    #[serde(default)]
     access_token: String,
-    #[serde(default)]
     zero_trust_gateway: bool,
-    #[serde(default)]
     route_block: String,
-    #[serde(default)]
     route_direct: String,
-    #[serde(default)]
     routes_file: String,
-}
-
-const fn default_mtu() -> u16 {
-    DEFAULT_MTU
-}
-const fn default_validate_secs() -> u16 {
-    10
-}
-const fn default_reconnect_secs() -> u16 {
-    2
-}
-const fn default_keepalive() -> u16 {
-    5
-}
-fn default_fragment_size() -> String {
-    "16-32".into()
-}
-fn default_fragment_delay() -> String {
-    "2-10".into()
-}
-fn default_perf_profile() -> String {
-    "auto".into()
 }
 
 impl Default for MobileConnectionProfile {
@@ -120,10 +79,15 @@ impl Default for MobileConnectionProfile {
             masque_noize: "firewall".into(),
             wg_noize: "balanced".into(),
             bind_address: "127.0.0.1:1819".into(),
+            http_proxy: String::new(),
+            upstream: String::new(),
             dns: String::new(),
             mtu: DEFAULT_MTU,
             peer: String::new(),
             wg_peer: String::new(),
+            wiw_outer: String::new(),
+            wiw_inner: String::new(),
+            wiw_scan: false,
             h2_peer: String::new(),
             ech: String::new(),
             no_data_check: false,
@@ -136,6 +100,9 @@ impl Default for MobileConnectionProfile {
             no_profile_retry: false,
             tls_groups: String::new(),
             perf_profile: "auto".into(),
+            route_sniff: true,
+            route_sniff_ms: 400,
+            auto_reprovision: true,
             zero_trust_team: String::new(),
             zero_trust_auth: "email".into(),
             access_email: String::new(),
@@ -157,6 +124,7 @@ impl MobileConnectionProfile {
         sanitized.access_client_id.clear();
         sanitized.access_client_secret.clear();
         sanitized.access_token.clear();
+        sanitized.upstream.clear();
         sanitized
     }
 }
@@ -245,11 +213,24 @@ fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
     if !(1..=120).contains(&profile.keepalive) {
         return Err("WireGuard keepalive must be between 1 and 120 seconds".into());
     }
+    if !(50..=5_000).contains(&profile.route_sniff_ms) {
+        return Err("Route sniff timeout must be between 50 and 5000 milliseconds".into());
+    }
     if !matches!(
         profile.perf_profile.as_str(),
         "auto" | "low" | "medium" | "high"
     ) {
         return Err("Unknown performance profile".into());
+    }
+    if !profile.http_proxy.trim().is_empty() {
+        let address = profile
+            .http_proxy
+            .trim()
+            .parse::<std::net::SocketAddr>()
+            .map_err(|_| "HTTP proxy listen address must be ip:port")?;
+        if !address.ip().is_loopback() {
+            return Err("Android HTTP proxy listener must stay on loopback".into());
+        }
     }
     if profile.zero_trust_team.trim().is_empty() {
         return Ok(());
@@ -301,10 +282,15 @@ fn vpn_profile(profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> 
         dns_server,
         dns: profile.dns,
         bind_address: profile.bind_address,
+        http_proxy: profile.http_proxy,
+        upstream: profile.upstream,
         webrtc_leak_protection: false,
         mtu: profile.mtu,
         peer: profile.peer,
         wg_peer: profile.wg_peer,
+        wiw_outer: profile.wiw_outer,
+        wiw_inner: profile.wiw_inner,
+        wiw_scan: profile.wiw_scan,
         h2_peer: profile.h2_peer,
         ech: profile.ech,
         no_data_check: profile.no_data_check,
@@ -317,6 +303,9 @@ fn vpn_profile(profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> 
         no_profile_retry: profile.no_profile_retry,
         tls_groups: profile.tls_groups,
         perf_profile: profile.perf_profile,
+        route_sniff: profile.route_sniff,
+        route_sniff_ms: profile.route_sniff_ms,
+        auto_reprovision: profile.auto_reprovision,
         zero_trust_team: profile.zero_trust_team,
         zero_trust_auth: profile.zero_trust_auth,
         access_email: profile.access_email,
@@ -566,7 +555,8 @@ fn list_engines() -> Value {
         "built_in": true,
         "capabilities": [
             "masque", "wireguard", "gool", "zero-trust", "routing", "dns",
-            "interactive-access-code", "android-vpn", "custom-mtu"
+            "interactive-access-code", "android-vpn", "custom-mtu", "upstream-proxy",
+            "http-connect-proxy", "manual-wiw-peers"
         ]
     }])
 }
