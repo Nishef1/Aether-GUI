@@ -15,7 +15,6 @@ internal data class EgressProbeResult(
     val publicIp: String,
     val countryCode: String?,
     val latencyMs: Long,
-    val provider: String = "unknown",
 )
 
 /**
@@ -180,7 +179,6 @@ internal object AndroidEgressProbe {
                 publicIp = ip,
                 countryCode = country,
                 latencyMs = elapsedMillis(startedAt),
-                provider = provider.label,
             )
         }
     }
