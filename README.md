@@ -1,93 +1,113 @@
 # Aether-GUI
 
-[![Release](https://img.shields.io/github/v/release/MatinSenPai/Aether-GUI?sort=semver)](https://github.com/MatinSenPai/Aether-GUI/releases)
-[![License: AGPL v3](https://img.shields.io/github/license/MatinSenPai/Aether-GUI)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
+[![Release](https://img.shields.io/github/v/release/Nishef1/Aether-GUI?sort=semver)](https://github.com/Nishef1/Aether-GUI/releases)
+[![License: AGPL v3](https://img.shields.io/github/license/Nishef1/Aether-GUI)](LICENSE)
+![Desktop](https://img.shields.io/badge/desktop-Windows%20%7C%20Linux%20%7C%20macOS-555)
+![Android](https://img.shields.io/badge/Android-arm64--v8a-3DDC84?logo=android&logoColor=white)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Rust](https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white)
 
 **English** · [فارسی](README_fa.md)
 
-A one-click desktop GUI for [**Aether**](https://github.com/CluvexStudio/Aether), a censorship-circumvention tunnel built for heavily restricted networks. Aether itself is a terminal tool: it discovers a working route out, establishes an encrypted tunnel, and exposes a local SOCKS5 proxy. Aether-GUI wraps that terminal tool in a small, animated desktop app so you don't have to touch a command line to use it — press Connect, and everything else (identity provisioning, route discovery, prompt answering) happens automatically in the background.
+Aether-GUI is an independent, mobile-first graphical client around the official [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) transport core. It keeps transport logic in the upstream core and adds a platform-neutral connection UI, full-device tunnelling, lifecycle management, telemetry and safe interactive Zero Trust authentication.
 
-This project does not reimplement any of Aether's tunneling logic. It drives the real `aether` binary in a pseudo-terminal, answers its interactive setup prompts on your behalf, and watches its output to tell you what's happening. All the actual censorship-circumvention work — MASQUE/QUIC obfuscation, WireGuard, route probing — is [Aether's](https://github.com/CluvexStudio/Aether), not this repo's.
+`main` currently pins **Aether v1.9.0** (`311b573352bb67e494895ff67d20b002d075116a`). Runtime versions live in one source of truth: [`scripts/runtime-versions.json`](scripts/runtime-versions.json).
 
-<p align="center">
-  <img src="docs/screenshot-idle2.png" alt="Aether-GUI — one-click connect screen" width="1080">
-</p>
+> **Release status:** the published `v0.7.2` assets predate the current Aether 1.9/mobile-first work on `main`. Do not assume those older binaries contain the runtime and UI changes documented below. New release artifacts are published only after explicit manual validation.
 
-## Features
+## What it supports
 
-- **Auto mode** — the default screen is just a single button. No configuration is required; it connects using your last-successful settings (or sensible defaults on first run).
-- **Advanced panel** — for when you want control, a collapsible panel exposes the real options Aether's setup supports:
-  - **Protocol**: MASQUE (disguises traffic as normal HTTPS), WireGuard (lighter, faster), or WARP-in-WARP/gool (two nested WireGuard tunnels for extra security at a speed cost)
-  - **Scan Mode**: Turbo, Balanced, Thorough, Stealth, or Ironclad — trading route-discovery speed against how much probe traffic it generates; Ironclad opens a real tunnel through each candidate and sends a real HTTP request before trusting it (slowest, but guaranteed working)
-  - **IP Version**: IPv4, IPv6, or both
-  - **MASQUE Transport**: HTTP/3 (QUIC — fastest handshake) or HTTP/2 (TCP — looks like ordinary HTTPS, works where UDP is blocked or throttled)
-  - **Obfuscation**: how heavily the handshake is disguised from DPI — profiles adapt to the selected protocol; escalate if the default can't get through
-  - **Quick reconnect**: remember the last working gateway and re-test it first, skipping the full scan when it still works
-  
-  Each option has an explanation on hover.
-- **Live progress** — while Aether searches for a working route, the GUI shows real elapsed time and, once Aether reports its own scan budget, an actual percentage and progress bar — not just a spinner.
-- **Automatic reconnect** — if the tunnel drops unexpectedly mid-session (observed occasionally with WARP-in-WARP, but handled the same way for every protocol), the GUI retries automatically with backoff, shown as a visible "Reconnecting… (attempt N of 3)" rather than silently dying or dumping you back to a bare error. A user-requested disconnect is never retried.
+- **MASQUE over HTTP/3 or HTTP/2** with Aether obfuscation profiles, ECH and optional H2 ClientHello fragmentation.
+- **WireGuard** and **WARP-in-WARP (gool)**, including Aether 1.9 manual two-hop endpoints and two-hop scanning.
+- **Aether 1.9 proxy features**: optional local HTTP CONNECT listener and outbound SOCKS5/HTTP upstream chaining.
+- **DNS and routing rules**, with Aether domain sniffing enabled by default so name-based routing can keep working behind a TUN.
+- **Cloudflare Zero Trust** email-code, service-token and pre-obtained-token flows. Secrets and credential-bearing upstream URLs are session-only and are stripped before profiles are persisted.
+- **Real connection verification**: the GUI does not treat a log message as success. Android verifies reusable SOCKS egress before starting its device TUN; desktop verifies the transport endpoint and the selected system tunnel independently.
+- **Full-device protection by default**:
+  - Android: `VpnService` + HEV tun2socks, always app-managed as the normal connection path.
+  - Desktop: pinned sing-box TUN adapter, enabled by default on a new installation and still explicitly disableable by the user.
+- **Mobile-first UI** with Android safe-area handling, 48dp-class primary touch targets, reduced continuous animation and visibility-aware polling.
+- **Opt-in diagnostics**: Android live logs are bounded, memory-only and disabled by default.
 
-## Installing
+## Platforms
 
-Grab the latest installer from the [Releases page](https://github.com/MatinSenPai/Aether-GUI/releases):
+The build contract covers:
 
-- `Aether-GUI_x.y.z_x64-setup.exe` — standard installer (recommended)
-- `Aether-GUI_x.y.z_x64_en-US.msi` — MSI package, for scripted or enterprise installs
+- Windows x86_64
+- Linux x86_64
+- macOS arm64
+- macOS x86_64
+- Android arm64-v8a
 
-Windows x64 only for now — see [Building from source](#building-from-source) for other platforms.
+Android is intentionally ARM64-first. The native bundle contains the official Aether Android ARM64 executable, HEV and the local JNI bridge.
 
-## Building from source
+## Architecture
 
-1. **Prerequisites**
-   - [Node.js](https://nodejs.org/) and npm
-   - [Rust](https://rustup.rs/) (stable toolchain)
-   - Tauri's platform prerequisites — see the [Tauri v2 prerequisites guide](https://v2.tauri.app/start/prerequisites/) (on Windows this is the MSVC C++ Build Tools + WebView2 Runtime, both usually already present; macOS needs Xcode Command Line Tools; Linux needs `webkit2gtk` and friends)
+Transport and operating-system tunnelling are separate boundaries:
 
-2. **Install frontend dependencies**
+```text
+React / Tauri IPC
+       |
+EngineRuntime
+       |-- Aether EngineAdapter -> loopback SOCKS5
+       |
+       `-- SystemTunnelRuntime
+             |-- desktop: sing-box TUN
+             `-- Android: VpnService + HEV
+```
 
-   ```sh
-   npm install
-   ```
+The GUI does **not** carry private protocol patches for MASQUE/WireGuard/gool. Protocol correctness belongs in [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full boundary and upgrade policy.
 
-3. **Fetch the Aether binary**
+## Development
 
-   Aether-GUI bundles the real `aether` binary from [CluvexStudio/Aether releases](https://github.com/CluvexStudio/Aether/releases) rather than building it — this repo only ships the GUI. Fetch and checksum-verify it for your platform:
+### Desktop
 
-   ```sh
-   ./src-tauri/binaries/fetch-aether.sh
-   ```
+Prerequisites: Node.js/npm, stable Rust and the normal [Tauri v2 platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 
-   This script covers Linux and macOS directly. On Windows, download the matching `aether-windows-*.zip` from the [Aether releases page](https://github.com/CluvexStudio/Aether/releases) yourself, verify it against the published `SHA256SUMS.txt`, and extract `aether.exe` into `src-tauri/binaries/`.
+```sh
+npm ci
+npm run verify:runtimes
+npm run typecheck
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+npm run tauri -- dev
+```
 
-4. **Run in development mode**
+`npm run prepare:aether` fetches the pinned official core for the current desktop platform and verifies the published checksum. `npm run prepare:sidecars` prepares the pinned desktop sing-box/Wintun runtime where applicable.
 
-   ```sh
-   npm run tauri dev
-   ```
+### Android ARM64
 
-5. **Build a release installer**
+Android additionally requires JDK 17, Android SDK 36, NDK `28.2.13676358`, Bash and Rust target `aarch64-linux-android`.
 
-   ```sh
-   npm run tauri build
-   ```
+```sh
+npm ci
+npm run android:init
+npm run prepare:android-native
+npm run android:build
+```
 
-   Installers land under `src-tauri/target/release/bundle/` (NSIS `.exe` and `.msi` on Windows; `.dmg`/`.app` on macOS; `.deb`/`.AppImage`/`.rpm` on Linux — cross-platform bundles must each be built on their own OS, or via CI).
+`android:init` may regenerate Tauri's Android project. Persistent Android customisation therefore lives in source/plugin files and deterministic scripts such as `scripts/apply-android-branding.mjs`, not in one-off edits to generated resources.
 
-## How it works
+More detail: [`docs/BUILD.md`](docs/BUILD.md).
 
-- **Frontend**: React 19 + Tailwind v4, state managed with Zustand, animated with [Motion](https://motion.dev/) — all talking to the Rust backend over Tauri's IPC. Deliberately lightweight: the ambient background is two compositor-only CSS gradient orbs, and every looping animation freezes while the window is unfocused, so the app costs next to nothing sitting in the background.
-- **Backend**: Rust, using [`portable-pty`](https://docs.rs/portable-pty) to spawn the real [Aether v1.5.0](https://github.com/CluvexStudio/Aether/releases/tag/v1.5.0) binary in a genuine pseudo-terminal. Your chosen profile — protocol, scan mode, IP version, MASQUE transport (HTTP/3 or HTTP/2), obfuscation profile, quick reconnect, Zero Trust, tunnel DNS and routing rules — is passed up front as CLI flags/environment, so Aether's interactive prompts normally never appear. A Zero Trust email-code prompt is bridged safely into the GUI; credentials are never written to the saved profile.
-- **Ground truth for "connected"**: the GUI doesn't trust Aether's log wording alone (that's fragile across releases) — it treats a successful TCP connection to the local SOCKS5 port (`127.0.0.1:1819`) as the actual proof the tunnel is up.
-- **State machine**: `Idle → Launching → Connecting → Connected`, with `Reconnecting` and `Error` as the two ways a connection attempt can end up needing your attention — `Reconnecting` retries automatically (with backoff, capped at 3 attempts), `Error` is the final word once retries are exhausted or something isn't retriable (e.g. the binary itself is missing).
+## Build / release policy
 
-## About Aether
+`.github/workflows/build.yml` is **manual-only** (`workflow_dispatch`). It does not run on push or tags and it does not create/update GitHub Releases. This is intentional: runtime/device validation is performed explicitly before publishing.
 
-[Aether](https://github.com/CluvexStudio/Aether) is the actual censorship-circumvention engine this app wraps — a standalone terminal tool that discovers reachable routes and establishes the tunnel, independent of any GUI. If you'd rather use it directly from a terminal, or want to understand exactly what it's doing under the hood, that's the repo to read. Aether-GUI exists purely to make that tool one click away for people who don't want to live in a terminal.
+The current release checklist includes Windows connection/disconnect/reconnect, desktop system TUN, Android permission/service lifecycle, repeated Android connect/disconnect, foreground/background behavior, MASQUE H2/H3, WireGuard, gool, DNS/routing, exit-IP/data-plane verification and signed ARM64 package validation.
+
+## Security notes
+
+- Credential-bearing upstream proxy URLs are never placed in process command-line arguments or persisted connection profiles.
+- Zero Trust secrets and one-time codes are never stored in the saved successful profile.
+- Android does not expose its local SOCKS listener to the LAN.
+- Desktop LAN SOCKS binding is an explicit expert choice and exposes an unauthenticated proxy to the local network.
+- Logs are supplementary diagnostics; they are not connection ground truth.
+
+## Project lineage and upstream naming
+
+This repository originated from the MatinSenPai Aether-GUI line, but the current runtime/UI architecture is maintained independently. Matin's repository is historical reference, not the operational upstream for current development. The transport upstream is **CluvexStudio/Aether**.
+
+Before public distribution under the **Aether** name/logo, review the upstream project's current [`TRADEMARK.md`](https://github.com/CluvexStudio/Aether/blob/main/TRADEMARK.md). If permission is required and is not available, the client should be rebranded before a new public release; this repository does not silently assume trademark permission.
 
 ## License
 

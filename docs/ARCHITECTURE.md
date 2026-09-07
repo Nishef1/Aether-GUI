@@ -1,10 +1,12 @@
 # Modular runtime architecture
 
-## Baseline
+## Current baseline
 
-`main` is based directly on MatinSenPai/Aether-GUI v0.7.0 (`93314fcd97bf6b446d537aac9538b01bef04c7a0`). The implementation that existed before the modular reset remains preserved in `archive/pre-modular-v0.7.2`.
+Aether-GUI is maintained as an independent client. The MatinSenPai/Aether-GUI history remains useful as project lineage/reference, but it is no longer the operational upstream for current development.
 
-The official Aether v1.5.0 binary is the default and only transport engine. Protocol fixes belong in the official core, not in this GUI repository.
+The transport upstream is **CluvexStudio/Aether**. `main` pins the official **Aether v1.9.0** release at commit `311b573352bb67e494895ff67d20b002d075116a`. Runtime versions are centralized in `scripts/runtime-versions.json`.
+
+Protocol fixes belong in the official core. The GUI may adapt CLI/env integration, platform lifecycle and system-tunnel composition, but it must not grow private MASQUE/WireGuard/gool protocol forks.
 
 ## Two independent extension boundaries
 
@@ -22,39 +24,55 @@ EngineRuntime
             `-- Android VpnService + HEV
 ```
 
-`EngineAdapter` owns a transport's process, profile, readiness, interactions and shutdown. `SystemTunnelAdapter` consumes a loopback SOCKS endpoint and owns platform routing, privilege boundaries, TUN lifecycle, health verification and traffic-interface reporting.
+`EngineAdapter` owns the transport process, connection profile, readiness, interactive actions and shutdown. `SystemTunnelAdapter` consumes a loopback SOCKS endpoint and owns OS routing, elevation, TUN lifecycle, health verification and traffic-interface reporting.
 
-## Upstream boundary
+The boundaries are intentionally independent: updating sing-box must not change the Aether protocol integration, and updating Aether must not require Android/desktop TUN code to be folded into the transport core.
 
-The desktop Aether integration remains under `src-tauri/src/aether/`. Avoid adding Android, sing-box or platform-specific protocol patches there. The intentional composition surface is `main.rs`, `commands.rs`, `state.rs` and `engine/mod.rs`.
+## Aether 1.9 profile contract
 
-## Desktop sing-box adapter
+The frontend, desktop Rust adapter and Android Rust/Kotlin bridge share the same user-facing Aether 1.9 concepts:
 
-The desktop adapter is isolated under `src-tauri/src/system_tunnel/sing_box/`. It is off by default and uses:
+- MASQUE, WireGuard and gool;
+- Turbo/Balanced/Thorough/Stealth/Ironclad discovery;
+- IPv4/IPv6/dual-stack scanning;
+- HTTP/3 vs HTTP/2 MASQUE carrier;
+- protocol-specific noize profiles;
+- optional local HTTP CONNECT proxy;
+- outbound upstream proxy chaining;
+- manual peer overrides and Aether 1.9 WARP-in-WARP outer/inner endpoints;
+- WARP-in-WARP two-hop scanning;
+- ECH and H2 ClientHello fragmentation;
+- validation/reconnect and WireGuard keepalive/profile-retry controls;
+- TLS/performance expert controls;
+- Zero Trust authentication;
+- DNS and route rules;
+- route sniffing behind TUN;
+- rejected-identity reprovisioning.
 
-- sing-box v1.13.12, release-digest verified;
-- Wintun 0.14.1 on Windows, checksum and Authenticode verified;
-- `sing-box check` before launch;
+Transport-specific values are scoped at the native boundary. Hidden stale WARP-in-WARP fields cannot leak into MASQUE/WireGuard launches, and stale MASQUE fields cannot change WireGuard/gool behavior. Credential-bearing upstream URLs and Zero Trust secrets are supplied through environment/process input where appropriate and are scrubbed before profiles are persisted.
+
+## Desktop Aether adapter
+
+Desktop Aether integration lives under `src-tauri/src/aether/`.
+
+The GUI launches the pinned official binary through a PTY. Normal Aether 1.9 launches are fully specified by CLI flags/environment variables; interactive menu parsing remains compatibility fallback only. Zero Trust email-code prompts are promoted to independent GUI interaction state and do not depend on live diagnostic logging being enabled.
+
+The desktop transport reports Connected only after the configured loopback SOCKS endpoint is actually live. Unexpected process loss enters bounded reconnect behavior rather than silently leaving stale UI state.
+
+## Desktop system tunnel
+
+The desktop system-tunnel adapter is isolated under `src-tauri/src/system_tunnel/sing_box/` and uses:
+
+- sing-box v1.13.12 from the central runtime manifest;
+- Wintun on Windows where required;
+- configuration validation before launch;
 - strict dual-stack TUN routing and DNS hijacking;
-- direct process bypass for Aether and sing-box to prevent loops;
+- direct process bypass for Aether/sing-box to avoid routing loops;
 - end-to-end route verification before `Tunneling`;
 - cancellation epochs, PID ownership and orphan cleanup;
-- on Windows, an elevated controller owns normal stop requests and watches GUI
-  liveness so Wintun is not left behind when the UI exits.
+- Windows process-tree cleanup for elevated/controller descendants.
 
-## Shared connection telemetry
-
-The UI receives one platform-neutral contract for:
-
-- route-scan percentage derived from the active scan budget;
-- public tunnel exit IP;
-- country code rendered as a flag;
-- end-to-end latency through Aether;
-- upload/download totals from the active TUN dataplane, baseline-relative to
-  the first valid interface sample for each session;
-- authoritative connection duration from `connected_at_ms`.
-
-Telemetry is supplementary and cannot mark an unverified connection as successful.
+**New installations default to the system-wide sing-box tunnel.** An explicit user choice to turn it off is persisted and respected. This default lives in the native runtime source of truth, not browser/WebView storage, so a fast first Connect cannot race React initialization.
 
 ## Android adapter
 
@@ -66,38 +84,47 @@ src-tauri/plugins/aether-vpn/
 scripts/prepare-android-native.sh
 ```
 
-It uses the official Aether v1.5.0 ARM64 release and HEV 2.14.4 behind a stable local JNI wrapper. The Android adapter owns:
+It uses the official Aether v1.9.0 ARM64 release plus HEV 2.14.4 behind a stable local JNI wrapper. Android owns:
 
 - `VpnService` permission and foreground lifecycle;
-- official Aether process startup with app-managed identity files;
-- MASQUE, WireGuard and gool plus all GUI-facing Aether 1.5 controls;
-- Cloudflare Zero Trust email, service-token and pre-obtained-token authentication;
-- interactive one-time-code delivery without exposing the code in logs;
-- DNS, block/direct rules and route-file forwarding;
-- peer overrides, ECH, validation/reconnect, fragmentation, keepalive, TLS groups and performance profiles;
-- configurable dual-stack MTU shared by `VpnService` and HEV;
-- SOCKS readiness and real egress verification;
+- verified official Aether ARM64 process startup;
+- MASQUE, WireGuard and gool feature mapping;
+- Zero Trust email/service-token/access-token auth and one-time-code delivery;
+- configurable DNS/routing rules;
+- MTU shared by `VpnService` and HEV;
+- SOCKS readiness plus real reusable end-to-end egress verification;
 - HEV TUN-to-SOCKS startup and traffic counters;
-- cancellation-safe cleanup during repeated connect/disconnect;
-- status and telemetry reconciliation independent of WebView lifetime.
+- cancellation-safe cleanup across repeated connect/disconnect;
+- telemetry/status reconciliation independent of WebView rendering.
 
-Desktop sing-box, Wintun and elevation code do not compile into Android. Android's system-tunnel selection maps to the native VpnService adapter.
+Android intentionally sanitizes the local Aether bind address to loopback. The UI therefore does not offer LAN SOCKS exposure on Android. Full-device `VpnService` tunnelling is the normal Android product path; proxy-only mode is not exposed as a normal user choice.
 
-### Android privacy and efficiency policy
+### Android privacy and efficiency
 
-- Live logs are off by default.
-- When enabled, logs are bounded and process-memory only.
-- Hiding the WebView disables native log collection and clears visible logs.
-- Neither Aether output nor HEV diagnostics are written to storage.
-- Zero Trust credentials and one-time codes are never persisted or placed in command-line arguments.
-- Status and telemetry polling stop while the WebView is hidden and use slower intervals after connection.
-- Continuous decorative motion is disabled on Android; the VPN service continues without requiring the WebView to render.
+- Live logs are off by default, bounded and process-memory only.
+- Hiding the WebView disables native log collection and clears visible diagnostics.
+- Necessary Aether identity/config files may persist; diagnostic output does not.
+- Zero Trust credentials, one-time codes and credential-bearing upstream URLs are not persisted in the successful profile.
+- Status/telemetry polling pauses while hidden and slows after connection.
+- Decorative continuous motion is disabled/reduced on Android while the native VPN service continues independently.
+- Android safe-area and IME-sensitive UI customisation is applied deterministically rather than relying on one-off generated-project edits.
 
-Necessary identity/configuration files are still persisted because the core requires them to retain provisioned device identity. They are not diagnostic logs.
+## Shared connection telemetry
 
-## Build and release boundary
+The UI receives one platform-neutral contract for:
 
-`.github/workflows/build.yml` is the single build workflow. It creates artifacts for:
+- public tunnel exit IP;
+- country code;
+- end-to-end latency;
+- upload/download totals from the active dataplane;
+- authoritative connection duration from `connected_at_ms`;
+- route-search timing/progress where a scan budget is available.
+
+Telemetry is supplementary. It cannot convert an unverified transport/system tunnel into a successful state.
+
+## Build boundary
+
+`.github/workflows/build.yml` is **manual-only** (`workflow_dispatch`). It targets:
 
 - Windows x86_64;
 - Linux x86_64;
@@ -105,16 +132,19 @@ Necessary identity/configuration files are still persisted because the core requ
 - macOS x86_64;
 - Android arm64-v8a.
 
-The workflow does not create releases or react to tags. Publishing a release is a separate explicit action after artifacts and device tests are accepted.
+The workflow builds/tests artifacts only. It does not react to pushes/tags and does not create, update or delete GitHub Releases. Publishing is a separate explicit action after runtime/device acceptance.
 
 ## Upgrade procedure
 
-1. Fetch the latest Matin GUI and official Aether versions.
-2. Merge upstream-owned desktop files before custom platform modules.
-3. Compare the official CLI surface with both desktop and Android profile contracts.
-4. Keep every sidecar and native dependency version-pinned with checksum verification and license material.
-5. Run frontend, Rust, Kotlin/JVM, native and bundle builds.
-6. Test Android lifecycle, battery behavior and real traffic separately from protocol discovery.
-7. Publish only after the generated artifacts are visible and tested.
+1. Check the latest **official CluvexStudio/Aether** release and changelog.
+2. Update only `scripts/runtime-versions.json` for the intended core pin, then reconcile asset/checksum expectations.
+3. Compare the official Aether CLI/env surface against both desktop and Android profile contracts.
+4. Keep transport-specific arguments scoped so stale values cannot cross protocol boundaries.
+5. Keep every sidecar/native dependency pinned and verification fail-closed.
+6. Run source checks and platform builds manually; do not enable automatic CI as a shortcut.
+7. Validate data-plane behavior on real Windows and Android devices, including connect/disconnect/reconnect, background lifecycle, MASQUE H2/H3, WireGuard, gool, DNS/routing and system TUN.
+8. Publish only after accepted artifacts are tested.
 
-Never carry protocol fixes in this GUI repository when they belong in the official core.
+## Public-release naming check
+
+The transport upstream has its own trademark policy. Before a new public release using the Aether name/logo, review `CluvexStudio/Aether/TRADEMARK.md` and obtain any required permission or rebrand the client. This is a release/compliance boundary, not transport runtime logic.

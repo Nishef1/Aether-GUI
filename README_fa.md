@@ -2,94 +2,112 @@
 
 # Aether-GUI
 
-[![Release](https://img.shields.io/github/v/release/MatinSenPai/Aether-GUI?sort=semver)](https://github.com/MatinSenPai/Aether-GUI/releases)
-[![License: AGPL v3](https://img.shields.io/github/license/MatinSenPai/Aether-GUI)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
-![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Rust](https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white)
+[![Release](https://img.shields.io/github/v/release/Nishef1/Aether-GUI?sort=semver)](https://github.com/Nishef1/Aether-GUI/releases)
+[![License: AGPL v3](https://img.shields.io/github/license/Nishef1/Aether-GUI)](LICENSE)
+![Desktop](https://img.shields.io/badge/desktop-Windows%20%7C%20Linux%20%7C%20macOS-555)
+![Android](https://img.shields.io/badge/Android-arm64--v8a-3DDC84?logo=android&logoColor=white)
 
 [English](README.md) · **فارسی**
 
-یک برنامه‌ی دسکتاپ ساده و «تک‌کلیکی» برای [**Aether**](https://github.com/CluvexStudio/Aether)؛ همان ابزار عبور از سانسور که مخصوص شبکه‌های خیلی محدود ساخته شده. خودِ Aether یک ابزار خط‌فرمانی (ترمینالی) است: یک مسیر باز به بیرون پیدا می‌کند، یک تونل رمزنگاری‌شده برقرار می‌کند و یک پراکسی SOCKS5 روی سیستم خودتان باز می‌کند. کاری که Aether-GUI می‌کند این است که همه‌ی این‌ها را داخل یک برنامه‌ی گرافیکی کوچک و خوش‌دست می‌گذارد تا دیگر لازم نباشد با ترمینال سر و کله بزنید — فقط دکمه‌ی اتصال را بزنید، بقیه‌اش (ساختن هویت، پیدا کردن مسیر، جواب دادن به سؤال‌های برنامه) خودکار پشت صحنه انجام می‌شود.
+Aether-GUI یک کلاینت گرافیکی مستقل و **mobile-first** برای هسته‌ی رسمی [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) است. منطق پروتکل‌ها در هسته‌ی upstream باقی می‌ماند و این پروژه رابط کاربری، مدیریت چرخه‌ی اتصال، تونل سراسری سیستم، telemetry و ورود تعاملی Zero Trust را مدیریت می‌کند.
 
-این پروژه هیچ بخشی از منطقِ تونل‌زنی Aether را از نو ننوشته. فقط فایل واقعیِ `aether` را داخل یک شبه‌ترمینال اجرا می‌کند، به سؤال‌های اولیه‌اش جای شما جواب می‌دهد و خروجی‌اش را می‌خواند تا به شما بگوید چه خبر است. کارِ اصلیِ عبور از سانسور — رمزنگاری، پنهان‌سازی ترافیک با MASQUE/QUIC، WireGuard و جست‌وجوی مسیر — همه مالِ [Aether](https://github.com/CluvexStudio/Aether) است، نه این مخزن.
+شاخه‌ی `main` در حال حاضر **Aether v1.9.0** با commit دقیق `311b573352bb67e494895ff67d20b002d075116a` را pin می‌کند. نسخه‌ی تمام runtimeها از یک منبع واحد یعنی [`scripts/runtime-versions.json`](scripts/runtime-versions.json) خوانده می‌شود.
 
-<div align="center">
-  <img src="docs/screenshot-idle.png" alt="صفحه‌ی اتصال Aether-GUI" width="380">
-</div>
+> **وضعیت انتشار:** فایل‌های منتشرشده‌ی `v0.7.2` مربوط به قبل از مهاجرت فعلی به Aether 1.9 و بازطراحی mobile-first هستند. بنابراین نباید فرض کرد آن فایل‌های قدیمی تغییرات فعلی `main` را دارند. نسخه‌ی جدید فقط بعد از تست دستی و صریح منتشر می‌شود.
 
-## امکانات
+## امکانات فعلی
 
-- **حالت خودکار (Auto)** — صفحه‌ی اصلی فقط یک دکمه است. لازم نیست چیزی تنظیم کنید؛ با آخرین تنظیماتی که برایتان جواب داده وصل می‌شود (یا در اولین اجرا، با یک تنظیمات پیش‌فرضِ معقول).
-- **پنل پیشرفته** — اگر خواستید خودتان کنترل داشته باشید، یک پنل بازشونده همان گزینه‌هایی را که Aether واقعاً می‌پرسد در اختیارتان می‌گذارد:
-  - **پروتکل**: MASQUE (ترافیک را شبیه HTTPS معمولی جا می‌زند)، WireGuard (سبک‌تر و سریع‌تر) یا WARP-in-WARP/gool (دو تونل WireGuard تو در تو، امنیت بیشتر به قیمت کمی افت سرعت)
-  - **حالت اسکن**: Turbo، Balanced، Thorough، Stealth یا Ironclad — یعنی این‌که چقدر سریع دنبال مسیر بگردد در برابر این‌که چقدر ترافیکِ کاوش تولید کند؛ Ironclad برای هر کاندیدا یک تونل واقعی باز می‌کند و یک درخواست HTTP واقعی می‌فرستد و فقط بعدش به آن اعتماد می‌کند (کندترین، ولی تضمینی)
-  - **نسخه‌ی IP**: IPv4، IPv6 یا هر دو
-  - **ترنسپورت MASQUE**: HTTP/3 (روی QUIC — سریع‌ترین دست‌دهی) یا HTTP/2 (روی TCP — شبیه HTTPS معمولی؛ برای شبکه‌هایی که UDP را مسدود یا کند می‌کنند)
-  - **مبهم‌سازی (Obfuscation)**: این‌که دست‌دهی چقدر از دید DPI پنهان شود — پروفایل‌ها بسته به پروتکلِ انتخابی عوض می‌شوند؛ اگر پیش‌فرض رد نشد، سنگین‌ترش را امتحان کنید
-  - **اتصال سریع (Quick reconnect)**: آخرین دروازه‌ای که جواب داده را به خاطر می‌سپارد و دفعه‌ی بعد اول همان را امتحان می‌کند تا اسکن کامل لازم نشود
+- **MASQUE روی HTTP/3 یا HTTP/2** به‌همراه profileهای مبهم‌سازی Aether، ECH و fragmentation اختیاری ClientHello در H2.
+- **WireGuard** و **WARP-in-WARP (gool)**، شامل endpointهای دو-hop و اسکن دو-hop اضافه‌شده در Aether 1.9.
+- قابلیت‌های proxy در Aether 1.9: HTTP CONNECT محلی و chain کردن Aether پشت SOCKS5/HTTP upstream proxy.
+- DNS و routing ruleها با domain sniffing پیش‌فرض برای حفظ ruleهای مبتنی بر domain پشت TUN.
+- **Cloudflare Zero Trust** با email one-time code، service token و access token آماده. secretها و upstream URLهایی که credential دارند session-only هستند و قبل از ذخیره‌ی profile پاک می‌شوند.
+- **تأیید واقعی اتصال**: صرفاً دیدن یک log موفق به معنی Connected نیست. Android ابتدا egress واقعی SOCKS را بررسی می‌کند و بعد TUN دستگاه را بالا می‌آورد؛ desktop نیز transport و system tunnel را جداگانه بررسی می‌کند.
+- **محافظت سراسری دستگاه به‌صورت پیش‌فرض**:
+  - Android: `VpnService` + HEV tun2socks، مسیر عادی محصول.
+  - Desktop: آداپتر TUN مبتنی بر sing-box که در نصب جدید به‌صورت پیش‌فرض فعال است و کاربر همچنان می‌تواند آن را عمداً خاموش کند.
+- UI موبایل‌محور با safe-area اندروید، hit-targetهای مناسب لمس، انیمیشن کمتر روی موبایل و polling وابسته به visibility/state.
+- Live log در Android پیش‌فرض خاموش، محدود و فقط داخل حافظه است.
 
-  کنارِ هر گزینه، با نگه‌داشتن نشانگر ماوس، یک توضیح کوتاه می‌بینید.
-- **نمایش پیشرفت زنده** — تا وقتی Aether دنبال مسیرِ سالم می‌گردد، برنامه زمانِ سپری‌شده و — به‌محضِ این‌که Aether بودجه‌ی اسکنش را اعلام کند — درصد و نوار پیشرفتِ واقعی نشان می‌دهد، نه فقط یک چرخنده‌ی بی‌معنی.
-- **اتصال مجددِ خودکار** — اگر وسط کار تونل ناگهان قطع شد (بیشتر با WARP-in-WARP دیده شده، ولی برای هر سه پروتکل یک‌جور مدیریت می‌شود)، برنامه خودش با کمی مکث دوباره تلاش می‌کند و به‌شکلِ «در حال اتصال مجدد… (تلاش N از ۳)» نشانش می‌دهد؛ نه این‌که بی‌صدا بمیرد یا شما را پرت کند به یک خطای خشک‌وخالی. البته اگر خودتان دستی قطع کرده باشید، دیگر تلاشِ مجدد نمی‌کند.
+## سیستم‌عامل‌های هدف
 
-## نصب
+قرارداد build فعلی این هدف‌ها را پوشش می‌دهد:
 
-جدیدترین نصب‌کننده را از [صفحه‌ی Releases](https://github.com/MatinSenPai/Aether-GUI/releases) بردارید:
+- Windows x86_64
+- Linux x86_64
+- macOS arm64
+- macOS x86_64
+- Android arm64-v8a
 
-- `Aether-GUI_x.y.z_x64-setup.exe` — نصب‌کننده‌ی معمولی (پیشنهادی)
-- `Aether-GUI_x.y.z_x64_en-US.msi` — بسته‌ی MSI، برای نصبِ اسکریپتی/سازمانی
+Android عمداً ARM64-first است. بسته‌ی native شامل executable رسمی ARM64 هسته‌ی Aether، HEV و JNI bridge محلی پروژه است.
 
-فعلاً فقط ویندوز ۶۴بیتی — برای بقیه‌ی سیستم‌عامل‌ها بخشِ «ساختن از روی سورس» را ببینید.
+## معماری
 
-## ساختن از روی سورس
+لایه‌ی transport از تونل سراسری سیستم جداست:
 
-۱. **پیش‌نیازها**
-   - [Node.js](https://nodejs.org/) و npm
-   - [Rust](https://rustup.rs/) (نسخه‌ی stable)
-   - پیش‌نیازهای Tauri برای سیستم‌عاملتان — [راهنمای پیش‌نیازهای Tauri v2](https://v2.tauri.app/start/prerequisites/) (روی ویندوز یعنی MSVC C++ Build Tools و WebView2 Runtime که معمولاً از قبل نصب‌اند؛ روی macOS یعنی Xcode Command Line Tools؛ روی لینوکس یعنی `webkit2gtk` و رفقایش)
+```text
+React / Tauri IPC
+       |
+EngineRuntime
+       |-- Aether EngineAdapter -> loopback SOCKS5
+       |
+       `-- SystemTunnelRuntime
+             |-- desktop: sing-box TUN
+             `-- Android: VpnService + HEV
+```
 
-۲. **نصب وابستگی‌های فرانت‌اند**
+این GUI نباید patch خصوصی برای منطق MASQUE/WireGuard/gool نگه دارد؛ fixهای پروتکل متعلق به [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) هستند. جزئیات بیشتر در [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-   ```sh
-   npm install
-   ```
+## توسعه و تست دستی
 
-۳. **گرفتن فایل باینری Aether**
+### دسکتاپ
 
-   Aether-GUI فایل واقعیِ `aether` را از [ریلیزهای CluvexStudio/Aether](https://github.com/CluvexStudio/Aether/releases) کنار خودش قرار می‌دهد و خودش نمی‌سازدش — این مخزن فقط رابط گرافیکی است. برای سیستم‌عاملتان بگیریدش (با بررسی checksum):
+پیش‌نیازها: Node.js/npm، Rust stable و پیش‌نیازهای معمول [Tauri v2](https://v2.tauri.app/start/prerequisites/).
 
-   ```sh
-   ./src-tauri/binaries/fetch-aether.sh
-   ```
+```sh
+npm ci
+npm run verify:runtimes
+npm run typecheck
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+npm run tauri -- dev
+```
 
-   این اسکریپت لینوکس و macOS را مستقیم پوشش می‌دهد. روی ویندوز، فایلِ `aether-windows-*.zip` مناسب را خودتان از [صفحه‌ی ریلیزهای Aether](https://github.com/CluvexStudio/Aether/releases) دانلود کنید، با `SHA256SUMS.txt` منتشرشده بررسی‌اش کنید و `aether.exe` را داخل `src-tauri/binaries/` استخراج کنید.
+`npm run prepare:aether` هسته‌ی pin‌شده‌ی رسمی را برای سیستم‌عامل فعلی می‌گیرد و checksum منتشرشده را بررسی می‌کند. `npm run prepare:sidecars` نیز runtimeهای desktop مثل sing-box/Wintun را آماده می‌کند.
 
-۴. **اجرا در حالت توسعه**
+### Android ARM64
 
-   ```sh
-   npm run tauri dev
-   ```
+علاوه بر موارد بالا به JDK 17، Android SDK 36، NDK `28.2.13676358`، Bash و target رست `aarch64-linux-android` نیاز است.
 
-۵. **ساختن نصب‌کننده‌ی نهایی**
+```sh
+npm ci
+npm run android:init
+npm run prepare:android-native
+npm run android:build
+```
 
-   ```sh
-   npm run tauri build
-   ```
+`tauri android init` می‌تواند پروژه‌ی generated اندروید را دوباره بسازد؛ بنابراین تغییرات ماندگار باید در plugin/source اصلی یا اسکریپت‌های deterministic مثل `scripts/apply-android-branding.mjs` باشند، نه در ادیت‌های دستی فایل‌های generated.
 
-   خروجی‌ها زیر `src-tauri/target/release/bundle/` ساخته می‌شوند (روی ویندوز `.exe` و `.msi`، روی macOS `.dmg`/`.app`، روی لینوکس `.deb`/`.AppImage`/`.rpm` — هر خروجی باید روی همان سیستم‌عامل خودش ساخته شود).
+جزئیات کامل‌تر: [`docs/BUILD.md`](docs/BUILD.md).
 
-## پشت صحنه چطور کار می‌کند
+## سیاست build و release
 
-- **فرانت‌اند**: React 19 و Tailwind v4، مدیریت وضعیت با Zustand و انیمیشن‌ها با [Motion](https://motion.dev/) — همه از طریق IPCِ Tauri با بک‌اند Rust حرف می‌زنند. عمداً سبک نگهش داشته‌ایم: پس‌زمینه فقط دو هاله‌ی گرادیانیِ CSS است و وقتی پنجره در فوکوس نباشد همه‌ی انیمیشن‌های تکرارشونده هم متوقف می‌شوند تا برنامه در پس‌زمینه تقریباً هیچ CPUیی مصرف نکند.
-- **بک‌اند**: Rust، با استفاده از [`portable-pty`](https://docs.rs/portable-pty) که فایل واقعیِ [Aether v1.5.0](https://github.com/CluvexStudio/Aether/releases/tag/v1.5.0) را داخل یک شبه‌ترمینالِ واقعی اجرا می‌کند. تنظیمات انتخابی شما — پروتکل، حالت اسکن، نسخه‌ی IP، ترنسپورتِ MASQUE (HTTP/3 یا HTTP/2)، پروفایل مبهم‌سازی، اتصال سریع، Zero Trust، DNS داخل تونل و قانون‌های مسیریابی — از همان ابتدا به‌شکل فلگ یا متغیر محیطی به Aether داده می‌شوند؛ بنابراین معمولاً سؤال تعاملی‌ای نداریم. اگر ورود ایمیلی Zero Trust کد بخواهد، همان کد با یک فیلد امن در خود GUI گرفته می‌شود؛ رمزها و توکن‌ها هم هیچ‌وقت داخل پروفایل ذخیره نمی‌شوند.
-- **معیارِ واقعیِ «وصل شدی یا نه»**: برنامه به متنِ لاگِ Aether اکتفا نمی‌کند (چون بین نسخه‌ها عوض می‌شود و شکننده است) — به‌جایش، برقرار شدنِ یک اتصال TCP به پورت SOCKS5 محلی (`127.0.0.1:1819`) را نشانه‌ی قطعیِ بالا بودنِ تونل می‌گیرد.
-- **ماشین وضعیت**: `Idle ← Launching ← Connecting ← Connected`، به‌علاوه‌ی `Reconnecting` و `Error` به‌عنوان دو حالتی که ممکن است سرِ یک تلاشِ اتصال به توجهِ شما نیاز پیدا کنند — `Reconnecting` خودش (با مکث و تا سقفِ ۳ بار) دوباره تلاش می‌کند و `Error` حرفِ آخر است، وقتی تلاش‌ها ته کشیده یا مشکل اصلاً قابل‌تلاش‌مجدد نیست (مثلاً خودِ فایل باینری غایب است).
+`.github/workflows/build.yml` فقط با **`workflow_dispatch` دستی** اجرا می‌شود. روی push یا tag خودکار اجرا نمی‌شود و GitHub Release هم ایجاد یا به‌روزرسانی نمی‌کند. این رفتار عمدی است تا قبل از انتشار، runtime و دستگاه واقعی جداگانه بررسی شوند.
 
-## درباره‌ی Aether
+چک نهایی انتشار شامل connect/disconnect/reconnect روی Windows، تونل سراسری desktop، چرخه‌ی permission/service در Android، چند بار اتصال و قطع، foreground/background، MASQUE H2/H3، WireGuard، gool، DNS/routing، بررسی exit IP/data-plane و اعتبارسنجی APK امضاشده‌ی ARM64 است.
 
-[Aether](https://github.com/CluvexStudio/Aether) همان موتورِ واقعیِ عبور از سانسور است که این برنامه دورش را می‌گیرد — یک ابزار ترمینالیِ مستقل که مسیرهای قابل‌دسترس را پیدا و تونل را برقرار می‌کند، جدا از هر رابط گرافیکی. اگر ترجیح می‌دهید مستقیم از ترمینال استفاده کنید، یا می‌خواهید دقیق بدانید زیر کاپوت چه خبر است، همان مخزن جایی است که باید بخوانید. Aether-GUI فقط برای این وجود دارد که آن ابزار را برای کسانی که دوست ندارند در ترمینال زندگی کنند، یک‌کلیکی کند.
+## نکات امنیتی
+
+- upstream proxy URL دارای credential وارد command line نمی‌شود و در profile ذخیره نمی‌شود.
+- secretهای Zero Trust و کد یک‌بارمصرف در profile موفق ذخیره نمی‌شوند.
+- Android listener محلی SOCKS را روی LAN expose نمی‌کند.
+- در desktop فعال‌کردن LAN binding یک انتخاب expert است و یک proxy بدون authentication را در شبکه‌ی محلی در دسترس می‌گذارد.
+- logها ابزار diagnostics هستند و معیار Connected محسوب نمی‌شوند.
+
+## نسب پروژه و نام Aether
+
+این repository از خط تاریخی MatinSenPai/Aether-GUI شروع شده، ولی معماری runtime/UI فعلی مستقل نگهداری می‌شود. ریپوی Matin از اینجا به بعد مرجع تاریخی است، نه upstream عملیاتی. upstream هسته **CluvexStudio/Aether** است.
+
+پیش از انتشار عمومی نسخه‌ی جدید با نام یا لوگوی **Aether**، فایل فعلی [`TRADEMARK.md`](https://github.com/CluvexStudio/Aether/blob/main/TRADEMARK.md) upstream باید بررسی شود. اگر استفاده از نام/لوگو نیاز به اجازه داشته باشد و چنین اجازه‌ای موجود نباشد، کلاینت باید پیش از انتشار عمومی rebrand شود؛ این repository نباید اجازه را فرض کند.
 
 ## مجوز
 
