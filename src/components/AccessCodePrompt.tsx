@@ -3,9 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { useConnectionStore } from "@/state/connectionStore";
 
-export function AccessCodePrompt() {
-  const status = useConnectionStore((state) => state.status);
-  const accessCodeRequired = useConnectionStore((state) => state.accessCodeRequired);
+function AccessCodeDialog() {
   const clearAccessCodeRequirement = useConnectionStore(
     (state) => state.clearAccessCodeRequirement,
   );
@@ -14,15 +12,9 @@ export function AccessCodePrompt() {
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const visible = status.state === "AwaitingAccessCode" || accessCodeRequired;
-
   useEffect(() => {
-    if (visible && !submitting) inputRef.current?.focus();
-    if (!visible) {
-      setCode("");
-      setError(null);
-    }
-  }, [submitting, visible]);
+    if (!submitting) inputRef.current?.focus();
+  }, [submitting]);
 
   const submit = async () => {
     const normalized = code.trim();
@@ -34,7 +26,7 @@ export function AccessCodePrompt() {
       setCode("");
       // Clear only the current prompt. If Aether rejects the code and asks
       // again in the same connection attempt, the next native/log event sets
-      // the requirement again and the dialog reappears.
+      // the requirement again and a fresh dialog instance is mounted.
       clearAccessCodeRequirement();
     } catch (cause) {
       setError(String(cause));
@@ -42,8 +34,6 @@ export function AccessCodePrompt() {
       setSubmitting(false);
     }
   };
-
-  if (!visible) return null;
 
   return (
     <div
@@ -93,4 +83,12 @@ export function AccessCodePrompt() {
       )}
     </div>
   );
+}
+
+export function AccessCodePrompt() {
+  const status = useConnectionStore((state) => state.status);
+  const accessCodeRequired = useConnectionStore((state) => state.accessCodeRequired);
+  const visible = status.state === "AwaitingAccessCode" || accessCodeRequired;
+
+  return visible ? <AccessCodeDialog /> : null;
 }
