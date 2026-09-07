@@ -1,4 +1,5 @@
 import { Gauge, LockKeyhole } from "lucide-react";
+import { ExitPreferenceControl } from "@/components/ExitPreferenceControl";
 import { ProtocolSelect } from "@/components/ProtocolSelect";
 import { ScanModeToggle } from "@/components/ScanModeToggle";
 import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
@@ -42,6 +43,8 @@ export function QuickConnectionCard() {
       </div>
 
       <div className="grid gap-3">
+        <ExitPreferenceControl disabled={locked} />
+
         <div className="grid gap-1.5">
           <span className="text-[11px] font-medium text-muted-foreground">Protocol</span>
           <div className="rounded-xl bg-black/15 px-1 ring-1 ring-white/8">
