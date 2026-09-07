@@ -137,7 +137,7 @@ export function ConnectButton() {
           className="relative grid place-items-center"
         >
           <Icon
-            size={isAndroid ? 46 : 46}
+            size={46}
             strokeWidth={2}
             className={cn(
               phase === "connecting" && !isAndroid && "animate-spin",
