@@ -2,6 +2,12 @@ name: build
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish a GitHub release after every platform build passes
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: build-${{ github.ref }}
@@ -358,6 +364,69 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/aether-gui-android-release.jks"
           rm -f "$GITHUB_WORKSPACE/src-tauri/gen/android/keystore.properties"
+
+  release:
+    name: publish GitHub release
+    if: ${{ inputs.publish_release && github.ref == 'refs/heads/main' }}
+    needs: [desktop, debian, arch, android]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: release-assets
+
+      - name: Prepare release payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
+
+          mapfile -d '' files < <(find release-assets -type f -print0 | sort -z)
+          test "${#files[@]}" -gt 0
+          for file in "${files[@]}"; do
+            sha256sum "$file"
+          done > SHA256SUMS.txt
+
+          cat > RELEASE_NOTES.md <<EOF
+          ## Aether-GUI v$version
+
+          This release updates the transport stack and hardens the cross-platform full-device tunnel path.
+
+          - Aether Core v1.9.0.
+          - sing-box v1.14.0 for desktop system-wide TUN.
+          - HEV v2.14.4 for the Android ARM64 VpnService data path.
+          - Windows, Linux, macOS Intel/Apple Silicon and signed Android ARM64 packages built from the same commit.
+          - Verified public-IP/exit-location telemetry, session traffic counters and connection timing.
+          - Lower background telemetry/animation overhead and reduced-motion handling.
+          - Larger, lower Android connect control and refreshed ambient background.
+          - Fail-closed desktop/Android tunnel supervision and data-plane verification retained.
+
+          SHA-256 checksums are attached as \`SHA256SUMS.txt\`.
+          EOF
+
+      - name: Publish release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find release-assets -type f -print0 | sort -z)
+          tag="$RELEASE_TAG"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" SHA256SUMS.txt --clobber
+            gh release edit "$tag" --title "Aether-GUI $tag" --notes-file RELEASE_NOTES.md
+          else
+            gh release create "$tag" "${files[@]}" SHA256SUMS.txt \
+              --target "$GITHUB_SHA" \
+              --title "Aether-GUI $tag" \
+              --notes-file RELEASE_NOTES.md
+          fi
 
   report:
     name: publish build result
