@@ -10,17 +10,21 @@ class AndroidEgressSafetyTest(unittest.TestCase):
     def read(self, relative: str) -> str:
         return (ROOT / relative).read_text(encoding="utf-8")
 
-    def test_neutral_identity_probe_is_separate_from_geo_policy(self) -> None:
+    def test_geo_policy_is_separate_from_exact_ip_safety(self) -> None:
         probe = self.read(
             "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressProbe.kt"
+        )
+        guard = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressIdentityGuard.kt"
         )
         self.assertIn("api4.ipify.org", probe)
         self.assertIn("checkip.amazonaws.com", probe)
         self.assertIn('label = "ip-api-geo"', probe)
-        self.assertIn("Public identity and GeoIP are observational data", probe)
-        self.assertNotIn("AndroidEgressIdentityGuard", probe)
-        self.assertNotIn("EgressIdentityLeakException", probe)
-        self.assertNotIn("reportSafetyFailure", probe)
+        self.assertIn("AndroidEgressIdentityGuard.assertChanged", probe)
+        self.assertIn("GeoIP/country is intentionally absent from this class", guard)
+        self.assertIn("underlayIps.any { sameIp(it, tunnelIp) }", guard)
+        self.assertIn("reportSafetyFailure(message)", guard)
+        self.assertIn("BASELINE_TTL_MS", guard)
 
     def test_location_never_blocks_a_healthy_low_latency_tunnel(self) -> None:
         probe = self.read(
@@ -28,11 +32,26 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         )
         policy = self.read("src/lib/exitPolicy.ts")
         telemetry = self.read("src/state/telemetryStore.ts")
+        control = self.read("src/components/ExitPreferenceControl.tsx")
         self.assertIn("low-latency mode is allowed to keep a nearby WARP", probe)
         self.assertIn('export type ExitPreference = "low-latency" | "privacy"', policy)
         self.assertIn("isPrivacyPreferredExit", telemetry)
         self.assertIn("markExhausted", telemetry)
-        self.assertIn("EXIT_RETRY_LIMIT = 4", policy)
+        self.assertIn("quick_reconnect: false", telemetry)
+        self.assertIn("EXIT_RETRY_LIMIT = 2", policy)
+        self.assertIn("Lowest-latency route. Exit country is not restricted.", control)
+        self.assertIn("WARP cannot guarantee a specific country", control)
+
+    def test_privacy_mode_uses_allowlist_and_manual_retry_after_budget(self) -> None:
+        policy = self.read("src/lib/exitPolicy.ts")
+        status = self.read("src/components/ConnectionStatusLine.tsx")
+        for preferred in ("DE", "NL", "FI", "FR", "GB", "US", "CA", "JP", "SG"):
+            self.assertIn(f'"{preferred}"', policy)
+        preferred_block = policy.split("PRIVACY_PREFERRED_COUNTRIES", 1)[1]
+        for excluded in ("IR", "CN", "RU"):
+            self.assertNotIn(f'"{excluded}"', preferred_block.split("]);", 1)[0])
+        self.assertIn("Try another exit", status)
+        self.assertIn("current connection kept", status)
 
     def test_android_vpn_captures_both_address_families_without_allow_bypass(self) -> None:
         service = self.read(
@@ -66,9 +85,11 @@ class AndroidEgressSafetyTest(unittest.TestCase):
 
     def test_android_connection_animation_uses_transform_only_css_loop(self) -> None:
         button = self.read("src/components/ConnectButton.tsx")
+        status = self.read("src/components/ConnectionStatusLine.tsx")
         css = self.read("src/index.css")
         self.assertIn("android-connect-spin", button)
         self.assertIn("android-connect-ripple", button)
+        self.assertIn("android-scan-indeterminate", status)
         self.assertIn("@keyframes android-connect-spin", css)
         self.assertIn("@keyframes android-scan-indeterminate", css)
         self.assertIn("Only transform/opacity are animated", css)
