@@ -39,7 +39,7 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         self.assertIn("markExhausted", telemetry)
         self.assertIn("quick_reconnect: false", telemetry)
         self.assertIn("EXIT_RETRY_LIMIT = 2", policy)
-        self.assertIn("Lowest-latency route. Exit country is not restricted.", control)
+        self.assertIn("Keeps the first healthy route and ignores country. Best for gaming.", control)
         self.assertIn("WARP cannot guarantee a specific country", control)
 
     def test_privacy_mode_uses_allowlist_and_manual_retry_after_budget(self) -> None:
