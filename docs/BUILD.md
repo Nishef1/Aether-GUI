@@ -1,20 +1,34 @@
 # Build and validation pipeline
 
-Aether-GUI keeps one GitHub Actions workflow at `.github/workflows/build.yml`, but it is intentionally **manual-only**.
+Aether-GUI keeps one GitHub Actions workflow at `.github/workflows/build.yml`, and it is intentionally **manual-only**.
 
 ```yaml
 on:
   workflow_dispatch:
 ```
 
-Do not add a push/tag trigger or automatic release publishing unless the project policy is explicitly changed again.
+Do not add push/tag triggers unless the project policy is explicitly changed again. A release may be published only from an explicit manual run with `publish_release = true`, and only after every required build/package job succeeds.
+
+## Product version source of truth
+
+The product version lives in `src-tauri/tauri.conf.json`. The current release candidate is **v0.8.0**.
+
+Before frozen npm/Cargo validation, run:
+
+```bash
+node scripts/ci/sync-product-version.mjs
+```
+
+That deterministic script aligns the root npm/Cargo package metadata and the generated root-version fields in `package-lock.json` / `Cargo.lock` with the Tauri product version. It does not change dependency versions, resolutions or checksums.
+
+The manual workflow performs this synchronization before `npm ci`, and the Arch PKGBUILD performs the same synchronization before its frozen install/build.
 
 ## Runtime source of truth
 
 Pinned runtime versions live in `scripts/runtime-versions.json`:
 
 - Aether v1.9.0 at `311b573352bb67e494895ff67d20b002d075116a`;
-- sing-box v1.13.12;
+- sing-box v1.14.0;
 - HEV 2.14.4.
 
 `npm run verify:runtimes` checks that the platform preparation scripts consume that manifest instead of carrying independent version literals.
@@ -33,22 +47,24 @@ The manual workflow covers:
 - Arch Linux native package verification
 - Android arm64-v8a
 
-The workflow uploads build artifacts. It does **not** create/update/delete GitHub Releases, tags, old artifacts or workflow runs.
+Every platform artifact for a release must come from the same workflow commit. If any required job fails, Debian/release jobs remain blocked as appropriate and no release should be treated as complete.
 
 ## Local source validation
 
 From a clean checkout:
 
 ```bash
+node scripts/ci/sync-product-version.mjs
 npm ci
 npm run verify:runtimes
 npm run typecheck
+npm run lint
 python3 scripts/tests/test_android_feature_parity.py
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
-The Python parity suite is a source-contract test for the Aether 1.9 desktop/Android mapping, secret handling, mobile-first shell, system-tunnel default and manual-only build policy. It is not a substitute for real runtime testing.
+The Python parity suite is a source-contract test for the Aether 1.9 desktop/Android mapping, secret handling, mobile-first shell, system-tunnel default and manual-only release policy. It is not a substitute for real runtime testing.
 
 ## Desktop development/build
 
@@ -142,16 +158,18 @@ Use a real ARM64 device. The current development priority is Samsung-class Andro
 
 ## Manual GitHub workflow
 
-After local/runtime acceptance, the existing workflow may be started explicitly from GitHub Actions when cross-platform artifacts are needed. Starting it is a conscious release-engineering action; normal pushes must not start it.
+After local/runtime acceptance, start the existing workflow explicitly from GitHub Actions. Normal pushes still do not start it.
 
-The workflow performs source checks, platform builds, package smoke tests and artifact upload. Its result is still not sufficient to publish a release without device/runtime acceptance.
+The workflow performs version synchronization, dependency/runtime verification, TypeScript + ESLint checks, parity/security contracts, Rust formatting/tests, cross-platform builds, Debian 12 install smoke verification, Arch payload verification and signed Android validation.
+
+When `publish_release = true`, the release job waits for `desktop`, `debian`, `arch` and `android`. Only after those jobs succeed does it publish or update `v0.8.0`, attaching all downloaded artifacts plus `SHA256SUMS.txt`.
 
 ## Versioning
 
-Do not bump the application version merely to mark source progress. For a real release, update the package/Tauri/package-manager metadata together, regenerate any lockfile fields that depend on the app version, then rebuild and validate every published artifact. Tauri derives Android `versionCode` from the semantic app version when an explicit value is not provided; keep that derivation monotonic for upgrades.
+Do not bump the application version merely to mark source progress. For a real release, update `src-tauri/tauri.conf.json`; the synchronization script aligns root npm/Cargo metadata used during the build. Tauri derives Android `versionCode` from the semantic app version when an explicit value is not provided, so v0.8.0 remains monotonic relative to v0.7.2.
 
-The existing published `v0.7.2` artifacts predate the Aether 1.9/mobile-first work. A future release should receive a new version after this branch passes the manual acceptance matrix; do not overwrite `v0.7.2` in place.
+Do not overwrite older `v0.7.2` assets. The new Aether 1.9/mobile-first runtime belongs to `v0.8.0`.
 
 ## Public-release compliance
 
-Before distributing a new build using the Aether name/logo, review the current upstream `CluvexStudio/Aether/TRADEMARK.md` and resolve any required permission/rebranding decision. This check belongs before release publication, not in automatic build logic.
+Before distributing a new build using the Aether name/logo, review the current upstream `CluvexStudio/Aether/TRADEMARK.md` and resolve any required permission/rebranding decision. This check belongs before public release publication, not in automatic build logic.
