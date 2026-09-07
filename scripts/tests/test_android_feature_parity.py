@@ -98,6 +98,25 @@ class Aether19ParityTest(unittest.TestCase):
             self.assertIn(key, desktop)
             self.assertIn(key, android)
 
+    def test_desktop_launch_state_does_not_wait_for_obsolete_interactive_prompts(self) -> None:
+        pty = self.read("src-tauri/src/aether/pty.rs")
+        manager = self.read("src-tauri/src/aether/mod.rs")
+        self.assertIn("AtomicBool::new(true)", pty)
+        self.assertIn("Interactive setup menus are a compatibility fallback only", pty)
+        self.assertIn("session.prompts_done()", manager)
+
+    def test_zero_trust_otp_is_control_plane_state_not_live_log_state(self) -> None:
+        store = self.read("src/state/connectionStore.ts")
+        prompt = self.read("src/components/AccessCodePrompt.tsx")
+        self.assertIn("ACCESS_CODE_MARKER", store)
+        self.assertIn("accessCodeRequired", store)
+        self.assertIn("clearAccessCodeRequirement", store)
+        self.assertIn("event.payload.line.includes(ACCESS_CODE_MARKER)", store)
+        self.assertIn("accessCodeRequired", prompt)
+        self.assertNotIn("logs.some", prompt)
+        self.assertIn('min-h-12', prompt)
+        self.assertIn('safe-area-inset-bottom', prompt)
+
     def test_android_logging_is_opt_in_memory_only(self) -> None:
         runtime = self.read(
             "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidVpnRuntime.kt"
@@ -129,7 +148,10 @@ class Aether19ParityTest(unittest.TestCase):
         app = self.read("src/App.tsx")
         css = self.read("src/index.css")
         connect = self.read("src/components/ConnectButton.tsx")
-        tunnel = self.read("src/components/SystemTunnelToggle.tsx")
+        protocol = self.read("src/components/ProtocolSelect.tsx")
+        routing = self.read("src/components/RoutingSettings.tsx")
+        zero_trust = self.read("src/components/ZeroTrustSettings.tsx")
+        bind = self.read("src/components/BindAddressField.tsx")
         self.assertIn("MobileHeader", app)
         self.assertIn("QuickConnectionCard", app)
         self.assertIn("connection-hero", app)
@@ -137,9 +159,10 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("safe-area-inset-top", css)
         self.assertIn("safe-area-inset-bottom", css)
         self.assertIn("size-[8.5rem]", connect)
-        self.assertIn("min-h-12", tunnel)
-        self.assertIn("Device-wide", tunnel)
-        self.assertNotIn("Always on", tunnel)
+        self.assertIn("min-h-12", protocol)
+        self.assertNotIn('"h-8 ', routing)
+        self.assertNotIn('"h-8 ', zero_trust)
+        self.assertIn("App-local listener", bind)
 
     def test_desktop_tunnel_default_is_native_ssot_not_local_storage(self) -> None:
         native = self.read("src-tauri/src/system_tunnel/mod.rs")

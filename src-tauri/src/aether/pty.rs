@@ -144,7 +144,10 @@ pub fn spawn(
     let writer = Arc::new(Mutex::new(raw_writer));
     let writer_for_thread = Arc::clone(&writer);
 
-    let prompts_done = Arc::new(AtomicBool::new(false));
+    // Aether 1.9 GUI launches are fully specified by CLI flags/environment.
+    // Interactive setup menus are a compatibility fallback only, so the
+    // route-search UI must not wait for prompts that normally never appear.
+    let prompts_done = Arc::new(AtomicBool::new(true));
     let prompts_done_for_thread = Arc::clone(&prompts_done);
 
     std::thread::spawn(move || {

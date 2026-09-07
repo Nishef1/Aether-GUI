@@ -16,6 +16,7 @@ export type LogLineLimit = 100 | 250 | 500;
 
 const DEFAULT_LOG_LINE_LIMIT: LogLineLimit = 250;
 const BUDGET_RE = /budget=(\d+)s/;
+const ACCESS_CODE_MARKER = "[gui] Zero Trust access code required";
 const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
   turbo: 75,
   balanced: 150,
@@ -78,8 +79,10 @@ interface ConnectionState {
   sidecarError: string | null;
   scanBudgetSecs: number | null;
   attemptId: number;
+  accessCodeRequired: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  clearAccessCodeRequirement: () => void;
   setProtocol: (protocol: ConnectionProfile["protocol"]) => void;
   setScanMode: (scan_mode: ConnectionProfile["scan_mode"]) => void;
   setIpVersion: (ip_version: ConnectionProfile["ip_version"]) => void;
@@ -126,6 +129,16 @@ function normalizedProfile(profile: Partial<ConnectionProfile>): ConnectionProfi
   };
 }
 
+function terminalStateClearsInteraction(status: ConnectionStatus): boolean {
+  return (
+    status.state === "Idle" ||
+    status.state === "Connected" ||
+    status.state === "Tunneling" ||
+    status.state === "Disconnecting" ||
+    status.state === "Error"
+  );
+}
+
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
   status: { state: "Idle" },
   profile: { ...DEFAULT_PROFILE },
@@ -135,11 +148,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   sidecarError: null,
   scanBudgetSecs: null,
   attemptId: 0,
+  accessCodeRequired: false,
 
   connect: async () => {
     const profile = get().profile;
     set((state) => ({
       logs: [],
+      accessCodeRequired: false,
       scanBudgetSecs: isAndroid ? ANDROID_SCAN_BUDGETS[profile.scan_mode] : null,
       attemptId: state.attemptId + 1,
     }));
@@ -151,14 +166,18 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         message.toLowerCase().includes("binary not found") ||
         message.toLowerCase().includes("bundled arm64 aether core was not found")
       ) {
-        set({ sidecarError: message });
+        set({ sidecarError: message, accessCodeRequired: false });
       } else {
-        set({ status: { state: "Error", message, phase: "launching" } });
+        set({
+          status: { state: "Error", message, phase: "launching" },
+          accessCodeRequired: false,
+        });
       }
     }
   },
 
   disconnect: async () => {
+    set({ accessCodeRequired: false });
     try {
       await invoke("disconnect");
     } catch {
@@ -166,6 +185,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
 
+  clearAccessCodeRequirement: () => set({ accessCodeRequired: false }),
   setProtocol: (protocol) => set((state) => ({ profile: { ...state.profile, protocol } })),
   setScanMode: (scan_mode) =>
     set((state) => ({ profile: { ...state.profile, scan_mode } })),
@@ -287,12 +307,18 @@ export async function initConnectionListeners(): Promise<() => void> {
     listen<ConnectionStatus>("aether://status", (event) => {
       useConnectionStore.setState({
         status: event.payload,
+        ...(terminalStateClearsInteraction(event.payload) ? { accessCodeRequired: false } : {}),
         ...(!isAndroid && event.payload.state === "Launching"
           ? { scanBudgetSecs: null }
           : {}),
       });
     }),
     listen<LogLine>("aether://log", (event) => {
+      // Interaction events are control-plane state, not diagnostics. Detect
+      // them even when the user-visible live-log buffer is disabled.
+      if (!isAndroid && event.payload.line.includes(ACCESS_CODE_MARKER)) {
+        useConnectionStore.setState({ accessCodeRequired: true });
+      }
       pendingLogs.push(event.payload);
       flushTimer ??= setTimeout(flushLogs, 100);
     }),
@@ -303,7 +329,11 @@ export async function initConnectionListeners(): Promise<() => void> {
       invoke<ConnectionStatus>("get_status"),
       invoke<Partial<ConnectionProfile>>("get_default_profile"),
     ]);
-    useConnectionStore.setState({ status, profile: normalizedProfile(profile) });
+    useConnectionStore.setState({
+      status,
+      profile: normalizedProfile(profile),
+      ...(terminalStateClearsInteraction(status) ? { accessCodeRequired: false } : {}),
+    });
   } catch (error) {
     console.error("Failed to load initial connection state:", error);
   }
@@ -320,7 +350,10 @@ export async function initConnectionListeners(): Promise<() => void> {
       if (disposed || document.visibilityState !== "visible") return;
       try {
         const status = await invoke<ConnectionStatus>("get_status");
-        useConnectionStore.setState({ status });
+        useConnectionStore.setState({
+          status,
+          ...(terminalStateClearsInteraction(status) ? { accessCodeRequired: false } : {}),
+        });
       } catch {
         // The foreground service can be between lifecycle states.
       }
