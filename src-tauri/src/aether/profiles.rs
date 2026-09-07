@@ -548,12 +548,7 @@ mod tests {
         let args = profile.as_args();
         assert!(!args.iter().any(|arg| matches!(
             arg.as_str(),
-            "--h2"
-                | "--h2-peer"
-                | "--ech"
-                | "--fragment"
-                | "--fragment-size"
-                | "--fragment-delay"
+            "--h2" | "--h2-peer" | "--ech" | "--fragment" | "--fragment-size" | "--fragment-delay"
         )));
     }
 
