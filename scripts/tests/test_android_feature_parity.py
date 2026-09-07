@@ -201,15 +201,20 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertNotIn("localStorage", store)
         self.assertIn("inFlightLoad", store)
 
-    def test_build_workflow_is_manual_only_and_never_publishes_releases(self) -> None:
+    def test_build_workflow_is_manual_only_and_release_is_explicit(self) -> None:
         workflow = self.read(".github/workflows/build.yml")
         self.assertIn("workflow_dispatch:", workflow)
         self.assertNotIn("push:", workflow)
+        self.assertIn("publish_release:", workflow)
+        self.assertIn("default: true", workflow)
         self.assertIn("android-arm64", workflow)
         self.assertIn("macos-15-intel", workflow)
         self.assertNotIn("tauri-action", workflow)
-        self.assertNotIn("gh release upload", workflow)
-        self.assertNotIn("gh release create", workflow)
+        self.assertIn("name: publish GitHub release", workflow)
+        self.assertIn("inputs.publish_release", workflow)
+        self.assertIn("needs: [desktop, debian, arch, android]", workflow)
+        self.assertIn("gh release create", workflow)
+        self.assertIn("SHA256SUMS.txt", workflow)
 
     def test_runtime_manifest_is_the_single_runtime_version_source(self) -> None:
         verifier = self.read("scripts/ci/verify-runtime-manifest.mjs")
