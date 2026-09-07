@@ -38,6 +38,8 @@ pub struct VpnProfile {
     pub scan_mode: String,
     pub ip_version: String,
     pub connection_mode: String,
+    /// Compatibility shim for the Kotlin bridge. Android currently has one TUN engine (HEV).
+    pub tun_engine: String,
     pub quick_reconnect: bool,
     pub masque_http2: bool,
     pub masque_noize: String,
@@ -47,6 +49,8 @@ pub struct VpnProfile {
     pub bind_address: String,
     pub http_proxy: String,
     pub upstream: String,
+    /// Compatibility shim until the legacy Kotlin argument is removed atomically.
+    pub webrtc_leak_protection: bool,
     pub mtu: u16,
     pub peer: String,
     pub wg_peer: String,
