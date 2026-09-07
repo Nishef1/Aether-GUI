@@ -399,7 +399,10 @@ mod tests {
             SystemTunnelSelection::Singbox.id(),
             Some(SING_BOX_TUNNEL_ID)
         );
-        assert_eq!(SystemTunnelSelection::from_store("off"), SystemTunnelSelection::Off);
+        assert_eq!(
+            SystemTunnelSelection::from_store("off"),
+            SystemTunnelSelection::Off
+        );
         assert_eq!(
             SystemTunnelSelection::from_store("singbox"),
             SystemTunnelSelection::Singbox
