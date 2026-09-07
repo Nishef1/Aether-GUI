@@ -232,9 +232,9 @@ fn save_settings(app: &AppHandle, settings: &MobileSettings) -> Result<(), Strin
         serde_json::to_vec_pretty(&persisted).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
-    if path.exists() {
-        fs::remove_file(&path).map_err(|error| error.to_string())?;
-    }
+    // Android uses Unix rename semantics: replacing the destination directly
+    // keeps the old valid file present until the new file is committed. Never
+    // delete the previous settings first, which creates a crash-loss window.
     fs::rename(temporary, path).map_err(|error| error.to_string())
 }
 
