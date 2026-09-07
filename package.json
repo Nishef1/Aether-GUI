@@ -4,7 +4,6 @@
   "version": "0.8.0",
   "type": "module",
   "scripts": {
-    "preinstall": "node scripts/ci/sync-product-version.mjs",
     "sync:version": "node scripts/ci/sync-product-version.mjs",
     "prepare:app-icon": "node scripts/prepare-app-icon.mjs",
     "apply:android-branding": "node scripts/apply-android-branding.mjs",
