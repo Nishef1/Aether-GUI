@@ -33,8 +33,9 @@ impl SystemTunnelSelection {
 
     fn from_store(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Self::Off,
             SING_BOX_TUNNEL_ID => Self::Singbox,
-            _ => Self::Off,
+            _ => Self::Singbox,
         }
     }
 }
@@ -123,9 +124,9 @@ impl SystemTunnelRuntime {
         self.selection
             .lock()
             .map(|value| *value)
-            // Fail closed to proxy-only if state is poisoned; normal startup
-            // has already selected sing-box above.
-            .unwrap_or_default()
+            // A poisoned preference lock must not silently downgrade a
+            // full-device session to proxy-only mode.
+            .unwrap_or(SystemTunnelSelection::Singbox)
     }
 
     fn stage_is_configurable(&self) -> bool {
@@ -399,5 +400,17 @@ mod tests {
             Some(SING_BOX_TUNNEL_ID)
         );
         assert_eq!(SystemTunnelSelection::from_store("off"), SystemTunnelSelection::Off);
+        assert_eq!(
+            SystemTunnelSelection::from_store("singbox"),
+            SystemTunnelSelection::Singbox
+        );
+    }
+
+    #[test]
+    fn corrupt_or_future_saved_values_do_not_disable_full_device_protection() {
+        assert_eq!(
+            SystemTunnelSelection::from_store("unexpected-value"),
+            SystemTunnelSelection::Singbox
+        );
     }
 }
