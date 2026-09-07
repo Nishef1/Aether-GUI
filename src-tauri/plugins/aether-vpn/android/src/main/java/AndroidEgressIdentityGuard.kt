@@ -4,22 +4,22 @@ import java.net.InetAddress
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 
-/** Raised only when the exact public IP seen through Aether equals the underlay IP. */
+/** Raised only when a public IP seen through Aether equals an underlay IP. */
 internal class EgressIdentityLeakException(message: String) : IllegalStateException(message)
 
 internal data class EgressIdentityCheck(
-    val underlayIp: String?,
     val tunnelIp: String,
     val changed: Boolean?,
 )
 
 /**
- * Compares the device underlay with Aether using neutral public-IP endpoints.
+ * Compares device underlay identities with Aether using neutral public-IP endpoints.
  *
  * A Cloudflare/WARP address may legitimately geolocate to the same country as the
  * user. Country equality is therefore never treated as a leak. Only exact public
- * IP equality is fail-closed. If censorship blocks every direct baseline probe,
- * the result is inconclusive rather than a false failure.
+ * IP equality is fail-closed. IPv4 and IPv6 baselines are gathered separately
+ * when the current network supports them. If censorship blocks every direct
+ * baseline probe, the result is inconclusive rather than a false failure.
  */
 internal object AndroidEgressIdentityGuard {
     private const val CONNECT_TIMEOUT_MS = 4_000
@@ -28,27 +28,30 @@ internal object AndroidEgressIdentityGuard {
     private data class Provider(val label: String, val url: String)
 
     private val providers = listOf(
+        Provider("ipify-v4", "https://api4.ipify.org/"),
+        Provider("ipify-v6", "https://api6.ipify.org/"),
         Provider("aws-checkip", "https://checkip.amazonaws.com/"),
-        Provider("ipify", "https://api.ipify.org/"),
     )
 
-    fun underlayPublicIp(): String? {
+    fun underlayPublicIps(): Set<String> = buildSet {
         for (provider in providers) {
-            val result = runCatching { directPublicIp(provider) }
-            if (result.isSuccess) return result.getOrThrow()
+            runCatching { directPublicIp(provider) }.getOrNull()?.let(::add)
         }
-        return null
     }
 
-    fun compare(underlayIp: String?, tunnelIp: String): EgressIdentityCheck {
-        val changed = underlayIp?.let { !sameIp(it, tunnelIp) }
+    fun compare(underlayIps: Collection<String>, tunnelIp: String): EgressIdentityCheck {
+        val changed = if (underlayIps.isEmpty()) {
+            null
+        } else {
+            underlayIps.none { sameIp(it, tunnelIp) }
+        }
         if (changed == false) {
             val message =
                 "Aether egress is identical to the device underlay IP. Refusing to report a protected connection; check direct-routing rules or a failed tunnel path."
             AndroidVpnRuntime.reportSafetyFailure(message)
             throw EgressIdentityLeakException(message)
         }
-        return EgressIdentityCheck(underlayIp, tunnelIp, changed)
+        return EgressIdentityCheck(tunnelIp, changed)
     }
 
     private fun directPublicIp(provider: Provider): String {
