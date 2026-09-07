@@ -66,6 +66,9 @@ async function rerollPrivacyExit(epoch: number): Promise<void> {
     if (policy.automationEpoch !== epoch || policy.preference !== "privacy") return;
 
     const profile = useConnectionStore.getState().profile;
+    // A privacy reroll must perform fresh discovery. Reusing the previous quick
+    // route can deterministically reproduce the same WARP egress.
+    const rerollProfile = { ...profile, quick_reconnect: false };
     useTelemetryStore.setState({ snapshot: { ...EMPTY_TELEMETRY } });
     useConnectionStore.setState((state) => ({
       status: { state: "Launching" },
@@ -73,7 +76,7 @@ async function rerollPrivacyExit(epoch: number): Promise<void> {
       accessCodeRequired: false,
       attemptId: state.attemptId + 1,
     }));
-    await invoke("connect", { profileOverride: profile });
+    await invoke("connect", { profileOverride: rerollProfile });
   } catch (error) {
     const policy = useExitPolicyStore.getState();
     if (policy.automationEpoch === epoch && policy.preference === "privacy") {
