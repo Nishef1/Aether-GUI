@@ -11,10 +11,10 @@ depends=(
   'gtk3'
   'libayatana-appindicator'
   'polkit'
+  'curl'
 )
 makedepends=(
   'git'
-  'curl'
   'wget'
   'file'
   'nodejs'

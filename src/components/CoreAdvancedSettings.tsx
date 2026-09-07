@@ -51,19 +51,37 @@ function NumberField({
   disabled: boolean;
   onChange: (value: number) => void;
 }) {
+  const commit = (input: HTMLInputElement) => {
+    const raw = input.value.trim();
+    const parsed = Number(raw);
+    const next =
+      raw.length === 0 || !Number.isFinite(parsed)
+        ? value
+        : Math.min(max, Math.max(min, Math.round(parsed)));
+    input.value = String(next);
+    if (next !== value) onChange(next);
+  };
+
   return (
     <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
       <span className="font-medium text-foreground">{label}</span>
       <input
+        key={value}
         type="number"
         inputMode="numeric"
-        value={value}
+        defaultValue={value}
         min={min}
         max={max}
         disabled={disabled}
-        onChange={(event) =>
-          onChange(Math.min(max, Math.max(min, Number(event.target.value) || min)))
-        }
+        onBlur={(event) => commit(event.currentTarget)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          } else if (event.key === "Escape") {
+            event.currentTarget.value = String(value);
+            event.currentTarget.blur();
+          }
+        }}
         className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
       />
     </label>

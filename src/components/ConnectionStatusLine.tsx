@@ -108,6 +108,10 @@ export function ConnectionStatusLine() {
       : null;
   const { formatted: elapsed } = useElapsed(connectedAt);
   const connectionReady = connectedAt != null;
+  const systemTunnelError = status.state === "Error" && status.phase === "system-tunnel";
+  const privilegeTunnelError =
+    systemTunnelError &&
+    /administrator|approval|uac|pkexec|polkit|permission|privilege/i.test(status.message);
 
   const [attemptStartedAt, setAttemptStartedAt] = useState<number | null>(null);
   /* eslint-disable react-hooks/set-state-in-effect -- capture transition time */
@@ -172,7 +176,7 @@ export function ConnectionStatusLine() {
       secondary = "";
       break;
     case "Error":
-      primary = "Connection failed";
+      primary = status.phase === "system-tunnel" ? "Device protection failed" : "Connection failed";
       secondary = status.message;
       break;
   }
@@ -212,6 +216,14 @@ export function ConnectionStatusLine() {
           {secondary}
         </motion.span>
       </AnimatePresence>
+
+      {systemTunnelError && (
+        <span className="max-w-xs rounded-xl bg-status-error/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground ring-1 ring-status-error/15">
+          {privilegeTunnelError
+            ? "Full-device protection remains enabled. Retry after granting administrator access; on macOS, launch Aether-GUI with administrator privileges."
+            : "Aether was stopped because the full-device tunnel could not be verified. Full-device protection remains enabled; resolve the tunnel error and retry."}
+        </span>
+      )}
 
       {(status.state === "Connecting" || status.state === "Launching") && (
         <ScanProgressBar percent={scanPercent} />

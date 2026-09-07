@@ -194,6 +194,62 @@ class Aether19ParityTest(unittest.TestCase):
             self.assertIn(consumer, verifier)
         self.assertIn("runtime-versions.json", verifier)
 
+    def test_android_v2_profiles_inherit_non_scalar_v3_defaults(self) -> None:
+        source = self.read("src-tauri/src/android.rs")
+        self.assertIn("const MOBILE_SETTINGS_VERSION: u8 = 3", source)
+        self.assertIn('#[serde(default)]\nstruct MobileConnectionProfile', source)
+        self.assertIn("route_sniff: true", source)
+        self.assertIn("route_sniff_ms: 400", source)
+        self.assertIn("auto_reprovision: true", source)
+        self.assertIn("mtu: DEFAULT_MTU", source)
+        self.assertIn("validate_secs: 10", source)
+        self.assertIn("reconnect_secs: 2", source)
+        self.assertIn("keepalive: 5", source)
+
+    def test_numeric_settings_keep_an_editable_draft_until_commit(self) -> None:
+        core = self.read("src/components/CoreAdvancedSettings.tsx")
+        panel = self.read("src/components/AdvancedPanel.tsx")
+        self.assertIn("defaultValue={value}", core)
+        self.assertIn("onBlur={(event) => commit(event.currentTarget)}", core)
+        self.assertNotIn("Number(event.target.value) || min", core)
+        self.assertIn("defaultValue={mtu}", panel)
+        self.assertIn("if (next !== mtu) setMtu(next)", panel)
+        self.assertNotIn("setMtu(Number(event.target.value) || 1280)", panel)
+
+    def test_noize_ui_accepts_every_profile_supported_by_aether_19(self) -> None:
+        source = self.read("src/components/NoizeProfileToggle.tsx")
+        for profile in ("off", "light", "firewall", "balanced", "gfw", "aggressive"):
+            self.assertIn(f'"{profile}"', source)
+        self.assertIn("const OPTIONS: readonly NoizeProfile[]", source)
+        self.assertIn("value={selected}", source)
+
+    def test_desktop_timeout_contract_matches_aether_19_core_budgets(self) -> None:
+        source = self.read("src-tauri/src/aether/status.rs")
+        self.assertIn("Aether v1.9 keeps the MASQUE scan deadlines", source)
+        for seconds in (45, 120, 300, 180):
+            self.assertIn(f"Duration::from_secs({seconds})", source)
+        self.assertIn("ESTABLISHMENT_MARGIN", source)
+        self.assertNotIn("Aether v1.5 scan budgets", source)
+
+    def test_full_device_tunnel_failure_stays_fail_closed_and_actionable(self) -> None:
+        engine = self.read("src-tauri/src/engine/mod.rs")
+        status = self.read("src/components/ConnectionStatusLine.tsx")
+        self.assertIn("let _ = adapter.disconnect(app);", engine)
+        self.assertIn('phase: "system-tunnel".into()', engine)
+        self.assertIn("Device protection failed", status)
+        self.assertIn("Full-device protection remains enabled", status)
+        self.assertNotIn("fall back to proxy", status.lower())
+
+    def test_linux_packages_declare_runtime_probe_dependencies(self) -> None:
+        config = json.loads(self.read("src-tauri/tauri.conf.json"))
+        deb = config["bundle"]["linux"]["deb"]["depends"]
+        rpm = config["bundle"]["linux"]["rpm"]["depends"]
+        arch = self.read("packaging/arch/PKGBUILD")
+        self.assertIn("curl", deb)
+        self.assertIn("curl", rpm)
+        self.assertIn("polkit", rpm)
+        self.assertIn("'curl'", arch.split("makedepends=(", 1)[0])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

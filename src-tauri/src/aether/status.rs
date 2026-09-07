@@ -3,6 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
 pub const DEFAULT_SOCKS_ADDR: &str = "127.0.0.1:1819";
+const ESTABLISHMENT_MARGIN: Duration = Duration::from_secs(15);
 
 pub fn parse_bind_address(addr: &str) -> SocketAddr {
     addr.parse()
@@ -18,23 +19,30 @@ fn probe_addr(listen: &SocketAddr) -> SocketAddr {
     }
 }
 
-/// Ground-truth "are we connected" signal: TCP connect to SOCKS5 port.
+/// Ground-truth local readiness signal: TCP connect to the SOCKS5 listener.
+/// System-wide protection is verified separately by the system-tunnel adapter.
 pub fn port_is_live(addr: &SocketAddr) -> bool {
     TcpStream::connect_timeout(&probe_addr(addr), Duration::from_millis(300)).is_ok()
 }
 
-/// Aether v1.5 scan budgets are 45/120/300/180/180 seconds. The GUI waits
-/// only a small fixed establishment margin beyond each core budget, preventing
-/// a dead process or prompt regression from leaving the UI spinning for
-/// several extra minutes.
-pub fn connect_timeout(scan_mode: &ScanMode) -> Duration {
+/// Aether v1.9 keeps the MASQUE scan deadlines at 45/120/300/180/180 seconds.
+/// WireGuard's own first-pass deadlines are no larger, and gool requests both
+/// missing hops from one WireGuard scan before its reconnect loop. The desktop
+/// supervisor therefore adds only a small fixed establishment margin instead
+/// of pretending Android's more conservative service-start timeouts are core
+/// scan budgets.
+fn core_scan_budget(scan_mode: &ScanMode) -> Duration {
     Duration::from_secs(match scan_mode {
-        ScanMode::Turbo => 60,
-        ScanMode::Balanced => 135,
-        ScanMode::Thorough => 315,
-        ScanMode::Stealth => 195,
-        ScanMode::Ironclad => 195,
+        ScanMode::Turbo => 45,
+        ScanMode::Balanced => 120,
+        ScanMode::Thorough => 300,
+        ScanMode::Stealth => 180,
+        ScanMode::Ironclad => 180,
     })
+}
+
+pub fn connect_timeout(scan_mode: &ScanMode) -> Duration {
+    core_scan_budget(scan_mode) + ESTABLISHMENT_MARGIN
 }
 
 /// How long to wait after sending Ctrl-C before force-killing. Aether does not
@@ -124,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn connect_timeout_exceeds_core_scan_budgets_without_large_slack() {
+    fn aether_19_masque_budgets_match_upstream_and_keep_small_gui_margin() {
         let budgets = [
             (ScanMode::Turbo, 45),
             (ScanMode::Balanced, 120),
@@ -133,9 +141,11 @@ mod tests {
             (ScanMode::Ironclad, 180),
         ];
         for (mode, budget) in budgets {
-            let timeout = connect_timeout(&mode);
-            assert!(timeout > Duration::from_secs(budget));
-            assert!(timeout <= Duration::from_secs(budget + 15));
+            assert_eq!(core_scan_budget(&mode), Duration::from_secs(budget));
+            assert_eq!(
+                connect_timeout(&mode),
+                Duration::from_secs(budget) + ESTABLISHMENT_MARGIN
+            );
         }
     }
 }

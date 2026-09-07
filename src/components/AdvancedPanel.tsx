@@ -182,14 +182,32 @@ export function AdvancedPanel() {
                   description="1280 is the conservative dual-stack value. Raise it only on networks that handle larger packets reliably."
                 >
                   <input
+                    key={mtu}
                     type="number"
                     inputMode="numeric"
                     min={1280}
                     max={1500}
                     step={4}
-                    value={mtu}
+                    defaultValue={mtu}
                     disabled={locked}
-                    onChange={(event) => setMtu(Number(event.target.value) || 1280)}
+                    onBlur={(event) => {
+                      const raw = event.currentTarget.value.trim();
+                      const parsed = Number(raw);
+                      const next =
+                        raw.length === 0 || !Number.isFinite(parsed)
+                          ? mtu
+                          : Math.min(1500, Math.max(1280, Math.round(parsed)));
+                      event.currentTarget.value = String(next);
+                      if (next !== mtu) setMtu(next);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.currentTarget.blur();
+                      } else if (event.key === "Escape") {
+                        event.currentTarget.value = String(mtu);
+                        event.currentTarget.blur();
+                      }
+                    }}
                     className="min-h-11 w-full rounded-xl bg-black/20 px-3 text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
                     aria-label="VPN MTU"
                   />
