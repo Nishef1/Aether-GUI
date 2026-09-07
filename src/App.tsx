@@ -12,6 +12,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { TitleBar } from "@/components/TitleBar";
 import { isAndroid } from "@/lib/platform";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
+import { useExitPolicyStore } from "@/state/exitPolicyStore";
 import { useSystemTunnelStore } from "@/state/systemTunnelStore";
 import { initTelemetryListeners } from "@/state/telemetryStore";
 
@@ -118,6 +119,7 @@ export function App() {
   const sidecarError = useConnectionStore((state) => state.sidecarError);
   const retryAfterSidecarError = useConnectionStore((state) => state.retryAfterSidecarError);
   const connect = useConnectionStore((state) => state.connect);
+  const beginManualAttempt = useExitPolicyStore((state) => state.beginManualAttempt);
   const loadSystemTunnel = useSystemTunnelStore((state) => state.load);
 
   useEffect(() => {
@@ -151,6 +153,7 @@ export function App() {
                     message={sidecarError}
                     onRetry={() => {
                       retryAfterSidecarError();
+                      beginManualAttempt();
                       void connect();
                     }}
                   />
