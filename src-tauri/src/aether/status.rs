@@ -32,13 +32,13 @@ pub fn port_is_live(addr: &SocketAddr) -> bool {
 /// of pretending Android's more conservative service-start timeouts are core
 /// scan budgets.
 fn core_scan_budget(scan_mode: &ScanMode) -> Duration {
-    Duration::from_secs(match scan_mode {
-        ScanMode::Turbo => 45,
-        ScanMode::Balanced => 120,
-        ScanMode::Thorough => 300,
-        ScanMode::Stealth => 180,
-        ScanMode::Ironclad => 180,
-    })
+    match scan_mode {
+        ScanMode::Turbo => Duration::from_secs(45),
+        ScanMode::Balanced => Duration::from_secs(120),
+        ScanMode::Thorough => Duration::from_secs(300),
+        ScanMode::Stealth => Duration::from_secs(180),
+        ScanMode::Ironclad => Duration::from_secs(180),
+    }
 }
 
 pub fn connect_timeout(scan_mode: &ScanMode) -> Duration {
