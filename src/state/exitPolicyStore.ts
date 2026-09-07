@@ -20,9 +20,11 @@ interface ExitPolicyState {
   retryCount: number;
   rerolling: boolean;
   exhausted: boolean;
+  automationEpoch: number;
   setPreference: (preference: ExitPreference) => void;
   beginManualAttempt: () => void;
-  beginReroll: () => boolean;
+  cancelAutomation: () => void;
+  beginReroll: () => number | null;
   finishReroll: () => void;
   markAccepted: () => void;
   markExhausted: () => void;
@@ -33,6 +35,7 @@ export const useExitPolicyStore = create<ExitPolicyState>((set, get) => ({
   retryCount: 0,
   rerolling: false,
   exhausted: false,
+  automationEpoch: 0,
 
   setPreference: (preference) => {
     try {
@@ -40,10 +43,28 @@ export const useExitPolicyStore = create<ExitPolicyState>((set, get) => ({
     } catch {
       // Preference persistence is optional; never block connectivity.
     }
-    set({ preference, retryCount: 0, rerolling: false, exhausted: false });
+    set((state) => ({
+      preference,
+      retryCount: 0,
+      rerolling: false,
+      exhausted: false,
+      automationEpoch: state.automationEpoch + 1,
+    }));
   },
 
-  beginManualAttempt: () => set({ retryCount: 0, rerolling: false, exhausted: false }),
+  beginManualAttempt: () =>
+    set((state) => ({
+      retryCount: 0,
+      rerolling: false,
+      exhausted: false,
+      automationEpoch: state.automationEpoch + 1,
+    })),
+
+  cancelAutomation: () =>
+    set((state) => ({
+      rerolling: false,
+      automationEpoch: state.automationEpoch + 1,
+    })),
 
   beginReroll: () => {
     const state = get();
@@ -52,10 +73,10 @@ export const useExitPolicyStore = create<ExitPolicyState>((set, get) => ({
       state.rerolling ||
       state.retryCount >= EXIT_RETRY_LIMIT
     ) {
-      return false;
+      return null;
     }
     set({ retryCount: state.retryCount + 1, rerolling: true, exhausted: false });
-    return true;
+    return state.automationEpoch;
   },
 
   finishReroll: () => set({ rerolling: false }),
