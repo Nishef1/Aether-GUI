@@ -207,6 +207,19 @@ Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeStop(
     return JNI_TRUE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeIsRunning(
+    JNIEnv *env, jobject instance)
+{
+    (void)env;
+    (void)instance;
+
+    pthread_mutex_lock(&state_lock);
+    const bool running = state == TUN_STATE_RUNNING;
+    pthread_mutex_unlock(&state_lock);
+    return running ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jlongArray JNICALL
 Java_com_cluvexstudio_aethergui_vpn_AetherTunBridge_nativeStats(
     JNIEnv *env, jobject instance)
