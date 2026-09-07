@@ -141,6 +141,11 @@ export function RoutingSettings() {
         className={INPUT}
         aria-label="Routing rules file path"
       />
+      {(profile.route_direct.trim() || profile.routes_file.trim()) && (
+        <p className="rounded-xl bg-status-warning/5 px-3 py-2 text-[10px] leading-4 text-status-warning ring-1 ring-status-warning/15">
+          Direct rules intentionally bypass Aether for matching destinations. Those destinations can see your original network IP; use direct routing only when that exposure is intentional.
+        </p>
+      )}
       <p className="text-[10px] leading-4 text-muted-foreground">
         Iran direct covers <code>.ir</code> domains only; add explicit CIDRs/domains for other domestic services. Supports domain, IP/CIDR, <code>port:443</code>, <code>private</code>, and Aether&apos;s <code>full:</code>/<code>keyword:</code>/<code>regexp:</code> rules. Block wins over direct.
       </p>
