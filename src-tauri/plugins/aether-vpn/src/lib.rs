@@ -38,7 +38,6 @@ pub struct VpnProfile {
     pub scan_mode: String,
     pub ip_version: String,
     pub connection_mode: String,
-    pub tun_engine: String,
     pub quick_reconnect: bool,
     pub masque_http2: bool,
     pub masque_noize: String,
@@ -48,7 +47,6 @@ pub struct VpnProfile {
     pub bind_address: String,
     pub http_proxy: String,
     pub upstream: String,
-    pub webrtc_leak_protection: bool,
     pub mtu: u16,
     pub peer: String,
     pub wg_peer: String,
@@ -90,13 +88,6 @@ pub struct VpnStatus {
     pub socks_addr: Option<String>,
     pub tun_addr: Option<String>,
     pub connected_at_ms: Option<u64>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrafficStats {
-    pub received_bytes: u64,
-    pub sent_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -155,14 +146,6 @@ pub struct PrepareResult {
     pub prepared: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiagnosticsResult {
-    pub path: String,
-    #[serde(default)]
-    pub persistent: bool,
-}
-
 pub struct AetherVpn<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> AetherVpn<R> {
@@ -182,10 +165,6 @@ impl<R: Runtime> AetherVpn<R> {
 
     pub fn status(&self) -> Result<VpnStatus> {
         self.0.run_mobile_plugin("status", ()).map_err(Into::into)
-    }
-
-    pub fn traffic(&self) -> Result<TrafficStats> {
-        self.0.run_mobile_plugin("traffic", ()).map_err(Into::into)
     }
 
     pub fn telemetry(&self) -> Result<RuntimeTelemetry> {
@@ -209,12 +188,6 @@ impl<R: Runtime> AetherVpn<R> {
     pub fn submit_access_code(&self, code: &str) -> Result<()> {
         self.0
             .run_mobile_plugin::<()>("submitAccessCode", AccessCodeRequest { code })
-            .map_err(Into::into)
-    }
-
-    pub fn diagnostics(&self) -> Result<DiagnosticsResult> {
-        self.0
-            .run_mobile_plugin("diagnostics", ())
             .map_err(Into::into)
     }
 }
