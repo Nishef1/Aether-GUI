@@ -85,7 +85,7 @@ public static class AetherWinTrustVerifier
         {
             if (pcwszFilePath != IntPtr.Zero)
             {
-                Marshal.FreeCoTaskMemUni(pcwszFilePath);
+                Marshal.FreeCoTaskMem(pcwszFilePath);
                 pcwszFilePath = IntPtr.Zero;
             }
         }
