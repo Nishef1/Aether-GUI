@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="SagerNet/sing-box"
 DEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="v1.13.12"
+VERSION="v1.14.0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
