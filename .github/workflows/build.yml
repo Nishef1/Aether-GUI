@@ -343,7 +343,7 @@ jobs:
           test "${#apks[@]}" -eq 1
           apk="${apks[0]}"
           node scripts/ci/verify-android-release.mjs "$apk"
-          version="$(node -p "require('./package.json').version")"
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           mkdir -p android-release
           cp "$apk" "android-release/Aether-GUI-v${version}-android-arm64-signed.apk"
 
