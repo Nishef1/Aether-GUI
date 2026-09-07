@@ -16,18 +16,15 @@ internal data class EgressProbeResult(
     val countryCode: String?,
     val latencyMs: Long,
     val provider: String = "unknown",
-    /** true = checked underlay addresses differ; null = direct baseline unavailable. */
-    val identityChanged: Boolean? = null,
 )
 
 /**
- * End-to-end SOCKS verification used as the definition of Connected.
+ * End-to-end SOCKS verification used as the definition of transport readiness.
  *
- * The primary identity providers are deliberately not Cloudflare-owned. WARP
- * normally preserves approximate geography even though it replaces the user's
- * public IP, so country equality is not evidence of a leak. We compare neutral
- * IPv4 and (best-effort) IPv6 addresses outside Aether with the same families
- * through SOCKS and fail closed only on exact address equality.
+ * Public identity and GeoIP are observational data. They never reject an
+ * otherwise healthy tunnel: low-latency mode is allowed to keep a nearby WARP
+ * egress, while the UI's privacy policy may independently request another
+ * route. Native TUN/HEV failures remain fail-closed safety faults.
  */
 internal object AndroidEgressProbe {
     private const val CONNECT_TIMEOUT_MS = 6_000
@@ -81,17 +78,19 @@ internal object AndroidEgressProbe {
         ),
     )
 
-    private val ipv6IdentityProvider = Provider(
-        label = "ipify-v6",
-        host = "api6.ipify.org",
-        port = 443,
-        path = "/",
-        tls = true,
+    // A separate lightweight GeoIP request is needed because the neutral IP
+    // echo providers intentionally return only the address. This request also
+    // traverses Aether and is informational only.
+    private val geoProvider = Provider(
+        label = "ip-api-geo",
+        host = "ip-api.com",
+        port = 80,
+        path = "/json/?fields=status,query,countryCode",
+        tls = false,
         useDomainAddress = true,
     )
 
     fun probe(bindAddress: String): EgressProbeResult {
-        val underlayIps = AndroidEgressIdentityGuard.underlayPublicIps()
         val (proxyHost, proxyPort) = splitHostPort(bindAddress)
         val failures = mutableListOf<String>()
 
@@ -99,16 +98,10 @@ internal object AndroidEgressProbe {
             val result = runCatching { probeProvider(proxyHost, proxyPort, provider) }
             if (result.isSuccess) {
                 val probe = result.getOrThrow()
-                val identity = AndroidEgressIdentityGuard.compare(underlayIps, probe.publicIp)
+                if (probe.countryCode != null) return probe
 
-                // A routed ::/0 is part of the Android protection contract. If
-                // both sides can reach an IPv6 echo service, compare that family
-                // as well. Failure to obtain IPv6 is not itself an IP leak.
-                runCatching { probeProvider(proxyHost, proxyPort, ipv6IdentityProvider) }
-                    .getOrNull()
-                    ?.let { ipv6 -> AndroidEgressIdentityGuard.compare(underlayIps, ipv6.publicIp) }
-
-                return probe.copy(identityChanged = identity.changed)
+                val geo = runCatching { probeProvider(proxyHost, proxyPort, geoProvider) }.getOrNull()
+                return probe.copy(countryCode = geo?.countryCode)
             }
             failures += "${provider.label}: ${result.exceptionOrNull()?.message ?: "unknown error"}"
         }
@@ -271,6 +264,12 @@ internal object AndroidEgressProbe {
     private fun elapsedMillis(startedAt: Long): Long =
         ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(1L)
 
+    private fun parseIp(value: String): String? {
+        val candidate = value.trim().lineSequence().firstOrNull()?.trim().orEmpty()
+        if (candidate.isEmpty() || (!candidate.contains('.') && !candidate.contains(':'))) return null
+        return runCatching { InetAddress.getByName(candidate).hostAddress }.getOrNull()
+    }
+
     private fun parsePublicIp(response: String): String? {
         val trace = Regex("(?m)^ip=([^\\r\\n]+)$").find(response)?.groupValues?.getOrNull(1)?.trim()
         val json = Regex("\\\"query\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"")
@@ -282,9 +281,8 @@ internal object AndroidEgressProbe {
             .lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .firstNotNullOfOrNull { AndroidEgressIdentityGuard.parseIp(it) }
-        return listOfNotNull(plain, trace, json)
-            .firstNotNullOfOrNull { AndroidEgressIdentityGuard.parseIp(it) }
+            .firstNotNullOfOrNull(::parseIp)
+        return listOfNotNull(plain, trace, json).firstNotNullOfOrNull(::parseIp)
     }
 
     private fun parseCountry(response: String): String? {
