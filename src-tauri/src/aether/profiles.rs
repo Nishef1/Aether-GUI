@@ -117,6 +117,29 @@ impl MasqueMask {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum TlsProfile {
+    #[default]
+    Automatic,
+    Current,
+    NativeMinimal,
+    Compatibility,
+    Experimental,
+}
+
+impl TlsProfile {
+    pub fn as_env(&self) -> &'static str {
+        match self {
+            TlsProfile::Automatic => "automatic",
+            TlsProfile::Current => "current",
+            TlsProfile::NativeMinimal => "native-minimal",
+            TlsProfile::Compatibility => "compatibility",
+            TlsProfile::Experimental => "experimental",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PerfProfile {
     #[default]
@@ -206,6 +229,8 @@ pub struct ConnectionProfile {
     pub keepalive: u16,
     #[serde(default)]
     pub no_profile_retry: bool,
+    #[serde(default)]
+    pub tls_profile: TlsProfile,
     #[serde(default)]
     pub tls_groups: String,
     #[serde(default)]
@@ -448,6 +473,7 @@ impl Default for ConnectionProfile {
             fragment_delay: default_fragment_delay(),
             keepalive: default_keepalive(),
             no_profile_retry: false,
+            tls_profile: TlsProfile::Automatic,
             tls_groups: String::new(),
             perf_profile: PerfProfile::Auto,
             route_sniff: true,
@@ -513,6 +539,7 @@ mod tests {
         assert!(profile.route_sniff);
         assert!(profile.auto_reprovision);
         assert_eq!(profile.masque_mask, MasqueMask::Off);
+        assert_eq!(profile.tls_profile, TlsProfile::Automatic);
     }
 
     #[test]
@@ -576,6 +603,7 @@ mod tests {
         let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4"}"#;
         let profile: ConnectionProfile = serde_json::from_str(json).unwrap();
         assert_eq!(profile.masque_mask, MasqueMask::Off);
+        assert_eq!(profile.tls_profile, TlsProfile::Automatic);
         assert!(profile.route_sniff);
         assert!(profile.auto_reprovision);
         assert_eq!(profile.mtu, 1280);
