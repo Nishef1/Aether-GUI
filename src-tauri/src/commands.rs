@@ -132,6 +132,11 @@ pub fn get_runtime_telemetry() -> RuntimeTelemetry {
 }
 
 #[tauri::command]
+pub fn get_network_context() -> Option<String> {
+    crate::network_context::current_network_key()
+}
+
+#[tauri::command]
 pub fn set_diagnostics_logging(enabled: bool) {
     crate::events::set_diagnostics_enabled(enabled);
 }
