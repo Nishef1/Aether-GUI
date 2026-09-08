@@ -32,6 +32,7 @@ export type NoizeProfile =
   | "aggressive";
 export type MasqueNoize = NoizeProfile;
 export type WgNoize = NoizeProfile;
+export type H2MaskMode = "off" | "legacy" | "clienthello" | "patterniha";
 export type ZeroTrustAuth = "email" | "service" | "token";
 export type SystemTunnelSelection = "off" | "singbox" | "native";
 export type PerfProfile = "auto" | "low" | "medium" | "high";
@@ -70,6 +71,9 @@ export interface ConnectionProfile {
   no_data_check: boolean;
   validate_secs: number;
   reconnect_secs: number;
+  /** Explicit H2 ClientHello mask. Missing on old saved profiles. */
+  masque_mask?: H2MaskMode;
+  /** Legacy boolean retained for backward-compatible saved profiles. */
   fragment: boolean;
   fragment_size: string;
   fragment_delay: string;
