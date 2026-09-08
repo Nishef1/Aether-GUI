@@ -51,6 +51,14 @@ function isStableConnected(): boolean {
   return state === "Connected" || state === "Tunneling";
 }
 
+function androidCapacity() {
+  if (!isAndroid) return null;
+  const connection = useConnectionStore.getState();
+  return connection.runtimeCapacityAttemptId === connection.attemptId
+    ? connection.runtimeCapacity
+    : null;
+}
+
 function inferredPathHealth(snapshot: RuntimeTelemetry): NonNullable<RuntimeTelemetry["path_health"]> {
   if (snapshot.path_health != null) return snapshot.path_health;
   if (!snapshot.egress_probe_complete) return "unknown";
@@ -107,8 +115,11 @@ function inferredQualityConfidence(
 function normalizeTelemetry(snapshot: RuntimeTelemetry): RuntimeTelemetry {
   const pathHealth = inferredPathHealth(snapshot);
   const smoothedLatency = snapshot.smoothed_latency_ms ?? (isAndroid ? snapshot.latency_ms : null);
-  const capacityComplete = snapshot.capacity_probe_complete ?? false;
-  const uploadLimited = snapshot.upload_limited ?? false;
+  const fallbackCapacity = androidCapacity();
+  const capacityComplete = snapshot.capacity_probe_complete ?? (fallbackCapacity != null);
+  const downloadKbps = snapshot.download_kbps ?? fallbackCapacity?.downloadKbps ?? null;
+  const uploadKbps = snapshot.upload_kbps ?? fallbackCapacity?.uploadKbps ?? null;
+  const uploadLimited = snapshot.upload_limited ?? fallbackCapacity?.uploadLimited ?? false;
   const qualityScore =
     snapshot.quality_score ??
     (isAndroid
@@ -130,8 +141,8 @@ function normalizeTelemetry(snapshot: RuntimeTelemetry): RuntimeTelemetry {
     quality_score: qualityScore,
     quality_confidence: qualityConfidence,
     capacity_probe_complete: capacityComplete,
-    download_kbps: snapshot.download_kbps ?? null,
-    upload_kbps: snapshot.upload_kbps ?? null,
+    download_kbps: downloadKbps,
+    upload_kbps: uploadKbps,
     upload_limited: uploadLimited,
   };
 }
@@ -373,18 +384,27 @@ export async function initTelemetryListeners(): Promise<() => void> {
   };
 
   const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
-    if (state.status.state === previous.status.state) return;
+    const statusChanged = state.status.state !== previous.status.state;
+    const capacityChanged =
+      state.runtimeCapacityAttemptId !== previous.runtimeCapacityAttemptId ||
+      state.runtimeCapacity !== previous.runtimeCapacity;
+    if (!statusChanged && !capacityChanged) return;
 
-    if (isStableConnected()) {
+    if (statusChanged && isStableConnected()) {
       evaluateExitPolicy(useTelemetryStore.getState().snapshot);
     }
 
     if (!isAndroid) return;
 
-    if (shouldClearTelemetryOnDisconnect(isConnected())) {
+    if (statusChanged && shouldClearTelemetryOnDisconnect(isConnected())) {
       clearTelemetry();
     }
-    restartSchedule(isConnected() && document.visibilityState === "visible");
+    if (capacityChanged && document.visibilityState === "visible" && isConnected()) {
+      void useTelemetryStore.getState().refresh();
+    }
+    if (statusChanged) {
+      restartSchedule(isConnected() && document.visibilityState === "visible");
+    }
   });
 
   if (isAndroid) {
