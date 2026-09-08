@@ -74,6 +74,17 @@ function maskKeyForProfile(profile: ConnectionProfile, transport: PathTransport)
   return `mask:${mode}`;
 }
 
+function masqueTlsKeys(profile: ConnectionProfile, transport: PathTransport): [string, string, string] {
+  if (transport !== "h2" && transport !== "h3") {
+    return ["ech:n/a", "tls:n/a", "groups:n/a"];
+  }
+  return [
+    profile.ech.trim() ? "ech" : "no-ech",
+    `tls:${profile.tls_profile ?? "automatic"}`,
+    profile.tls_groups.trim() ? `groups:${profile.tls_groups.trim()}` : "groups:default",
+  ];
+}
+
 export function pathIdForProfile(
   profile: ConnectionProfile,
   selection?: RuntimePathSelection | null,
@@ -81,6 +92,7 @@ export function pathIdForProfile(
   const transport = selection?.transport ?? inferTransport(profile);
   const endpoint = selection?.endpoint.trim() || endpointForProfile(profile, transport);
   const noize = transport === "wg" || transport === "gool" ? profile.wg_noize : profile.masque_noize;
+  const [echKey, tlsKey, groupsKey] = masqueTlsKeys(profile, transport);
   return [
     transport,
     endpoint,
@@ -88,9 +100,9 @@ export function pathIdForProfile(
     profile.scan_mode,
     noize,
     maskKeyForProfile(profile, transport),
-    profile.ech.trim() ? "ech" : "no-ech",
-    `tls:${profile.tls_profile ?? "automatic"}`,
-    profile.tls_groups.trim() || "default-groups",
+    echKey,
+    tlsKey,
+    groupsKey,
   ].join("|");
 }
 
