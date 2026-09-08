@@ -24,6 +24,10 @@ const EMPTY_TELEMETRY: RuntimeTelemetry = {
   jitter_ms: null,
   quality_score: 0,
   quality_confidence: 0,
+  capacity_probe_complete: false,
+  download_kbps: null,
+  upload_kbps: null,
+  upload_limited: false,
 };
 
 const REROLL_STOP_TIMEOUT_MS = 8_000;
@@ -73,35 +77,46 @@ function inferredTunnelValidation(
 function inferredQualityScore(
   health: NonNullable<RuntimeTelemetry["path_health"]>,
   latencyMs: number | null,
+  uploadLimited: boolean,
 ): number {
   const base = health === "healthy" ? 100 : health === "suspect" ? 45 : health === "failed" ? 0 : 25;
   const latencyPenalty = latencyMs == null ? (health === "unknown" ? 20 : 0) : Math.min(35, Math.floor(latencyMs / 10));
-  return Math.max(0, base - latencyPenalty);
+  const uploadPenalty = uploadLimited ? 18 : 0;
+  return Math.max(0, base - latencyPenalty - uploadPenalty);
 }
 
 function inferredQualityConfidence(
   health: NonNullable<RuntimeTelemetry["path_health"]>,
+  capacityComplete: boolean,
 ): number {
-  switch (health) {
-    case "healthy":
-      return 60;
-    case "suspect":
-      return 36;
-    case "failed":
-      return 0;
-    default:
-      return 10;
-  }
+  const base = (() => {
+    switch (health) {
+      case "healthy":
+        return 60;
+      case "suspect":
+        return 36;
+      case "failed":
+        return 0;
+      default:
+        return 10;
+    }
+  })();
+  return capacityComplete ? Math.min(100, base + 5) : base;
 }
 
 function normalizeTelemetry(snapshot: RuntimeTelemetry): RuntimeTelemetry {
   const pathHealth = inferredPathHealth(snapshot);
   const smoothedLatency = snapshot.smoothed_latency_ms ?? (isAndroid ? snapshot.latency_ms : null);
+  const capacityComplete = snapshot.capacity_probe_complete ?? false;
+  const uploadLimited = snapshot.upload_limited ?? false;
   const qualityScore =
     snapshot.quality_score ??
-    (isAndroid ? inferredQualityScore(pathHealth, smoothedLatency ?? snapshot.latency_ms) : 0);
+    (isAndroid
+      ? inferredQualityScore(pathHealth, smoothedLatency ?? snapshot.latency_ms, uploadLimited)
+      : 0);
   const qualityConfidence =
-    snapshot.quality_confidence ?? (isAndroid ? inferredQualityConfidence(pathHealth) : 0);
+    snapshot.quality_confidence ??
+    (isAndroid ? inferredQualityConfidence(pathHealth, capacityComplete) : 0);
 
   return {
     ...snapshot,
@@ -114,6 +129,10 @@ function normalizeTelemetry(snapshot: RuntimeTelemetry): RuntimeTelemetry {
     jitter_ms: snapshot.jitter_ms ?? null,
     quality_score: qualityScore,
     quality_confidence: qualityConfidence,
+    capacity_probe_complete: capacityComplete,
+    download_kbps: snapshot.download_kbps ?? null,
+    upload_kbps: snapshot.upload_kbps ?? null,
+    upload_limited: uploadLimited,
   };
 }
 
@@ -132,7 +151,11 @@ function telemetryEqual(left: RuntimeTelemetry, right: RuntimeTelemetry): boolea
     (left.smoothed_latency_ms ?? null) === (right.smoothed_latency_ms ?? null) &&
     (left.jitter_ms ?? null) === (right.jitter_ms ?? null) &&
     (left.quality_score ?? 0) === (right.quality_score ?? 0) &&
-    (left.quality_confidence ?? 0) === (right.quality_confidence ?? 0)
+    (left.quality_confidence ?? 0) === (right.quality_confidence ?? 0) &&
+    (left.capacity_probe_complete ?? false) === (right.capacity_probe_complete ?? false) &&
+    (left.download_kbps ?? null) === (right.download_kbps ?? null) &&
+    (left.upload_kbps ?? null) === (right.upload_kbps ?? null) &&
+    (left.upload_limited ?? false) === (right.upload_limited ?? false)
   );
 }
 
