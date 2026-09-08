@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import {
@@ -17,10 +18,15 @@ import { useConnectionStore } from "@/state/connectionStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
 import type { ConnectionStatus, LogLine, RuntimeTelemetry } from "@/types/connection";
 
-const STORAGE_KEY = "aether.path-intelligence.v1";
+const STORAGE_PREFIX = "aether.path-intelligence.v2";
+const LEGACY_STORAGE_KEY = "aether.path-intelligence.v1";
 const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoint=(.+)$/;
 const TRANSPORTS = new Set<PathTransport>(["h2", "h3", "wg", "gool", "unknown"]);
 const HEALTH_STATES = new Set<PathHealth>(["healthy", "suspect", "failed"]);
+
+let activeStorageKey: string | null = null;
+let activeNetworkKey: string | null = null;
+let scopeEpoch = 0;
 
 interface PathStore {
   paths: ObservedPath[];
@@ -87,9 +93,9 @@ function normalizePersistedPath(item: unknown): ObservedPath | null {
   };
 }
 
-function loadPersistedPaths(): ObservedPath[] {
+function loadPersistedPaths(storageKey: string): ObservedPath[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as unknown;
+    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "[]") as unknown;
     if (!Array.isArray(parsed)) return [];
     return rankPaths(
       parsed
@@ -102,10 +108,23 @@ function loadPersistedPaths(): ObservedPath[] {
 }
 
 function persist(paths: readonly ObservedPath[]): void {
+  if (activeStorageKey == null) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(paths.slice(0, MAX_PATHS)));
+    localStorage.setItem(activeStorageKey, JSON.stringify(paths.slice(0, MAX_PATHS)));
   } catch {
     // Path history is an optional local optimization and must never block connectivity.
+  }
+}
+
+function clearPersistedPathHistory(): void {
+  try {
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(`${STORAGE_PREFIX}.`)) localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore unavailable storage.
   }
 }
 
@@ -114,16 +133,33 @@ function replacePath(paths: readonly ObservedPath[], next: ObservedPath): Observ
 }
 
 export const usePathStore = create<PathStore>((set) => ({
-  paths: loadPersistedPaths(),
+  // Fail safe: no persisted winner is replayed until the native underlay
+  // fingerprint has been resolved for this process/network.
+  paths: [],
   clear: () => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // Ignore unavailable storage.
-    }
+    clearPersistedPathHistory();
     set({ paths: [] });
   },
 }));
+
+export async function refreshPathNetworkContext(): Promise<boolean> {
+  const epoch = ++scopeEpoch;
+  let networkKey: string | null = null;
+  try {
+    networkKey = await invoke<string | null>("get_network_context");
+  } catch {
+    networkKey = null;
+  }
+
+  if (epoch !== scopeEpoch) return activeNetworkKey != null;
+  if (networkKey === activeNetworkKey) return networkKey != null;
+
+  activeNetworkKey = networkKey;
+  activeStorageKey = networkKey == null ? null : `${STORAGE_PREFIX}.${networkKey}`;
+  const paths = activeStorageKey == null ? [] : loadPersistedPaths(activeStorageKey);
+  usePathStore.setState({ paths });
+  return networkKey != null;
+}
 
 function updatePath(
   mutator: (path: ObservedPath) => ObservedPath,
@@ -170,6 +206,8 @@ export function initPathIntelligence(): () => void {
   let errorStateRecorded = false;
   let disposed = false;
   let unlistenPath: (() => void) | null = null;
+
+  void refreshPathNetworkContext();
 
   const selectionForAttempt = (attemptId: number): RuntimePathSelection | null => {
     if (selectedPath?.attemptId === attemptId) {
@@ -307,6 +345,7 @@ export function initPathIntelligence(): () => void {
       lastProbeFailureSampleAt = 0;
       lastSuccessSession = null;
       errorStateRecorded = false;
+      void refreshPathNetworkContext();
     }
 
     if (
@@ -352,6 +391,7 @@ export function initPathIntelligence(): () => void {
 
   return () => {
     disposed = true;
+    scopeEpoch += 1;
     unlistenPath?.();
     unsubscribeConnection();
     unsubscribeTelemetry();
