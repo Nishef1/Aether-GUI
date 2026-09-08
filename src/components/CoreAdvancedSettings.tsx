@@ -1,6 +1,11 @@
 import { Switch } from "@/components/ui/switch";
 import { useConnectionStore } from "@/state/connectionStore";
-import type { ConnectionProfile, H2MaskMode, PerfProfile } from "@/types/connection";
+import type {
+  ConnectionProfile,
+  H2MaskMode,
+  PerfProfile,
+  TlsProfileMode,
+} from "@/types/connection";
 
 function TextField({
   label,
@@ -138,6 +143,7 @@ export function CoreAdvancedSettings() {
   const wireGuardFamily = profile.protocol === "wireguard" || profile.protocol === "gool";
   const gool = profile.protocol === "gool";
   const h2Mask: H2MaskMode = profile.masque_mask ?? (profile.fragment ? "legacy" : "off");
+  const tlsProfile: TlsProfileMode = profile.tls_profile ?? "automatic";
 
   const set = <K extends keyof ConnectionProfile>(field: K, value: ConnectionProfile[K]) =>
     setField(field, value);
@@ -358,11 +364,30 @@ export function CoreAdvancedSettings() {
             <option value="high">High performance</option>
           </select>
         </label>
+        <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">TLS client profile</span>
+          <span className="text-[11px] leading-4">
+            Automatic preserves the proven Aether behavior. Alternate profiles change only TLS version, GREASE and default key-share groups; certificate pinning is unchanged.
+          </span>
+          <select
+            value={tlsProfile}
+            disabled={locked || !masqueFamily}
+            onChange={(event) => set("tls_profile", event.target.value as TlsProfileMode)}
+            className="min-h-11 rounded-xl bg-surface-2 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+          >
+            <option value="automatic">Automatic</option>
+            <option value="current">Current BoringSSL</option>
+            <option value="native-minimal">Native-Minimal</option>
+            <option value="compatibility">Compatibility</option>
+            <option value="experimental">Experimental</option>
+          </select>
+        </label>
         <TextField
           label="TLS key-share groups"
+          description="Optional expert override above the selected TLS profile. Leave empty to use that profile's defaults."
           value={profile.tls_groups}
           placeholder="P-256:X25519:P-384"
-          disabled={locked}
+          disabled={locked || !masqueFamily}
           onChange={(value) => set("tls_groups", value)}
         />
         <BooleanField
