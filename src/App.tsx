@@ -13,6 +13,7 @@ import { TitleBar } from "@/components/TitleBar";
 import { isAndroid } from "@/lib/platform";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
 import { useExitPolicyStore } from "@/state/exitPolicyStore";
+import { initPathIntelligence } from "@/state/pathStore";
 import { useSystemTunnelStore } from "@/state/systemTunnelStore";
 import { initTelemetryListeners } from "@/state/telemetryStore";
 
@@ -125,7 +126,9 @@ export function App() {
   useEffect(() => {
     const connectionCleanup = initConnectionListeners();
     const telemetryCleanup = initTelemetryListeners();
+    const pathCleanup = initPathIntelligence();
     return () => {
+      pathCleanup();
       void connectionCleanup.then((unlisten) => unlisten());
       void telemetryCleanup.then((unlisten) => unlisten());
     };
