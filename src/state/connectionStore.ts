@@ -179,6 +179,14 @@ function clearBufferedLogs(): void {
   logBuffer.clear();
 }
 
+async function syncNativeLogging(enabled: boolean): Promise<void> {
+  const active = enabled && (!isAndroid || document.visibilityState === "visible");
+  await invoke("set_diagnostics_logging", { enabled: active });
+  if (isAndroid) {
+    await invoke("set_android_logging", { enabled: active });
+  }
+}
+
 function updateStatus(status: ConnectionStatus, resetDesktopBudget = false): void {
   const current = useConnectionStore.getState();
   const clearInteraction = terminalStateClearsInteraction(status);
@@ -297,14 +305,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   setLoggingEnabled: async (enabled) => {
     if (!enabled) clearBufferedLogs();
     set({ loggingEnabled: enabled, ...(enabled ? {} : { logs: [] }) });
-    if (isAndroid) {
-      const active = enabled && document.visibilityState === "visible";
-      try {
-        await invoke("set_android_logging", { enabled: active });
-      } catch {
-        clearBufferedLogs();
-        set({ loggingEnabled: false, logs: [] });
-      }
+    try {
+      await syncNativeLogging(enabled);
+    } catch {
+      clearBufferedLogs();
+      void syncNativeLogging(false).catch(() => undefined);
+      set({ loggingEnabled: false, logs: [] });
     }
   },
   setLogLineLimit: (logLineLimit) =>
@@ -454,8 +460,7 @@ export async function initConnectionListeners(): Promise<() => void> {
   const syncAndroidVisibility = () => {
     if (!isAndroid) return;
     const visible = document.visibilityState === "visible";
-    const enabled = useConnectionStore.getState().loggingEnabled && visible;
-    void invoke("set_android_logging", { enabled }).catch(() => undefined);
+    void syncNativeLogging(useConnectionStore.getState().loggingEnabled).catch(() => undefined);
 
     if (pollTimer !== null) {
       clearTimeout(pollTimer);
@@ -471,9 +476,11 @@ export async function initConnectionListeners(): Promise<() => void> {
     }
   };
 
+  // Native diagnostics are opt-in and start disabled on every platform.
+  void syncNativeLogging(false).catch(() => undefined);
+
   if (isAndroid) {
     document.addEventListener("visibilitychange", syncAndroidVisibility);
-    void invoke("set_android_logging", { enabled: false }).catch(() => undefined);
     scheduleAndroidPoll();
   }
 
@@ -485,10 +492,10 @@ export async function initConnectionListeners(): Promise<() => void> {
     if (pollTimer !== null) clearTimeout(pollTimer);
     pendingLogs = [];
     clearBufferedLogs();
+    void syncNativeLogging(false).catch(() => undefined);
 
     if (isAndroid) {
       document.removeEventListener("visibilitychange", syncAndroidVisibility);
-      void invoke("set_android_logging", { enabled: false }).catch(() => undefined);
     }
   };
 }
