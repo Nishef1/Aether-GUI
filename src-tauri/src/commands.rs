@@ -132,6 +132,11 @@ pub fn get_runtime_telemetry() -> RuntimeTelemetry {
 }
 
 #[tauri::command]
+pub fn set_diagnostics_logging(enabled: bool) {
+    crate::events::set_diagnostics_enabled(enabled);
+}
+
+#[tauri::command]
 pub fn get_close_to_tray() -> bool {
     tray::get_close_to_tray()
 }
