@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum TunnelValidation {
+    #[default]
     Unknown,
     Pending,
     Healthy,
@@ -11,22 +13,33 @@ pub enum TunnelValidation {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct TunnelProbe {
+    pub required: bool,
     pub interface_up: bool,
     pub traffic_seen: bool,
-    pub latency_ms: Option<u32>,
+    pub egress_ok: bool,
+    pub latency_ms: Option<u64>,
 }
 
 impl TunnelProbe {
     pub fn validate(&self) -> TunnelValidation {
+        if !self.required {
+            return if self.egress_ok {
+                TunnelValidation::Healthy
+            } else {
+                TunnelValidation::Pending
+            };
+        }
+
         if !self.interface_up {
             return TunnelValidation::Failed;
         }
-
-        if !self.traffic_seen {
+        if !self.egress_ok {
             return TunnelValidation::Suspect;
         }
-
-        if self.latency_ms.unwrap_or(0) > 1500 {
+        if !self.traffic_seen {
+            return TunnelValidation::Pending;
+        }
+        if self.latency_ms.unwrap_or(0) > 1_500 {
             return TunnelValidation::Suspect;
         }
 
@@ -39,8 +52,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_down_interface() {
-        let probe = TunnelProbe::default();
+    fn rejects_down_required_interface() {
+        let probe = TunnelProbe {
+            required: true,
+            ..TunnelProbe::default()
+        };
         assert_eq!(probe.validate(), TunnelValidation::Failed);
+    }
+
+    #[test]
+    fn proxy_mode_accepts_verified_egress_without_tun_traffic() {
+        let probe = TunnelProbe {
+            required: false,
+            egress_ok: true,
+            latency_ms: Some(50),
+            ..TunnelProbe::default()
+        };
+        assert_eq!(probe.validate(), TunnelValidation::Healthy);
+    }
+
+    #[test]
+    fn system_tunnel_stays_pending_until_real_interface_traffic_is_seen() {
+        let probe = TunnelProbe {
+            required: true,
+            interface_up: true,
+            egress_ok: true,
+            latency_ms: Some(50),
+            ..TunnelProbe::default()
+        };
+        assert_eq!(probe.validate(), TunnelValidation::Pending);
     }
 }

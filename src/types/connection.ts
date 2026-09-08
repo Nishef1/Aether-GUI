@@ -35,6 +35,8 @@ export type WgNoize = NoizeProfile;
 export type ZeroTrustAuth = "email" | "service" | "token";
 export type SystemTunnelSelection = "off" | "singbox" | "native";
 export type PerfProfile = "auto" | "low" | "medium" | "high";
+export type PathHealth = "unknown" | "healthy" | "suspect" | "failed";
+export type TunnelValidation = "unknown" | "pending" | "healthy" | "suspect" | "failed";
 
 export interface SystemTunnelDescriptor {
   id: string;
@@ -98,6 +100,9 @@ export interface RuntimeTelemetry {
   latency_ms: number | null;
   sampled_at_ms: number;
   egress_probe_complete: boolean;
+  path_health?: PathHealth;
+  tunnel_validation?: TunnelValidation;
+  probe_failures?: number;
 }
 
 export interface LogLine {

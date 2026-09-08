@@ -6,12 +6,18 @@ mod engine;
 mod error;
 mod events;
 mod focus;
+mod path_cooldown;
+mod path_health;
+mod path_score;
+mod path_selector;
+mod recent_winner;
 mod runtime_error;
 mod state;
 mod system_tunnel;
 mod telemetry;
 mod traffic;
 mod tray;
+mod tunnel_validation;
 
 use state::AppState;
 use tauri::{Manager, WindowEvent};

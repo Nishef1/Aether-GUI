@@ -11,9 +11,9 @@ pub struct PathCandidate {
 pub fn select_best(candidates: &[PathCandidate], now_ms: u64) -> Option<&PathCandidate> {
     candidates
         .iter()
-        .filter(|candidate| !candidate.cooldown.is_blocked(now_ms))
+        .filter(|candidate| candidate.score.score > 0 && candidate.cooldown.is_available(now_ms))
         .max_by_key(|candidate| {
-            (candidate.score.confidence as u16) * 100 + candidate.score.score as u16
+            (candidate.score.score as u16) * 101 + candidate.score.confidence as u16
         })
 }
 
@@ -22,8 +22,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selects_available_high_confidence_path() {
-        let candidates = vec![PathCandidate::default()];
-        assert!(select_best(&candidates, 0).is_some());
+    fn selects_available_high_score_path() {
+        let candidates = vec![
+            PathCandidate {
+                id: "high-confidence-low-score".into(),
+                score: PathScore {
+                    score: 55,
+                    confidence: 95,
+                },
+                cooldown: PathCooldown::default(),
+            },
+            PathCandidate {
+                id: "healthy".into(),
+                score: PathScore {
+                    score: 90,
+                    confidence: 70,
+                },
+                cooldown: PathCooldown::default(),
+            },
+        ];
+
+        assert_eq!(select_best(&candidates, 0).map(|path| path.id.as_str()), Some("healthy"));
+    }
+
+    #[test]
+    fn skips_paths_in_cooldown() {
+        let mut cooldown = PathCooldown::default();
+        cooldown.penalize(1_000);
+        let candidates = vec![PathCandidate {
+            id: "blocked".into(),
+            score: PathScore {
+                score: 100,
+                confidence: 95,
+            },
+            cooldown,
+        }];
+
+        assert!(select_best(&candidates, 2_000).is_none());
     }
 }

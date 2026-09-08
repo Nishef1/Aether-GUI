@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum PathHealth {
     #[default]
     Unknown,
@@ -42,7 +43,7 @@ impl PathHealthSnapshot {
     }
 
     pub fn score(&self) -> u16 {
-        let base = match self.health {
+        let base: u16 = match self.health {
             PathHealth::Healthy => 100,
             PathHealth::Suspect => 45,
             PathHealth::Failed => 0,
@@ -53,7 +54,6 @@ impl PathHealthSnapshot {
             .latency_ms
             .map(|latency| (latency / 10).min(35) as u16)
             .unwrap_or(20);
-
         let failure_penalty = self.failures.min(25) as u16;
 
         base.saturating_sub(latency_penalty)

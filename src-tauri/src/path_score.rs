@@ -9,31 +9,21 @@ pub struct PathScore {
 }
 
 pub fn calculate(snapshot: &PathHealthSnapshot) -> PathScore {
-    let mut score = match snapshot.health {
-        PathHealth::Healthy => 100i32,
-        PathHealth::Suspect => 45,
-        PathHealth::Unknown => 25,
-        PathHealth::Failed => 0,
-    };
-
-    if let Some(latency) = snapshot.latency_ms {
-        score -= ((latency / 50).min(35)) as i32;
-    }
-
-    score -= (snapshot.failures.min(10) * 4) as i32;
-    score = score.clamp(0, 100);
-
+    let score = snapshot.score().min(100) as u8;
     let confidence = match snapshot.health {
         PathHealth::Unknown => 10,
-        PathHealth::Healthy => 80u8.saturating_sub(snapshot.failures as u8 * 5),
-        PathHealth::Suspect => 40,
+        PathHealth::Healthy => {
+            let observed = snapshot.successes.min(7) as u8;
+            60u8.saturating_add(observed.saturating_mul(5)).min(95)
+        }
+        PathHealth::Suspect => {
+            let penalty = snapshot.failures.min(6) as u8 * 4;
+            40u8.saturating_sub(penalty)
+        }
         PathHealth::Failed => 0,
     };
 
-    PathScore {
-        score: score as u8,
-        confidence,
-    }
+    PathScore { score, confidence }
 }
 
 #[cfg(test)]
@@ -45,5 +35,14 @@ mod tests {
         let mut state = PathHealthSnapshot::default();
         state.mark_failed();
         assert_eq!(calculate(&state).score, 0);
+    }
+
+    #[test]
+    fn repeated_success_builds_confidence_without_exceeding_cap() {
+        let mut state = PathHealthSnapshot::default();
+        for _ in 0..32 {
+            state.mark_success(40, 1000);
+        }
+        assert_eq!(calculate(&state).confidence, 95);
     }
 }

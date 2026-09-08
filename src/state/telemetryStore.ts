@@ -17,6 +17,9 @@ const EMPTY_TELEMETRY: RuntimeTelemetry = {
   latency_ms: null,
   sampled_at_ms: 0,
   egress_probe_complete: false,
+  path_health: "unknown",
+  tunnel_validation: "unknown",
+  probe_failures: 0,
 };
 
 const REROLL_STOP_TIMEOUT_MS = 8_000;
@@ -40,6 +43,15 @@ function isStableConnected(): boolean {
   return state === "Connected" || state === "Tunneling";
 }
 
+function normalizeTelemetry(snapshot: RuntimeTelemetry): RuntimeTelemetry {
+  return {
+    ...snapshot,
+    path_health: snapshot.path_health ?? "unknown",
+    tunnel_validation: snapshot.tunnel_validation ?? "unknown",
+    probe_failures: snapshot.probe_failures ?? 0,
+  };
+}
+
 function telemetryEqual(left: RuntimeTelemetry, right: RuntimeTelemetry): boolean {
   return (
     left.received_bytes === right.received_bytes &&
@@ -48,11 +60,15 @@ function telemetryEqual(left: RuntimeTelemetry, right: RuntimeTelemetry): boolea
     left.country_code === right.country_code &&
     left.latency_ms === right.latency_ms &&
     left.sampled_at_ms === right.sampled_at_ms &&
-    left.egress_probe_complete === right.egress_probe_complete
+    left.egress_probe_complete === right.egress_probe_complete &&
+    (left.path_health ?? "unknown") === (right.path_health ?? "unknown") &&
+    (left.tunnel_validation ?? "unknown") === (right.tunnel_validation ?? "unknown") &&
+    (left.probe_failures ?? 0) === (right.probe_failures ?? 0)
   );
 }
 
-function publishTelemetry(snapshot: RuntimeTelemetry): void {
+function publishTelemetry(incoming: RuntimeTelemetry): void {
+  const snapshot = normalizeTelemetry(incoming);
   const current = useTelemetryStore.getState().snapshot;
   if (!telemetryEqual(current, snapshot)) {
     useTelemetryStore.setState({ snapshot });
@@ -132,6 +148,8 @@ function evaluateExitPolicy(snapshot: RuntimeTelemetry): void {
   if (
     policy.preference !== "privacy" ||
     !snapshot.egress_probe_complete ||
+    snapshot.path_health === "suspect" ||
+    snapshot.path_health === "failed" ||
     !isStableConnected()
   ) {
     return;
@@ -234,7 +252,8 @@ export async function initTelemetryListeners(): Promise<() => void> {
       });
       if (!collect) return;
 
-      const eventIsFresh = lastEventAt > 0 && Date.now() - lastEventAt < Math.max(1_000, delay * 0.75);
+      const eventIsFresh =
+        lastEventAt > 0 && Date.now() - lastEventAt < Math.max(1_000, delay * 0.75);
       if (!eventIsFresh) {
         await useTelemetryStore.getState().refresh();
       }
