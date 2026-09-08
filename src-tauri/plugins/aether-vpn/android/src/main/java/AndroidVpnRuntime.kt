@@ -311,14 +311,19 @@ internal object AndroidVpnRuntime {
     }
 
     fun publishCapacity(downloadKbps: Long, uploadKbps: Long, uploadLimited: Boolean) {
+        val safeDownload = downloadKbps.coerceAtLeast(1L)
+        val safeUpload = uploadKbps.coerceAtLeast(1L)
         telemetry.updateAndGet { current ->
             current.copy(
                 capacityProbeComplete = true,
-                downloadKbps = downloadKbps.coerceAtLeast(1L),
-                uploadKbps = uploadKbps.coerceAtLeast(1L),
+                downloadKbps = safeDownload,
+                uploadKbps = safeUpload,
                 uploadLimited = uploadLimited,
             )
         }
+        appendControlLine(
+            "[gui] capacity download_kbps=$safeDownload upload_kbps=$safeUpload upload_limited=${if (uploadLimited) 1 else 0}",
+        )
     }
 
     /**
