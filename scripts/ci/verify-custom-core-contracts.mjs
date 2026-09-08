@@ -40,15 +40,44 @@ requireContract(!connectionStore.includes("function decodeAndroidTlsBridge"), "c
 const autoConnect = read("src/lib/autoConnect.ts");
 requireContract(autoConnect.includes("profileForNativeInvoke"), "Automatic v2 bypasses the shared native profile bridge");
 requireContract(autoConnect.includes("profileForNativeInvoke(profile)"), "Automatic candidate launch no longer encodes the native profile");
+requireContract(autoConnect.includes("refreshPathNetworkContext"), "Automatic v2 can rank stale cross-network history");
 
 const telemetryStore = read("src/state/telemetryStore.ts");
 requireContract(telemetryStore.includes("profileForNativeInvoke(rerollProfile)"), "privacy reroll bypasses the shared native profile bridge");
+
+const pathStore = read("src/state/pathStore.ts");
+requireContract(pathStore.includes("aether.path-intelligence.v2"), "Path Intelligence lost network-scoped storage");
+requireContract(pathStore.includes('invoke<string | null>("get_network_context")'), "Path Intelligence no longer resolves the active underlay");
 
 const pathIntelligence = read("src/lib/pathIntelligence.ts");
 for (const marker of ["ech:n/a", "tls:n/a", "groups:n/a"]) {
   requireContract(pathIntelligence.includes(marker), `non-MASQUE Path IDs lost ${marker}`);
 }
 requireContract(pathIntelligence.includes("masqueTlsKeys"), "TLS identity is no longer transport-scoped in Path Intelligence");
+
+const desktopNetwork = read("src-tauri/src/network_context.rs");
+requireContract(desktopNetwork.includes("AETHER_NETWORK_KEY"), "desktop no longer scopes Core history to the underlay");
+requireContract(desktopNetwork.includes("sync_process_environment"), "desktop Core network scope is not synchronized before launch");
+
+const mobileBridge = read("src-tauri/plugins/aether-vpn/src/lib.rs");
+for (const field of ["capacity_probe_complete", "download_kbps", "upload_kbps", "upload_limited"]) {
+  requireContract(mobileBridge.includes(field), `Android telemetry bridge lost ${field}`);
+}
+const mobileRuntime = read("src-tauri/src/android.rs");
+requireContract(mobileRuntime.includes("get_network_context"), "Android does not expose network context to Path Intelligence");
+for (const field of ["capacity_probe_complete", "download_kbps", "upload_kbps", "upload_limited"]) {
+  requireContract(mobileRuntime.includes(`\"${field}\"`), `Android runtime no longer forwards ${field}`);
+}
+
+const coreHistory = read("vendor/aether/aether/src/path_history.rs");
+requireContract(coreHistory.includes("detected_network_key"), "custom Core lost underlay detection fallback");
+requireContract(coreHistory.includes("unknown-process:"), "unknown Core underlays can share persistent history again");
+const coreLastConn = read("vendor/aether/aether/src/lastconn.rs");
+requireContract(coreLastConn.includes("pub network_key: String"), "quick reconnect cache is no longer network-scoped");
+requireContract(coreLastConn.includes("diversify_ranked"), "quick reconnect lost rescue failure-domain diversity");
+const coreSocks = read("vendor/aether/aether/src/socks.rs");
+requireContract(coreSocks.includes("CMD_UDP_ASSOCIATE"), "custom Core lost SOCKS5 UDP ASSOCIATE capability");
+requireContract(coreSocks.includes("handle_udp_associate"), "custom Core no longer serves SOCKS5 UDP traffic");
 
 requireContract(pkg.scripts?.["prepare:aether"] === "node scripts/prepare-custom-aether.mjs", "default desktop core preparation is not the pinned custom core");
 requireContract(pkg.scripts?.["prepare:android-native"] === "node scripts/prepare-android-native.mjs --custom", "default Android core preparation is not the pinned custom core");
