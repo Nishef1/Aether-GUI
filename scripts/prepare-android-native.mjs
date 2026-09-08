@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const customCore = process.argv.includes("--custom");
 
 function configureGeneratedAndroidProject() {
   const gradlePath = path.join(root, "src-tauri", "gen", "android", "app", "build.gradle.kts");
@@ -24,12 +25,25 @@ function configureGeneratedAndroidProject() {
   console.log("[android-native] configured extracted ARM64 native library packaging");
 }
 
+function runGit(args) {
+  const result = spawnSync("git", args, { cwd: root, stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
 configureGeneratedAndroidProject();
+
+if (customCore) {
+  runGit(["submodule", "update", "--init", "--recursive", "--checkout", "vendor/aether"]);
+}
 
 const script = path.join(root, "scripts", "prepare-android-native.sh");
 const result = spawnSync("bash", [script], {
   cwd: root,
-  env: process.env,
+  env: {
+    ...process.env,
+    ...(customCore ? { AETHER_CUSTOM_CORE: "1" } : {}),
+  },
   stdio: "inherit",
 });
 if (result.error) {

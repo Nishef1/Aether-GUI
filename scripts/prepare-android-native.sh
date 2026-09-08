@@ -36,13 +36,42 @@ NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-${NDK_HOME:-}}}"
   exit 2
 }
 
+CUSTOM_CORE="${AETHER_CUSTOM_CORE:-0}"
+AETHER_SOURCE="official"
+AETHER_STAMP_COMMIT="$AETHER_COMMIT"
+CUSTOM_ROOT="$ROOT/vendor/aether"
+if [[ "$CUSTOM_CORE" == "1" ]]; then
+  command -v cargo >/dev/null 2>&1 || { echo "cargo is required for custom Aether Android builds" >&2; exit 2; }
+  [[ -f "$CUSTOM_ROOT/aether/Cargo.toml" ]] || {
+    echo "Custom Aether submodule is missing; initialize vendor/aether first" >&2
+    exit 2
+  }
+  AETHER_SOURCE="custom"
+  AETHER_STAMP_COMMIT="$(git -C "$CUSTOM_ROOT" rev-parse HEAD)"
+  CUSTOM_VERSION="$(node -e '
+const fs=require("fs");
+const text=fs.readFileSync(process.argv[1],"utf8");
+const block=(text.match(/\[package\][\s\S]*?(?=\n\[|$)/)||[""])[0];
+const m=block.match(/^version\s*=\s*"([^"]+)"/m);
+if(!m) process.exit(2);
+process.stdout.write(m[1]);
+' "$CUSTOM_ROOT/aether/Cargo.toml")" || {
+    echo "Could not read custom Aether version" >&2
+    exit 2
+  }
+  [[ "v$CUSTOM_VERSION" == "$AETHER_VERSION" ]] || {
+    echo "Custom Aether version v$CUSTOM_VERSION does not match runtime baseline $AETHER_VERSION" >&2
+    exit 2
+  }
+fi
+
 PLUGIN_ANDROID="$ROOT/src-tauri/plugins/aether-vpn/android"
 OUT="$PLUGIN_ANDROID/src/main/jniLibs/arm64-v8a"
 LICENSES="$PLUGIN_ANDROID/src/main/assets/licenses"
 STAMP="$PLUGIN_ANDROID/.native-versions.json"
-EXPECTED_STAMP="{\"aether\":\"$AETHER_VERSION\",\"aether_commit\":\"$AETHER_COMMIT\",\"hev\":\"$HEV_VERSION\",\"api\":$ANDROID_API}"
+EXPECTED_STAMP="{\"aether\":\"$AETHER_VERSION\",\"aether_source\":\"$AETHER_SOURCE\",\"aether_commit\":\"$AETHER_STAMP_COMMIT\",\"hev\":\"$HEV_VERSION\",\"api\":$ANDROID_API}"
 if [[ -f "$OUT/libaether_exec.so" && -f "$OUT/libhev-socks5-tunnel.so" && -f "$OUT/libaethertun.so" && -f "$STAMP" && "$(tr -d '\r\n ' < "$STAMP")" == "$EXPECTED_STAMP" ]]; then
-  echo "[android-native] pinned ARM64 bundle already prepared"
+  echo "[android-native] pinned ARM64 bundle already prepared ($AETHER_SOURCE Aether)"
   exit 0
 fi
 
@@ -56,9 +85,25 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   HEADERS+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
 fi
 
-RELEASE_JSON="$(curl -fsSL --retry 5 --retry-all-errors "${HEADERS[@]}" \
-  "https://api.github.com/repos/CluvexStudio/Aether/releases/tags/$AETHER_VERSION")"
-AETHER_META="$(printf '%s' "$RELEASE_JSON" | EXPECTED_TAG="$AETHER_VERSION" node -e '
+if [[ "$CUSTOM_CORE" == "1" ]]; then
+  if ! cargo ndk --version >/dev/null 2>&1; then
+    echo "cargo-ndk is required for custom Aether Android builds" >&2
+    exit 3
+  fi
+  (
+    cd "$CUSTOM_ROOT/aether"
+    ANDROID_NDK_HOME="$NDK" ANDROID_NDK_ROOT="$NDK" \
+      cargo ndk -t arm64-v8a --platform "$ANDROID_API" build --release
+  )
+  AETHER_BIN="$CUSTOM_ROOT/aether/target/aarch64-linux-android/release/aether"
+  [[ -f "$AETHER_BIN" ]] || { echo "Custom Aether ARM64 executable was not produced" >&2; exit 3; }
+  install -m 0755 "$AETHER_BIN" "$OUT/libaether_exec.so"
+  [[ -f "$CUSTOM_ROOT/LICENSE" ]] || { echo "Custom Aether license file is missing" >&2; exit 3; }
+  install -m 0644 "$CUSTOM_ROOT/LICENSE" "$LICENSES/Aether-AGPL-3.0.txt"
+else
+  RELEASE_JSON="$(curl -fsSL --retry 5 --retry-all-errors "${HEADERS[@]}" \
+    "https://api.github.com/repos/CluvexStudio/Aether/releases/tags/$AETHER_VERSION")"
+  AETHER_META="$(printf '%s' "$RELEASE_JSON" | EXPECTED_TAG="$AETHER_VERSION" node -e '
 let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{
   const r=JSON.parse(s);
   if(r.tag_name!==process.env.EXPECTED_TAG) process.exit(2);
@@ -67,22 +112,23 @@ let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{
   process.stdout.write(`${a.browser_download_url}\t${a.digest.slice(7)}`);
 });
 ')" || { echo "Official Aether ARM64 release asset/digest was not found" >&2; exit 3; }
-IFS=$'\t' read -r AETHER_URL AETHER_SHA <<< "$AETHER_META"
-AETHER_ARCHIVE="$TMP/aether.tar.gz"
-curl -fsSL --retry 5 --retry-all-errors "${HEADERS[@]}" -o "$AETHER_ARCHIVE" "$AETHER_URL"
-ACTUAL_AETHER_SHA="$(sha256_file "$AETHER_ARCHIVE")"
-EXPECTED_AETHER_SHA="$(printf '%s' "$AETHER_SHA" | tr '[:upper:]' '[:lower:]')"
-[[ "$ACTUAL_AETHER_SHA" == "$EXPECTED_AETHER_SHA" ]] || {
-  echo "Aether Android release checksum mismatch" >&2
-  exit 3
-}
-mkdir -p "$TMP/aether"
-tar -xzf "$AETHER_ARCHIVE" -C "$TMP/aether"
-AETHER_BIN="$(find "$TMP/aether" -type f -name aether -print -quit)"
-[[ -n "$AETHER_BIN" ]] || { echo "Aether executable missing from release archive" >&2; exit 3; }
-install -m 0755 "$AETHER_BIN" "$OUT/libaether_exec.so"
-curl -fsSL --retry 3 -o "$LICENSES/Aether-AGPL-3.0.txt" \
-  "https://raw.githubusercontent.com/CluvexStudio/Aether/$AETHER_COMMIT/LICENSE"
+  IFS=$'\t' read -r AETHER_URL AETHER_SHA <<< "$AETHER_META"
+  AETHER_ARCHIVE="$TMP/aether.tar.gz"
+  curl -fsSL --retry 5 --retry-all-errors "${HEADERS[@]}" -o "$AETHER_ARCHIVE" "$AETHER_URL"
+  ACTUAL_AETHER_SHA="$(sha256_file "$AETHER_ARCHIVE")"
+  EXPECTED_AETHER_SHA="$(printf '%s' "$AETHER_SHA" | tr '[:upper:]' '[:lower:]')"
+  [[ "$ACTUAL_AETHER_SHA" == "$EXPECTED_AETHER_SHA" ]] || {
+    echo "Aether Android release checksum mismatch" >&2
+    exit 3
+  }
+  mkdir -p "$TMP/aether"
+  tar -xzf "$AETHER_ARCHIVE" -C "$TMP/aether"
+  AETHER_BIN="$(find "$TMP/aether" -type f -name aether -print -quit)"
+  [[ -n "$AETHER_BIN" ]] || { echo "Aether executable missing from release archive" >&2; exit 3; }
+  install -m 0755 "$AETHER_BIN" "$OUT/libaether_exec.so"
+  curl -fsSL --retry 3 -o "$LICENSES/Aether-AGPL-3.0.txt" \
+    "https://raw.githubusercontent.com/CluvexStudio/Aether/$AETHER_COMMIT/LICENSE"
+fi
 
 HEV_SRC="$TMP/hev"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$HEV_VERSION" --recurse-submodules \
@@ -138,4 +184,4 @@ done
   exit 5
 }
 printf '%s\n' "$EXPECTED_STAMP" > "$STAMP"
-echo "[android-native] Aether $AETHER_VERSION + HEV $HEV_VERSION ARM64 bundle prepared"
+echo "[android-native] Aether $AETHER_VERSION ($AETHER_SOURCE) + HEV $HEV_VERSION ARM64 bundle prepared"
