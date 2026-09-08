@@ -6,35 +6,76 @@ import {
   recordPathFailure,
   recordPathSuccess,
   type ObservedPath,
+  type PathHealth,
+  type PathTransport,
 } from "@/lib/pathIntelligence";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
 
 const STORAGE_KEY = "aether.path-intelligence.v1";
+const TRANSPORTS = new Set<PathTransport>(["h2", "h3", "wg", "gool", "unknown"]);
+const HEALTH_STATES = new Set<PathHealth>(["healthy", "suspect", "failed"]);
 
 interface PathStore {
   paths: ObservedPath[];
   clear: () => void;
 }
 
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function nullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizePersistedPath(item: unknown): ObservedPath | null {
+  if (item == null || typeof item !== "object") return null;
+  const path = item as Partial<ObservedPath>;
+  if (typeof path.id !== "string" || typeof path.endpoint !== "string") return null;
+  if (typeof path.transport !== "string" || !TRANSPORTS.has(path.transport as PathTransport)) {
+    return null;
+  }
+
+  const successes = Math.max(0, Math.floor(finiteOr(path.successes, 0)));
+  const failures = Math.max(0, Math.floor(finiteOr(path.failures, 0)));
+  const observations = successes + failures;
+  const health =
+    typeof path.health === "string" && HEALTH_STATES.has(path.health as PathHealth)
+      ? (path.health as PathHealth)
+      : observations > 0 && successes >= failures
+        ? "healthy"
+        : "suspect";
+
+  return {
+    id: path.id,
+    endpoint: path.endpoint,
+    transport: path.transport as PathTransport,
+    health,
+    successes,
+    failures,
+    consecutiveFailures: Math.max(0, Math.floor(finiteOr(path.consecutiveFailures, 0))),
+    lastSuccessAt: nullableNumber(path.lastSuccessAt),
+    lastFailureAt: nullableNumber(path.lastFailureAt),
+    lastSeenAt: finiteOr(path.lastSeenAt, Date.now()),
+    confidence:
+      typeof path.confidence === "number" && Number.isFinite(path.confidence)
+        ? Math.min(1, Math.max(0, path.confidence))
+        : Math.min(1, observations / 8),
+    latencyMs: nullableNumber(path.latencyMs),
+    countryCode: typeof path.countryCode === "string" ? path.countryCode.toUpperCase() : null,
+    cooldownUntil: nullableNumber(path.cooldownUntil),
+  };
+}
+
 function loadPersistedPaths(): ObservedPath[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as unknown;
     if (!Array.isArray(parsed)) return [];
-
     return rankPaths(
-      parsed.filter((item): item is ObservedPath => {
-        if (item == null || typeof item !== "object") return false;
-        const path = item as Partial<ObservedPath>;
-        return (
-          typeof path.id === "string" &&
-          typeof path.endpoint === "string" &&
-          typeof path.transport === "string" &&
-          typeof path.successes === "number" &&
-          typeof path.failures === "number" &&
-          typeof path.lastSeenAt === "number"
-        );
-      }),
+      parsed
+        .map(normalizePersistedPath)
+        .filter((path): path is ObservedPath => path !== null),
     ).slice(0, MAX_PATHS);
   } catch {
     return [];
@@ -107,8 +148,7 @@ export function initPathIntelligence(): () => void {
     if (
       connection.status.state !== "Error" ||
       connection.attemptId <= 0 ||
-      connection.attemptId === lastFailureAttempt ||
-      connection.attemptId === lastSuccessAttempt
+      connection.attemptId === lastFailureAttempt
     ) {
       return;
     }
@@ -119,7 +159,6 @@ export function initPathIntelligence(): () => void {
 
   const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
     if (state.attemptId !== previous.attemptId) {
-      // A new attempt may legitimately use the same profile; dedupe is per attempt, not per path.
       maybeRecordSuccess();
       maybeRecordFailure();
       return;
