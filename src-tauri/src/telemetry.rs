@@ -6,8 +6,9 @@ use crate::state::ConnectionState;
 use crate::traffic::{self, TrafficStats};
 use crate::tunnel_validation::{TunnelProbe, TunnelValidation};
 use serde::Serialize;
+use std::io::Write;
 use std::net::IpAddr;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -19,7 +20,13 @@ const ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
 const ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 const IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(15);
 const PROBE_INTERVAL: Duration = Duration::from_secs(60);
+const CAPACITY_FIRST_DELAY: Duration = Duration::from_secs(15);
+const CAPACITY_PROBE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const TRACE_URL: &str = "https://www.cloudflare.com/cdn-cgi/trace";
+const CAPACITY_DOWN_BYTES: u64 = 64 * 1024;
+const CAPACITY_UP_BYTES: usize = 32 * 1024;
+const CAPACITY_DOWN_URL: &str = "https://speed.cloudflare.com/__down?bytes=65536";
+const CAPACITY_UP_URL: &str = "https://speed.cloudflare.com/__up";
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct RuntimeTelemetry {
@@ -37,6 +44,10 @@ pub struct RuntimeTelemetry {
     pub jitter_ms: Option<u64>,
     pub quality_score: u8,
     pub quality_confidence: u8,
+    pub capacity_probe_complete: bool,
+    pub download_kbps: Option<u64>,
+    pub upload_kbps: Option<u64>,
+    pub upload_limited: bool,
 }
 
 #[derive(Debug, Default)]
@@ -53,6 +64,13 @@ struct EgressProbe {
     public_ip: String,
     country_code: Option<String>,
     latency_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CapacityProbe {
+    download_kbps: u64,
+    upload_kbps: u64,
+    upload_limited: bool,
 }
 
 static TELEMETRY: OnceLock<Mutex<TelemetryState>> = OnceLock::new();
@@ -82,6 +100,15 @@ fn validation_for(state: &TelemetryState) -> TunnelValidation {
         latency_ms: state.health.latency_ms,
     }
     .validate()
+}
+
+fn quality_for(state: &TelemetryState) -> path_score::PathScore {
+    path_score::calculate_with_capacity(
+        &state.health,
+        state.snapshot.download_kbps,
+        state.snapshot.upload_kbps,
+        state.snapshot.upload_limited,
+    )
 }
 
 fn reset_session(app: &AppHandle, raw_traffic: Option<TrafficStats>, tunnel_required: bool) {
@@ -180,7 +207,7 @@ fn publish_probe_result(app: &AppHandle, token: u64, result: Result<EgressProbe,
             }
         }
 
-        let quality = path_score::calculate(&state.health);
+        let quality = quality_for(&state);
         state.snapshot.path_health = state.health.health;
         state.snapshot.probe_failures = state.health.failures;
         state.snapshot.smoothed_latency_ms = state.health.smoothed_latency_ms;
@@ -195,9 +222,39 @@ fn publish_probe_result(app: &AppHandle, token: u64, result: Result<EgressProbe,
     }
 }
 
+fn publish_capacity_result(app: &AppHandle, token: u64, result: Result<CapacityProbe, String>) {
+    if SESSION_TOKEN.load(Ordering::SeqCst) != token {
+        return;
+    }
+    let Ok(probe) = result else {
+        return;
+    };
+
+    let payload = telemetry_state().lock().ok().map(|mut state| {
+        state.snapshot.capacity_probe_complete = true;
+        state.snapshot.download_kbps = Some(probe.download_kbps);
+        state.snapshot.upload_kbps = Some(probe.upload_kbps);
+        state.snapshot.upload_limited = probe.upload_limited;
+        state.snapshot.sampled_at_ms = now_millis();
+        let quality = quality_for(&state);
+        state.snapshot.quality_score = quality.score;
+        state.snapshot.quality_confidence = quality.confidence;
+        state.snapshot.clone()
+    });
+    if let Some(payload) = payload {
+        emit_snapshot(app, payload);
+    }
+}
+
 fn spawn_egress_probe(app: AppHandle, token: u64, socks_addr: String) {
     std::thread::spawn(move || {
         publish_probe_result(&app, token, probe_egress(&socks_addr));
+    });
+}
+
+fn spawn_capacity_probe(app: AppHandle, token: u64, socks_addr: String) {
+    std::thread::spawn(move || {
+        publish_capacity_result(&app, token, probe_capacity(&socks_addr));
     });
 }
 
@@ -225,6 +282,7 @@ pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
     std::thread::spawn(move || {
         let mut active_session: Option<u64> = None;
         let mut next_probe: Option<Instant> = None;
+        let mut next_capacity_probe: Option<Instant> = None;
 
         loop {
             let status = runtime.status();
@@ -235,6 +293,7 @@ pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
                     active_session = Some(connected_at_ms);
                     reset_session(&app, raw, tunnel_required);
                     next_probe = None;
+                    next_capacity_probe = Some(Instant::now() + CAPACITY_FIRST_DELAY);
                 } else {
                     add_traffic_sample(&app, raw, tunnel_required);
                 }
@@ -243,12 +302,24 @@ pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
                 if next_probe.map(|deadline| now >= deadline).unwrap_or(true) {
                     next_probe = Some(now + PROBE_INTERVAL);
                     let token = SESSION_TOKEN.load(Ordering::SeqCst);
-                    spawn_egress_probe(app.clone(), token, socks_addr);
+                    spawn_egress_probe(app.clone(), token, socks_addr.clone());
+                }
+
+                let capacity_ready = snapshot().path_health == PathHealth::Healthy;
+                if capacity_ready
+                    && next_capacity_probe
+                        .map(|deadline| now >= deadline)
+                        .unwrap_or(false)
+                {
+                    next_capacity_probe = Some(now + CAPACITY_PROBE_INTERVAL);
+                    let token = SESSION_TOKEN.load(Ordering::SeqCst);
+                    spawn_capacity_probe(app.clone(), token, socks_addr);
                 }
                 std::thread::sleep(ACTIVE_SAMPLE_INTERVAL);
             } else {
                 if active_session.take().is_some() {
                     next_probe = None;
+                    next_capacity_probe = None;
                     reset_session(&app, None, false);
                 }
                 std::thread::sleep(IDLE_SAMPLE_INTERVAL);
@@ -294,6 +365,114 @@ fn probe_egress(socks_addr: &str) -> Result<EgressProbe, String> {
         return Err(format!("telemetry probe exited with {}", output.status));
     }
     parse_trace(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn null_device() -> &'static str {
+    if cfg!(windows) { "NUL" } else { "/dev/null" }
+}
+
+fn base_capacity_command(socks_addr: &str) -> Command {
+    let curl = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let mut command = Command::new(curl);
+    command
+        .args([
+            "-fsS",
+            "--connect-timeout",
+            "4",
+            "--max-time",
+            "8",
+            "--proxy",
+        ])
+        .arg(format!("socks5h://{socks_addr}"))
+        .args(["--output", null_device()]);
+    hide_console_window(&mut command);
+    command
+}
+
+fn probe_capacity(socks_addr: &str) -> Result<CapacityProbe, String> {
+    let download_kbps = probe_download_capacity(socks_addr)?;
+    let upload_kbps = probe_upload_capacity(socks_addr)?;
+    Ok(CapacityProbe {
+        download_kbps,
+        upload_kbps,
+        upload_limited: classify_upload_limited(download_kbps, upload_kbps),
+    })
+}
+
+fn probe_download_capacity(socks_addr: &str) -> Result<u64, String> {
+    let mut command = base_capacity_command(socks_addr);
+    command.args([
+        "--write-out",
+        "__aether_speed=%{speed_download}\n",
+        CAPACITY_DOWN_URL,
+    ]);
+    let output = command
+        .output()
+        .map_err(|error| format!("failed to launch bounded download probe: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("bounded download probe exited with {}", output.status));
+    }
+    parse_speed_kbps(&String::from_utf8_lossy(&output.stdout), CAPACITY_DOWN_BYTES)
+}
+
+fn probe_upload_capacity(socks_addr: &str) -> Result<u64, String> {
+    let mut command = base_capacity_command(socks_addr);
+    command
+        .args([
+            "--request",
+            "POST",
+            "--header",
+            "Content-Type: application/octet-stream",
+            "--data-binary",
+            "@-",
+            "--write-out",
+            "__aether_speed=%{speed_upload}\n",
+            CAPACITY_UP_URL,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to launch bounded upload probe: {error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(&vec![0u8; CAPACITY_UP_BYTES])
+            .map_err(|error| format!("failed to feed bounded upload probe: {error}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("bounded upload probe failed to finish: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("bounded upload probe exited with {}", output.status));
+    }
+    parse_speed_kbps(
+        &String::from_utf8_lossy(&output.stdout),
+        CAPACITY_UP_BYTES as u64,
+    )
+}
+
+fn parse_speed_kbps(output: &str, transferred_bytes: u64) -> Result<u64, String> {
+    let bytes_per_second = output
+        .lines()
+        .find_map(|line| line.strip_prefix("__aether_speed="))
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| "bounded capacity probe did not report transfer speed".to_string())?;
+
+    // curl reports bytes/second. Guard against a misleading near-zero sample
+    // on a response that did not actually transfer the requested payload.
+    if transferred_bytes == 0 {
+        return Err("bounded capacity probe transferred no payload".to_string());
+    }
+    Ok(((bytes_per_second * 8.0) / 1000.0).round().max(1.0) as u64)
+}
+
+fn classify_upload_limited(download_kbps: u64, upload_kbps: u64) -> bool {
+    download_kbps >= 512
+        && upload_kbps < 128
+        && upload_kbps.saturating_mul(8) < download_kbps
 }
 
 fn parse_trace(output: &str) -> Result<EgressProbe, String> {
@@ -352,6 +531,18 @@ mod tests {
     #[test]
     fn rejects_trace_without_valid_ip() {
         assert!(parse_trace("ip=not-an-ip\nloc=US\n__aether_time_total=0.1\n").is_err());
+    }
+
+    #[test]
+    fn parses_capacity_speed_as_kilobits() {
+        assert_eq!(parse_speed_kbps("__aether_speed=125000\n", 65_536).unwrap(), 1000);
+    }
+
+    #[test]
+    fn severe_low_upload_is_flagged_without_penalizing_normal_asymmetry() {
+        assert!(classify_upload_limited(4_000, 80));
+        assert!(!classify_upload_limited(4_000, 800));
+        assert!(!classify_upload_limited(300, 40));
     }
 
     #[test]
