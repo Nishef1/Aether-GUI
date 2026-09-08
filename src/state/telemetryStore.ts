@@ -77,7 +77,10 @@ async function waitForTransportStop(epoch: number): Promise<boolean> {
 
     try {
       const status = await invoke<ConnectionStatus>("get_status");
-      useConnectionStore.setState({ status });
+      const currentStatus = useConnectionStore.getState().status;
+      if (currentStatus.state !== status.state) {
+        useConnectionStore.setState({ status });
+      }
       if (status.state === "Idle" || status.state === "Error") return true;
     } catch {
       // Native disconnect can briefly cross a lifecycle boundary. Retry until timeout.
@@ -95,14 +98,12 @@ async function rerollPrivacyExit(epoch: number): Promise<void> {
     const policy = useExitPolicyStore.getState();
     if (policy.automationEpoch !== epoch || policy.preference !== "privacy") return;
 
-    const profile = useConnectionStore.getState().profile;
-    // A privacy reroll must perform fresh discovery. Reusing the previous quick
-    // route can deterministically reproduce the same WARP egress.
-    const rerollProfile = { ...profile, quick_reconnect: false };
+    const connection = useConnectionStore.getState();
+    const rerollProfile = { ...connection.profile, quick_reconnect: false };
+    connection.clearLogs();
     clearTelemetry();
     useConnectionStore.setState((state) => ({
       status: { state: "Launching" },
-      logs: [],
       accessCodeRequired: false,
       attemptId: state.attemptId + 1,
     }));
