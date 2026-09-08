@@ -21,6 +21,9 @@ export interface ObservedPath {
   lastSeenAt: number;
   confidence: number;
   latencyMs: number | null;
+  jitterMs: number | null;
+  qualityScore: number | null;
+  qualityConfidence: number | null;
   countryCode: string | null;
   cooldownUntil: number | null;
 }
@@ -100,6 +103,9 @@ export function createObservedPath(
     lastSeenAt: now,
     confidence: 0,
     latencyMs: null,
+    jitterMs: null,
+    qualityScore: null,
+    qualityConfidence: null,
     countryCode: null,
     cooldownUntil: null,
   };
@@ -109,9 +115,22 @@ function confidenceFor(successes: number, failures: number): number {
   return Math.min(1, (successes + failures) / CONFIDENCE_SAMPLE_TARGET);
 }
 
+function boundedPercent(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(100, Math.max(0, value))
+    : null;
+}
+
 export function recordPathSuccess(
   path: ObservedPath,
-  input: { latencyMs: number | null; countryCode: string | null; now?: number },
+  input: {
+    latencyMs: number | null;
+    jitterMs?: number | null;
+    qualityScore?: number | null;
+    qualityConfidence?: number | null;
+    countryCode: string | null;
+    now?: number;
+  },
 ): ObservedPath {
   const now = input.now ?? Date.now();
   const successes = path.successes + 1;
@@ -124,6 +143,9 @@ export function recordPathSuccess(
     lastSeenAt: now,
     confidence: confidenceFor(successes, path.failures),
     latencyMs: input.latencyMs ?? path.latencyMs,
+    jitterMs: input.jitterMs ?? path.jitterMs,
+    qualityScore: boundedPercent(input.qualityScore) ?? path.qualityScore,
+    qualityConfidence: boundedPercent(input.qualityConfidence) ?? path.qualityConfidence,
     countryCode: input.countryCode?.toUpperCase() ?? path.countryCode,
     cooldownUntil: null,
   };
@@ -131,7 +153,11 @@ export function recordPathSuccess(
 
 export function recordPathFailure(
   path: ObservedPath,
-  input: { now?: number } = {},
+  input: {
+    now?: number;
+    qualityScore?: number | null;
+    qualityConfidence?: number | null;
+  } = {},
 ): ObservedPath {
   const now = input.now ?? Date.now();
   const failures = path.failures + 1;
@@ -146,6 +172,8 @@ export function recordPathFailure(
     lastFailureAt: now,
     lastSeenAt: now,
     confidence: confidenceFor(path.successes, failures),
+    qualityScore: boundedPercent(input.qualityScore) ?? path.qualityScore,
+    qualityConfidence: boundedPercent(input.qualityConfidence) ?? path.qualityConfidence,
     cooldownUntil: cooldownMs > 0 ? now + cooldownMs : null,
   };
 }
@@ -156,16 +184,27 @@ export function scorePath(path: ObservedPath, now = Date.now()): number {
   const observations = path.successes + path.failures;
   const reliability = observations === 0 ? 0 : path.successes / observations;
   const latencyPenalty = path.latencyMs == null ? 0 : Math.min(path.latencyMs / 1000, 1);
+  const jitterPenalty = path.jitterMs == null ? 0 : Math.min(path.jitterMs / 500, 1);
   const healthBonus = path.health === "healthy" ? 1 : path.health === "suspect" ? 0.35 : 0;
-  const freshness = Math.max(0, 1 - (now - path.lastSeenAt) / FRESHNESS_WINDOW_MS);
+  const freshness = Math.max(0, 1 - Math.max(0, now - path.lastSeenAt) / FRESHNESS_WINDOW_MS);
+
+  // Native quality already folds latency, jitter and recent probe health together.
+  // Older persisted entries have no quality sample, so keep them neutral rather
+  // than penalizing them until the next successful observation migrates them.
+  const qualityEvidence =
+    path.qualityScore == null
+      ? 0.5
+      : (path.qualityScore / 100) * (0.5 + ((path.qualityConfidence ?? 0) / 100) * 0.5);
 
   return Math.max(
     0,
-    reliability * 0.42 +
-      path.confidence * 0.22 +
-      healthBonus * 0.18 +
-      freshness * 0.18 -
-      latencyPenalty * 0.08,
+    reliability * 0.34 +
+      path.confidence * 0.16 +
+      healthBonus * 0.16 +
+      freshness * 0.14 +
+      qualityEvidence * 0.2 -
+      latencyPenalty * 0.05 -
+      jitterPenalty * 0.03,
   );
 }
 

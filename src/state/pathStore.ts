@@ -37,6 +37,12 @@ function nullableNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function boundedPercent(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(100, Math.max(0, value))
+    : null;
+}
+
 function normalizePersistedPath(item: unknown): ObservedPath | null {
   if (item == null || typeof item !== "object") return null;
   const path = item as Partial<ObservedPath>;
@@ -71,6 +77,9 @@ function normalizePersistedPath(item: unknown): ObservedPath | null {
         ? Math.min(1, Math.max(0, path.confidence))
         : Math.min(1, observations / 8),
     latencyMs: nullableNumber(path.latencyMs),
+    jitterMs: nullableNumber(path.jitterMs),
+    qualityScore: boundedPercent(path.qualityScore),
+    qualityConfidence: boundedPercent(path.qualityConfidence),
     countryCode: typeof path.countryCode === "string" ? path.countryCode.toUpperCase() : null,
     cooldownUntil: nullableNumber(path.cooldownUntil),
   };
@@ -169,7 +178,6 @@ export function initPathIntelligence(): () => void {
     const telemetry = useTelemetryStore.getState().snapshot;
     if (!telemetryProvesHealthy(telemetry)) return;
 
-    // Native failures reset after a successful probe, so mirror that locally.
     lastProbeFailureCount = 0;
     const sessionKey = stableSessionKey(connection.status, connection.attemptId);
     if (
@@ -185,6 +193,9 @@ export function initPathIntelligence(): () => void {
       (path) =>
         recordPathSuccess(path, {
           latencyMs: telemetry.smoothed_latency_ms ?? telemetry.latency_ms,
+          jitterMs: telemetry.jitter_ms ?? null,
+          qualityScore: telemetry.quality_score ?? null,
+          qualityConfidence: telemetry.quality_confidence ?? null,
           countryCode: telemetry.country_code,
         }),
       selectionForAttempt(connection.attemptId),
@@ -206,7 +217,11 @@ export function initPathIntelligence(): () => void {
 
     lastProbeFailureCount = probeFailures;
     updatePath(
-      (path) => recordPathFailure(path),
+      (path) =>
+        recordPathFailure(path, {
+          qualityScore: telemetry.quality_score ?? null,
+          qualityConfidence: telemetry.quality_confidence ?? null,
+        }),
       selectionForAttempt(connection.attemptId),
     );
   };
@@ -259,7 +274,9 @@ export function initPathIntelligence(): () => void {
     if (
       state.snapshot.egress_probe_complete !== previous.snapshot.egress_probe_complete ||
       state.snapshot.path_health !== previous.snapshot.path_health ||
-      state.snapshot.probe_failures !== previous.snapshot.probe_failures
+      state.snapshot.probe_failures !== previous.snapshot.probe_failures ||
+      state.snapshot.quality_score !== previous.snapshot.quality_score ||
+      state.snapshot.quality_confidence !== previous.snapshot.quality_confidence
     ) {
       maybeRecordSuccess();
       maybeRecordProbeFailure();
