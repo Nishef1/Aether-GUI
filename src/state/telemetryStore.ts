@@ -28,6 +28,8 @@ interface TelemetryStore {
   retryPrivacyExit: () => void;
 }
 
+let refreshInFlight: Promise<void> | null = null;
+
 function isConnected(): boolean {
   const state = useConnectionStore.getState().status.state;
   return state === "Connected" || state === "StartingTunnel" || state === "Tunneling";
@@ -152,26 +154,36 @@ function evaluateExitPolicy(snapshot: RuntimeTelemetry): void {
   if (epoch != null) void rerollPrivacyExit(epoch);
 }
 
-export const useTelemetryStore = create<TelemetryStore>(() => ({
-  snapshot: { ...EMPTY_TELEMETRY },
-  refresh: async () => {
-    if (
-      isAndroid &&
-      !canCollectTelemetry({
-        visible: document.visibilityState === "visible",
-        connected: isConnected(),
-      })
-    ) {
-      return;
-    }
+async function refreshTelemetry(): Promise<void> {
+  if (
+    isAndroid &&
+    !canCollectTelemetry({
+      visible: document.visibilityState === "visible",
+      connected: isConnected(),
+    })
+  ) {
+    return;
+  }
 
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
     try {
       const snapshot = await invoke<RuntimeTelemetry>("get_runtime_telemetry");
       publishTelemetry(snapshot);
     } catch {
       // Telemetry is supplementary and must never affect basic connectivity.
     }
-  },
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+
+  return refreshInFlight;
+}
+
+export const useTelemetryStore = create<TelemetryStore>(() => ({
+  snapshot: { ...EMPTY_TELEMETRY },
+  refresh: refreshTelemetry,
   retryPrivacyExit: () => {
     const policy = useExitPolicyStore.getState();
     if (policy.preference !== "privacy" || !isStableConnected()) return;
@@ -182,7 +194,9 @@ export const useTelemetryStore = create<TelemetryStore>(() => ({
 }));
 
 export async function initTelemetryListeners(): Promise<() => void> {
+  let lastEventAt = 0;
   const unlisten = await listen<RuntimeTelemetry>("aether://telemetry", (event) => {
+    lastEventAt = Date.now();
     publishTelemetry(event.payload);
   });
 
@@ -206,6 +220,7 @@ export async function initTelemetryListeners(): Promise<() => void> {
     const delay = nextTelemetryDelay({
       visible: document.visibilityState === "visible",
       connected: isConnected(),
+      probeComplete: useTelemetryStore.getState().snapshot.egress_probe_complete,
     });
     if (delay == null) return;
 
@@ -219,7 +234,10 @@ export async function initTelemetryListeners(): Promise<() => void> {
       });
       if (!collect) return;
 
-      await useTelemetryStore.getState().refresh();
+      const eventIsFresh = lastEventAt > 0 && Date.now() - lastEventAt < Math.max(1_000, delay * 0.75);
+      if (!eventIsFresh) {
+        await useTelemetryStore.getState().refresh();
+      }
       schedule();
     }, delay);
   };
