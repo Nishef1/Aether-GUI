@@ -30,6 +30,13 @@ requireContract(nativeProfile.includes("decodeNativeConnectionProfile"), "native
 requireContract(nativeProfile.includes("profileForNativeInvoke"), "native profile encoder is missing");
 requireContract(nativeProfile.includes("@profile="), "Android TLS bridge marker changed without a migration");
 
+const connectionStore = read("src/state/connectionStore.ts");
+requireContract(connectionStore.includes('from "@/lib/nativeProfile"'), "manual connect bypasses the shared native profile bridge");
+requireContract(connectionStore.includes("decodeNativeConnectionProfile(profile)"), "persisted Android profiles bypass the shared decoder");
+requireContract(connectionStore.includes("profileForNativeInvoke(profile)"), "manual connect bypasses the shared encoder");
+requireContract(!connectionStore.includes('const TLS_GROUPS_BRIDGE_PREFIX = "@profile="'), "connection store reintroduced a duplicate TLS bridge marker");
+requireContract(!connectionStore.includes("function decodeAndroidTlsBridge"), "connection store reintroduced a duplicate native decoder");
+
 const autoConnect = read("src/lib/autoConnect.ts");
 requireContract(autoConnect.includes("profileForNativeInvoke"), "Automatic v2 bypasses the shared native profile bridge");
 requireContract(autoConnect.includes("profileForNativeInvoke(profile)"), "Automatic candidate launch no longer encodes the native profile");
