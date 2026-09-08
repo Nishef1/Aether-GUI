@@ -45,22 +45,20 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            aether_asset: aether-linux-x86_64-musl.tar.gz
           - name: windows-x86_64
             os: windows-2025
             target: x86_64-pc-windows-msvc
-            aether_asset: aether-windows-x86_64.zip
           - name: macos-arm64
             os: macos-15
             target: aarch64-apple-darwin
-            aether_asset: aether-macos-arm64.tar.gz
           - name: macos-x86_64
             os: macos-15-intel
             target: x86_64-apple-darwin
-            aether_asset: aether-macos-x86_64.tar.gz
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - uses: actions/setup-node@v6
         with:
@@ -88,13 +86,14 @@ jobs:
       - name: Verify runtime version manifest
         run: npm run verify:runtimes
 
+      - name: Verify pinned custom Aether source
+        run: npm run verify:custom-core
+
       - name: Audit production dependencies
         if: runner.os == 'Linux'
         run: npm audit --omit=dev --audit-level=moderate
 
-      - name: Fetch verified official Aether core
-        env:
-          AETHER_ASSET: ${{ matrix.aether_asset }}
+      - name: Build pinned custom Aether core
         run: npm run prepare:aether
 
       - name: Prepare pinned sing-box sidecar
@@ -213,6 +212,8 @@ jobs:
           useradd --create-home builder
 
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Build native pacman package from this exact commit
         shell: bash
@@ -269,6 +270,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - uses: actions/setup-node@v6
         with:
@@ -287,6 +290,9 @@ jobs:
         with:
           targets: aarch64-linux-android
 
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
       - name: Install Android SDK and pinned NDK
         run: |
           yes 2>/dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
@@ -300,6 +306,9 @@ jobs:
 
       - name: Verify runtime version manifest
         run: npm run verify:runtimes
+
+      - name: Verify pinned custom Aether source
+        run: npm run verify:custom-core
 
       - name: Initialize generated Android project
         run: npm run android:init
@@ -329,7 +338,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: node scripts/ci/configure-android-release-signing.mjs
 
-      - name: Prepare verified Aether and HEV ARM64 libraries
+      - name: Prepare pinned custom Aether and HEV ARM64 libraries
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run prepare:android-native
@@ -339,9 +348,11 @@ jobs:
           node - <<'NODE'
           const fs = require("fs");
           const versions = require("./scripts/runtime-versions.json");
+          const custom = require("./scripts/ci/custom-core-pin.json");
           const stamp = JSON.parse(fs.readFileSync("src-tauri/plugins/aether-vpn/android/.native-versions.json", "utf8"));
           if (stamp.aether !== versions.aether.version) throw new Error(`Android core ${stamp.aether} != ${versions.aether.version}`);
-          if (stamp.aether_commit !== versions.aether.commit) throw new Error("Android core commit mismatch");
+          if (stamp.aether_source !== "custom") throw new Error(`Android core source ${stamp.aether_source} != custom`);
+          if (stamp.aether_commit !== custom.commit) throw new Error(`Android custom core ${stamp.aether_commit} != ${custom.commit}`);
           if (stamp.hev !== versions.hev.version) throw new Error(`Android HEV ${stamp.hev} != ${versions.hev.version}`);
           NODE
 
@@ -408,14 +419,13 @@ jobs:
 
           This release updates the transport stack and hardens the cross-platform full-device tunnel path.
 
-          - Aether Core v1.9.0.
+          - Aether Core v1.9.0 (pinned custom build).
           - sing-box v1.14.0 for desktop system-wide TUN.
           - HEV v2.14.4 for the Android ARM64 VpnService data path.
-          - Windows, Linux, macOS Intel/Apple Silicon and signed Android ARM64 packages built from the same commit.
+          - Windows, Linux, macOS Intel/Apple Silicon and signed Android ARM64 packages built from the same GUI commit and pinned Core source.
           - Verified public-IP/exit-location telemetry, session traffic counters and connection timing.
           - Lower background telemetry/animation overhead and reduced-motion handling.
-          - Larger, lower Android connect control and refreshed ambient background.
-          - Fail-closed desktop/Android tunnel supervision and data-plane verification retained.
+          - Fail-closed desktop/Android tunnel supervision and data-plane validation retained.
 
           SHA-256 checksums are attached as `SHA256SUMS.txt`.
           EOF
