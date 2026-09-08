@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter};
 
 pub const DEFAULT_ENGINE_ID: &str = "aether";
 const ACCESS_CODE_INTERACTION: &str = "access-code";
+const TUNNEL_STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const TUNNEL_ACTIVE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct EngineDescriptor {
@@ -253,6 +255,7 @@ impl EngineRuntime {
                 return;
             }
 
+            let mut next_poll = TUNNEL_STARTUP_POLL_INTERVAL;
             match adapter.status() {
                 ConnectionState::Connected {
                     socks_addr,
@@ -289,7 +292,11 @@ impl EngineRuntime {
                                 .finish_system_tunnel_failure(&app, &adapter, generation, message);
                             return;
                         }
-                        Ok(None) => {}
+                        Ok(None) => {
+                            if runtime.system_tunnel.is_active() {
+                                next_poll = TUNNEL_ACTIVE_POLL_INTERVAL;
+                            }
+                        }
                         Err(error) => {
                             runtime.finish_system_tunnel_failure(
                                 &app,
@@ -312,10 +319,12 @@ impl EngineRuntime {
                     runtime.system_tunnel.stop_for_transport_loss(&app);
                     return;
                 }
-                ConnectionState::StartingTunnel { .. } | ConnectionState::Tunneling { .. } => {}
+                ConnectionState::StartingTunnel { .. } | ConnectionState::Tunneling { .. } => {
+                    next_poll = TUNNEL_ACTIVE_POLL_INTERVAL;
+                }
             }
 
-            std::thread::sleep(Duration::from_millis(250));
+            std::thread::sleep(next_poll);
         });
     }
 
