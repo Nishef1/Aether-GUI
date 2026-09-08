@@ -16,6 +16,7 @@ pub fn connect(
     state: State<AppState>,
     profile_override: Option<ConnectionProfile>,
 ) -> Result<(), RuntimeError> {
+    crate::network_context::sync_process_environment();
     state.runtime.connect_aether(app, profile_override)
 }
 
@@ -69,6 +70,9 @@ pub fn connect_engine(
     engine_id: String,
     profile: Option<Value>,
 ) -> Result<(), RuntimeError> {
+    if engine_id == "aether" {
+        crate::network_context::sync_process_environment();
+    }
     state.runtime.connect(app, Some(&engine_id), profile)
 }
 
