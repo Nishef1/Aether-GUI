@@ -154,7 +154,7 @@ function telemetryProvesFailure(snapshot: RuntimeTelemetry): boolean {
 export function initPathIntelligence(): () => void {
   let selectedPath: AttemptPathSelection | null = null;
   let lastSuccessSession: string | null = null;
-  let lastProbeFailureSample = 0;
+  let lastProbeFailureCount = 0;
   let errorStateRecorded = false;
   let disposed = false;
   let unlistenPath: (() => void) | null = null;
@@ -167,13 +167,15 @@ export function initPathIntelligence(): () => void {
   const maybeRecordSuccess = () => {
     const connection = useConnectionStore.getState();
     const telemetry = useTelemetryStore.getState().snapshot;
-    const sessionKey = stableSessionKey(connection.status, connection.attemptId);
+    if (!telemetryProvesHealthy(telemetry)) return;
 
+    // Native failures reset after a successful probe, so mirror that locally.
+    lastProbeFailureCount = 0;
+    const sessionKey = stableSessionKey(connection.status, connection.attemptId);
     if (
       sessionKey == null ||
       connection.attemptId <= 0 ||
-      sessionKey === lastSuccessSession ||
-      !telemetryProvesHealthy(telemetry)
+      sessionKey === lastSuccessSession
     ) {
       return;
     }
@@ -192,17 +194,17 @@ export function initPathIntelligence(): () => void {
   const maybeRecordProbeFailure = () => {
     const connection = useConnectionStore.getState();
     const telemetry = useTelemetryStore.getState().snapshot;
+    const probeFailures = telemetry.probe_failures ?? 0;
     if (
       connection.attemptId <= 0 ||
       stableSessionKey(connection.status, connection.attemptId) == null ||
-      telemetry.sampled_at_ms <= 0 ||
-      telemetry.sampled_at_ms === lastProbeFailureSample ||
+      probeFailures <= lastProbeFailureCount ||
       !telemetryProvesFailure(telemetry)
     ) {
       return;
     }
 
-    lastProbeFailureSample = telemetry.sampled_at_ms;
+    lastProbeFailureCount = probeFailures;
     updatePath(
       (path) => recordPathFailure(path),
       selectionForAttempt(connection.attemptId),
@@ -241,7 +243,7 @@ export function initPathIntelligence(): () => void {
   const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
     if (state.attemptId !== previous.attemptId) {
       selectedPath = null;
-      lastProbeFailureSample = 0;
+      lastProbeFailureCount = 0;
       errorStateRecorded = false;
     }
 
@@ -256,8 +258,8 @@ export function initPathIntelligence(): () => void {
   const unsubscribeTelemetry = useTelemetryStore.subscribe((state, previous) => {
     if (
       state.snapshot.egress_probe_complete !== previous.snapshot.egress_probe_complete ||
-      state.snapshot.sampled_at_ms !== previous.snapshot.sampled_at_ms ||
-      state.snapshot.path_health !== previous.snapshot.path_health
+      state.snapshot.path_health !== previous.snapshot.path_health ||
+      state.snapshot.probe_failures !== previous.snapshot.probe_failures
     ) {
       maybeRecordSuccess();
       maybeRecordProbeFailure();

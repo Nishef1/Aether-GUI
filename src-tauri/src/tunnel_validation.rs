@@ -30,8 +30,12 @@ impl TunnelProbe {
             };
         }
 
+        // Starting a system tunnel and publishing its interface are separate
+        // lifecycle steps. Missing interface counters are therefore pending,
+        // not proof that the tunnel failed; the runtime supervisor owns hard
+        // failure detection.
         if !self.interface_up {
-            return TunnelValidation::Failed;
+            return TunnelValidation::Pending;
         }
         if !self.egress_ok {
             return TunnelValidation::Suspect;
@@ -52,12 +56,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_down_required_interface() {
+    fn missing_required_interface_stays_pending_during_startup() {
         let probe = TunnelProbe {
             required: true,
             ..TunnelProbe::default()
         };
-        assert_eq!(probe.validate(), TunnelValidation::Failed);
+        assert_eq!(probe.validate(), TunnelValidation::Pending);
     }
 
     #[test]
