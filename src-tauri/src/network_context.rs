@@ -110,6 +110,18 @@ pub fn current_network_key() -> Option<String> {
     Some(format!("route-v1:{:016x}", stable_hash(&material.join("|"))))
 }
 
+/// Keep the child Core's persisted path history scoped to the same underlay
+/// fingerprint used by the GUI. If the underlay cannot be identified, remove
+/// the variable so Core cannot accidentally replay another network's winners.
+pub fn sync_process_environment() -> Option<String> {
+    let key = current_network_key();
+    match key.as_deref() {
+        Some(value) => std::env::set_var("AETHER_NETWORK_KEY", value),
+        None => std::env::remove_var("AETHER_NETWORK_KEY"),
+    }
+    key
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
