@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, type Variants } from "motion/react";
 import { AlertTriangle, Check, Loader2, Power } from "lucide-react";
+import { cancelAutomaticConnect, connectWithAutomaticPolicy } from "@/lib/autoConnect";
 import { cn } from "@/lib/utils";
 import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
@@ -59,7 +60,6 @@ const ARIA_LABEL: Record<Phase, string> = {
 
 export function ConnectButton() {
   const status = useConnectionStore((state) => state.status);
-  const connect = useConnectionStore((state) => state.connect);
   const disconnect = useConnectionStore((state) => state.disconnect);
   const beginManualAttempt = useExitPolicyStore((state) => state.beginManualAttempt);
   const cancelAutomation = useExitPolicyStore((state) => state.cancelAutomation);
@@ -72,8 +72,9 @@ export function ConnectButton() {
   const handleClick = () => {
     if (phase === "idle" || phase === "error") {
       beginManualAttempt();
-      void connect();
+      void connectWithAutomaticPolicy();
     } else {
+      cancelAutomaticConnect();
       cancelAutomation();
       void disconnect();
     }
