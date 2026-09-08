@@ -63,6 +63,7 @@ fn main() {
             commands::get_system_tunnel,
             commands::set_system_tunnel,
             commands::get_runtime_telemetry,
+            commands::set_diagnostics_logging,
             commands::get_close_to_tray,
             commands::set_close_to_tray,
         ])
