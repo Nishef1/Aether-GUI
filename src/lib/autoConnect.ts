@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { automaticAttemptBudgetMs, buildAutomaticCandidates } from "@/lib/automaticPolicy";
 import { profileForNativeInvoke } from "@/lib/nativeProfile";
 import { useConnectionStore } from "@/state/connectionStore";
-import { usePathStore } from "@/state/pathStore";
+import { refreshPathNetworkContext, usePathStore } from "@/state/pathStore";
 import type { ConnectionProfile, ConnectionStatus } from "@/types/connection";
 
 const RECONCILE_MS = 750;
@@ -107,6 +107,11 @@ export async function connectWithAutomaticPolicy(): Promise<void> {
     return;
   }
 
+  // Historical ordering is only safe after the current underlay fingerprint is
+  // resolved. An unknown context intentionally produces an empty history and
+  // falls back to the baseline transport order instead of replaying another
+  // network's winner.
+  await refreshPathNetworkContext();
   const candidates = buildAutomaticCandidates(base, usePathStore.getState().paths);
   if (candidates.length === 0) {
     await connection.connect();
