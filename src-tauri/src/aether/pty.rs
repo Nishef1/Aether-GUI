@@ -2,7 +2,7 @@ use super::orphan;
 use super::profiles::{ConnectionProfile, ZeroTrustAuth};
 use super::prompts::{looks_like_choice_prompt, PROMPT_TABLE};
 use crate::error::AetherError;
-use crate::events::{now_millis, LogEvent};
+use crate::events::{now_millis, should_forward_log, LogEvent};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashSet;
 use std::io::{Read, Write};
@@ -168,6 +168,16 @@ pub fn spawn(
     })
 }
 
+fn forward_log(log_tx: &Sender<LogEvent>, line: String) {
+    if !should_forward_log(&line) {
+        return;
+    }
+    let _ = log_tx.send(LogEvent {
+        line,
+        timestamp: now_millis(),
+    });
+}
+
 fn read_loop(
     reader: &mut dyn Read,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -200,19 +210,16 @@ fn read_loop(
                     answered.remove(rule.id);
                 }
             }
-            let _ = log_tx.send(LogEvent {
-                line,
-                timestamp: now_millis(),
-            });
+            forward_log(&log_tx, line);
         }
 
         let partial = strip_terminal_sequences(&line_buf);
         let access_code_prompt = partial.contains("Enter the code:");
         if access_code_prompt && !code_prompt_visible {
-            let _ = log_tx.send(LogEvent {
-                line: "[gui] Zero Trust access code required".into(),
-                timestamp: now_millis(),
-            });
+            forward_log(
+                &log_tx,
+                "[gui] Zero Trust access code required".into(),
+            );
         }
         code_prompt_visible = access_code_prompt;
         if looks_like_choice_prompt(&partial)
@@ -229,10 +236,7 @@ fn read_loop(
                             let _ = writer.write_all(b"\r\n");
                             let _ = writer.flush();
                         }
-                        let _ = log_tx.send(LogEvent {
-                            line: format!("[gui] answered {section} → {answer}"),
-                            timestamp: now_millis(),
-                        });
+                        forward_log(&log_tx, format!("[gui] answered {section} → {answer}"));
                         answered.insert(section);
                         if answered.len() == PROMPT_TABLE.len() {
                             prompts_done.store(true, Ordering::Relaxed);
