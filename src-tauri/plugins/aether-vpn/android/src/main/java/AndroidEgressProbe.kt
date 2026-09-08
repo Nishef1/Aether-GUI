@@ -1,5 +1,6 @@
 package com.cluvexstudio.aethergui.vpn
 
+import java.io.ByteArrayOutputStream
 import java.io.EOFException
 import java.io.InputStream
 import java.net.Inet4Address
@@ -17,6 +18,12 @@ internal data class EgressProbeResult(
     val latencyMs: Long,
 )
 
+internal data class CapacityProbeResult(
+    val downloadKbps: Long,
+    val uploadKbps: Long,
+    val uploadLimited: Boolean,
+)
+
 /**
  * End-to-end SOCKS verification used as the definition of transport readiness.
  *
@@ -30,7 +37,11 @@ internal data class EgressProbeResult(
 internal object AndroidEgressProbe {
     private const val CONNECT_TIMEOUT_MS = 6_000
     private const val READ_TIMEOUT_MS = 8_000
+    private const val HTTP_HEAD_LIMIT = 16 * 1024
     private const val LITERAL_TCP_LABEL = "cloudflare-literal-tcp"
+    private const val CAPACITY_HOST = "speed.cloudflare.com"
+    private const val CAPACITY_DOWN_BYTES = 64 * 1024
+    private const val CAPACITY_UP_BYTES = 32 * 1024
 
     private data class Provider(
         val label: String,
@@ -119,9 +130,14 @@ internal object AndroidEgressProbe {
                         }
                 }
 
-                if (probe.countryCode != null) return probe
-                val geo = runCatching { probeProvider(proxyHost, proxyPort, geoProvider) }.getOrNull()
-                return probe.copy(countryCode = geo?.countryCode)
+                val finalProbe = if (probe.countryCode != null) {
+                    probe
+                } else {
+                    val geo = runCatching { probeProvider(proxyHost, proxyPort, geoProvider) }.getOrNull()
+                    probe.copy(countryCode = geo?.countryCode)
+                }
+                maybeProbeCapacity(proxyHost, proxyPort)
+                return finalProbe
             }
             failures += "${provider.label}: ${result.exceptionOrNull()?.message ?: "unknown error"}"
         }
@@ -144,6 +160,136 @@ internal object AndroidEgressProbe {
 
         failures += "$LITERAL_TCP_LABEL: ${literal.exceptionOrNull()?.message ?: "unknown error"}"
         error("SOCKS end-to-end egress failed (${failures.joinToString(" | ")})")
+    }
+
+    private fun maybeProbeCapacity(proxyHost: String, proxyPort: Int) {
+        if (!AndroidVpnRuntime.claimCapacityProbe()) return
+        runCatching { probeCapacity(proxyHost, proxyPort) }
+            .onSuccess { result ->
+                AndroidVpnRuntime.publishCapacity(
+                    downloadKbps = result.downloadKbps,
+                    uploadKbps = result.uploadKbps,
+                    uploadLimited = result.uploadLimited,
+                )
+            }
+    }
+
+    private fun probeCapacity(proxyHost: String, proxyPort: Int): CapacityProbeResult {
+        val downloadKbps = probeDownloadKbps(proxyHost, proxyPort)
+        val uploadKbps = probeUploadKbps(proxyHost, proxyPort)
+        return CapacityProbeResult(
+            downloadKbps = downloadKbps,
+            uploadKbps = uploadKbps,
+            uploadLimited = classifyUploadLimited(downloadKbps, uploadKbps),
+        )
+    }
+
+    private fun probeDownloadKbps(proxyHost: String, proxyPort: Int): Long {
+        val raw = socks5Connect(
+            proxyHost = proxyHost,
+            proxyPort = proxyPort,
+            targetHost = CAPACITY_HOST,
+            targetPort = 443,
+            useDomain = true,
+        )
+        val socket = tlsWrap(raw, CAPACITY_HOST, 443)
+        socket.use {
+            it.soTimeout = READ_TIMEOUT_MS
+            val request = buildString {
+                append("GET /__down?bytes=$CAPACITY_DOWN_BYTES HTTP/1.1\r\n")
+                append("Host: $CAPACITY_HOST\r\n")
+                append("User-Agent: Aether-Android/3\r\n")
+                append("Accept: application/octet-stream\r\n")
+                append("Connection: close\r\n\r\n")
+            }.toByteArray(Charsets.US_ASCII)
+            it.outputStream.write(request)
+            it.outputStream.flush()
+
+            val startedAt = System.nanoTime()
+            val head = readHttpHead(it.inputStream)
+            requireSuccessfulStatus(head)
+            val bodyBytes = drain(it.inputStream)
+            if (bodyBytes < CAPACITY_DOWN_BYTES / 2L) {
+                error("bounded download probe returned only $bodyBytes bytes")
+            }
+            return throughputKbps(bodyBytes, elapsedMillis(startedAt))
+        }
+    }
+
+    private fun probeUploadKbps(proxyHost: String, proxyPort: Int): Long {
+        val raw = socks5Connect(
+            proxyHost = proxyHost,
+            proxyPort = proxyPort,
+            targetHost = CAPACITY_HOST,
+            targetPort = 443,
+            useDomain = true,
+        )
+        val socket = tlsWrap(raw, CAPACITY_HOST, 443)
+        socket.use {
+            it.soTimeout = READ_TIMEOUT_MS
+            val head = buildString {
+                append("POST /__up HTTP/1.1\r\n")
+                append("Host: $CAPACITY_HOST\r\n")
+                append("User-Agent: Aether-Android/3\r\n")
+                append("Content-Type: application/octet-stream\r\n")
+                append("Content-Length: $CAPACITY_UP_BYTES\r\n")
+                append("Connection: close\r\n\r\n")
+            }.toByteArray(Charsets.US_ASCII)
+            val body = ByteArray(CAPACITY_UP_BYTES)
+            val startedAt = System.nanoTime()
+            it.outputStream.write(head)
+            it.outputStream.write(body)
+            it.outputStream.flush()
+            requireSuccessfulStatus(readHttpHead(it.inputStream))
+            return throughputKbps(CAPACITY_UP_BYTES.toLong(), elapsedMillis(startedAt))
+        }
+    }
+
+    private fun classifyUploadLimited(downloadKbps: Long, uploadKbps: Long): Boolean =
+        downloadKbps >= 512L && uploadKbps < 128L && uploadKbps * 8L < downloadKbps
+
+    private fun throughputKbps(bytes: Long, elapsedMs: Long): Long =
+        ((bytes.coerceAtLeast(1L) * 8L) / elapsedMs.coerceAtLeast(1L)).coerceAtLeast(1L)
+
+    private fun readHttpHead(input: InputStream): String {
+        val out = ByteArrayOutputStream(512)
+        var matched = 0
+        while (out.size() < HTTP_HEAD_LIMIT) {
+            val value = input.read()
+            if (value < 0) throw EOFException("HTTP peer closed before response headers completed")
+            out.write(value)
+            matched = when {
+                matched == 0 && value == '\r'.code -> 1
+                matched == 1 && value == '\n'.code -> 2
+                matched == 2 && value == '\r'.code -> 3
+                matched == 3 && value == '\n'.code -> 4
+                value == '\r'.code -> 1
+                else -> 0
+            }
+            if (matched == 4) return out.toString(Charsets.ISO_8859_1.name())
+        }
+        error("HTTP response headers exceeded $HTTP_HEAD_LIMIT bytes")
+    }
+
+    private fun requireSuccessfulStatus(head: String) {
+        val status = Regex("^HTTP/\\d(?:\\.\\d)?\\s+(\\d{3})")
+            .find(head)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+        if (status == null || status !in 200..399) {
+            error("HTTP response was not successful (status=${status ?: "missing"})")
+        }
+    }
+
+    private fun drain(input: InputStream): Long {
+        val buffer = ByteArray(8 * 1024)
+        var total = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) return total
+            total += read
+        }
     }
 
     private fun probeProvider(
