@@ -90,7 +90,17 @@ internal object AndroidEgressProbe {
         useDomainAddress = true,
     )
 
-    fun probe(bindAddress: String): EgressProbeResult {
+    fun probe(bindAddress: String): EgressProbeResult = try {
+        probeInner(bindAddress)
+    } catch (error: Throwable) {
+        // Only the final end-to-end outcome reaches this boundary. Individual
+        // provider fallbacks are intentionally invisible to health state so a
+        // blocked echo service cannot make an otherwise healthy path suspect.
+        AndroidVpnRuntime.publishProbeFailure()
+        throw error
+    }
+
+    private fun probeInner(bindAddress: String): EgressProbeResult {
         val underlayIps = AndroidEgressIdentityGuard.underlayPublicIps()
         val (proxyHost, proxyPort) = splitHostPort(bindAddress)
         val failures = mutableListOf<String>()
