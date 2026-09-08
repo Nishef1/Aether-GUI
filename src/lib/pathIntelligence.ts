@@ -89,6 +89,7 @@ export function pathIdForProfile(
     noize,
     maskKeyForProfile(profile, transport),
     profile.ech.trim() ? "ech" : "no-ech",
+    `tls:${profile.tls_profile ?? "automatic"}`,
     profile.tls_groups.trim() || "default-groups",
   ].join("|");
 }
