@@ -6,6 +6,7 @@ mod engine;
 mod error;
 mod events;
 mod focus;
+mod network_context;
 mod path_health;
 mod path_score;
 mod runtime_error;
@@ -66,6 +67,7 @@ fn main() {
             commands::get_system_tunnel,
             commands::set_system_tunnel,
             commands::get_runtime_telemetry,
+            commands::get_network_context,
             commands::set_diagnostics_logging,
             commands::get_close_to_tray,
             commands::set_close_to_tray,
