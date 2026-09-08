@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { RingBuffer } from "@/lib/ringBuffer";
 import { isAndroid } from "@/lib/platform";
 import type {
   ConnectionProfile,
@@ -15,6 +16,8 @@ import type {
 export type LogLineLimit = 100 | 250 | 500;
 
 const DEFAULT_LOG_LINE_LIMIT: LogLineLimit = 250;
+const MAX_LOG_LINE_LIMIT = 500;
+const LOG_FLUSH_MS = isAndroid ? 250 : 100;
 const BUDGET_RE = /budget=(\d+)s/;
 const ACCESS_CODE_MARKER = "[gui] Zero Trust access code required";
 const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
@@ -24,6 +27,8 @@ const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
   stealth: 210,
   ironclad: 240,
 };
+
+const logBuffer = new RingBuffer<LogLine>(MAX_LOG_LINE_LIMIT);
 
 const DEFAULT_PROFILE: ConnectionProfile = {
   protocol: "auto",
@@ -139,6 +144,57 @@ function terminalStateClearsInteraction(status: ConnectionStatus): boolean {
   );
 }
 
+function connectionStatusEqual(left: ConnectionStatus, right: ConnectionStatus): boolean {
+  if (left.state !== right.state) return false;
+
+  switch (left.state) {
+    case "Connected":
+      return (
+        right.state === "Connected" &&
+        left.socks_addr === right.socks_addr &&
+        left.connected_at_ms === right.connected_at_ms
+      );
+    case "StartingTunnel":
+    case "Tunneling":
+      return (
+        right.state === left.state &&
+        left.tunnel === right.tunnel &&
+        left.socks_addr === right.socks_addr &&
+        left.connected_at_ms === right.connected_at_ms
+      );
+    case "Reconnecting":
+      return (
+        right.state === "Reconnecting" &&
+        left.attempt === right.attempt &&
+        left.max_attempts === right.max_attempts
+      );
+    case "Error":
+      return right.state === "Error" && left.message === right.message && left.phase === right.phase;
+    default:
+      return true;
+  }
+}
+
+function clearBufferedLogs(): void {
+  logBuffer.clear();
+}
+
+function updateStatus(status: ConnectionStatus, resetDesktopBudget = false): void {
+  const current = useConnectionStore.getState();
+  const clearInteraction = terminalStateClearsInteraction(status);
+  const statusChanged = !connectionStatusEqual(current.status, status);
+  const shouldClearInteraction = clearInteraction && current.accessCodeRequired;
+  const shouldResetBudget = resetDesktopBudget && current.scanBudgetSecs !== null;
+
+  if (!statusChanged && !shouldClearInteraction && !shouldResetBudget) return;
+
+  useConnectionStore.setState({
+    ...(statusChanged ? { status } : {}),
+    ...(shouldClearInteraction ? { accessCodeRequired: false } : {}),
+    ...(shouldResetBudget ? { scanBudgetSecs: null } : {}),
+  });
+}
+
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
   status: { state: "Idle" },
   profile: { ...DEFAULT_PROFILE },
@@ -152,6 +208,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   connect: async () => {
     const profile = get().profile;
+    clearBufferedLogs();
     set((state) => ({
       logs: [],
       accessCodeRequired: false,
@@ -238,22 +295,27 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   setRoutesFile: (routes_file) =>
     set((state) => ({ profile: { ...state.profile, routes_file } })),
   setLoggingEnabled: async (enabled) => {
+    if (!enabled) clearBufferedLogs();
     set({ loggingEnabled: enabled, ...(enabled ? {} : { logs: [] }) });
     if (isAndroid) {
       const active = enabled && document.visibilityState === "visible";
       try {
         await invoke("set_android_logging", { enabled: active });
       } catch {
+        clearBufferedLogs();
         set({ loggingEnabled: false, logs: [] });
       }
     }
   },
   setLogLineLimit: (logLineLimit) =>
-    set((state) => ({
+    set({
       logLineLimit,
-      logs: state.logs.slice(-logLineLimit),
-    })),
-  clearLogs: () => set({ logs: [] }),
+      logs: logBuffer.toArray(logLineLimit),
+    }),
+  clearLogs: () => {
+    clearBufferedLogs();
+    set({ logs: [] });
+  },
   retryAfterSidecarError: () => set({ sidecarError: null }),
 }));
 
@@ -261,19 +323,24 @@ if (import.meta.env.DEV) {
   (window as unknown as { __conn?: typeof useConnectionStore }).__conn = useConnectionStore;
 }
 
-function appendLogBatch(batch: LogLine[]) {
-  if (batch.length === 0) return;
-  let budget: number | null = null;
-  for (const item of batch) {
-    const match = BUDGET_RE.exec(item.line);
-    if (match) budget = Number(match[1]);
+function updateScanBudgetFromLine(line: string): void {
+  const match = BUDGET_RE.exec(line);
+  if (!match) return;
+
+  const budget = Number(match[1]);
+  if (useConnectionStore.getState().scanBudgetSecs !== budget) {
+    useConnectionStore.setState({ scanBudgetSecs: budget });
   }
-  useConnectionStore.setState((state) => ({
-    ...(state.loggingEnabled
-      ? { logs: [...state.logs, ...batch].slice(-state.logLineLimit) }
-      : {}),
-    ...(budget !== null ? { scanBudgetSecs: budget } : {}),
-  }));
+}
+
+function appendLogBatch(batch: LogLine[]): void {
+  if (batch.length === 0) return;
+
+  const state = useConnectionStore.getState();
+  if (!state.loggingEnabled) return;
+
+  logBuffer.pushMany(batch);
+  useConnectionStore.setState({ logs: logBuffer.toArray(state.logLineLimit) });
 }
 
 function androidPollDelay(status: ConnectionStatus): number {
@@ -288,16 +355,19 @@ function androidPollDelay(status: ConnectionStatus): number {
     case "Connected":
     case "Tunneling":
       return 3_000;
-    default:
-      return 5_000;
+    case "Idle":
+    case "Error":
+      return 15_000;
   }
 }
 
 export async function initConnectionListeners(): Promise<() => void> {
   let pendingLogs: LogLine[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
   const flushLogs = () => {
     flushTimer = null;
+    if (pendingLogs.length === 0) return;
     const batch = pendingLogs;
     pendingLogs = [];
     appendLogBatch(batch);
@@ -305,22 +375,24 @@ export async function initConnectionListeners(): Promise<() => void> {
 
   const [unlistenStatus, unlistenLog] = await Promise.all([
     listen<ConnectionStatus>("aether://status", (event) => {
-      useConnectionStore.setState({
-        status: event.payload,
-        ...(terminalStateClearsInteraction(event.payload) ? { accessCodeRequired: false } : {}),
-        ...(!isAndroid && event.payload.state === "Launching"
-          ? { scanBudgetSecs: null }
-          : {}),
-      });
+      updateStatus(event.payload, !isAndroid && event.payload.state === "Launching");
     }),
     listen<LogLine>("aether://log", (event) => {
+      const { line } = event.payload;
+
       // Interaction events are control-plane state, not diagnostics. Detect
       // them even when the user-visible live-log buffer is disabled.
-      if (!isAndroid && event.payload.line.includes(ACCESS_CODE_MARKER)) {
-        useConnectionStore.setState({ accessCodeRequired: true });
+      if (!isAndroid && line.includes(ACCESS_CODE_MARKER)) {
+        if (!useConnectionStore.getState().accessCodeRequired) {
+          useConnectionStore.setState({ accessCodeRequired: true });
+        }
       }
+
+      updateScanBudgetFromLine(line);
+
+      if (!useConnectionStore.getState().loggingEnabled) return;
       pendingLogs.push(event.payload);
-      flushTimer ??= setTimeout(flushLogs, 100);
+      flushTimer ??= setTimeout(flushLogs, LOG_FLUSH_MS);
     }),
   ]);
 
@@ -343,17 +415,18 @@ export async function initConnectionListeners(): Promise<() => void> {
   let lastNativeLogId = 0;
 
   const scheduleAndroidPoll = () => {
-    if (!isAndroid || disposed || document.visibilityState !== "visible") return;
+    if (!isAndroid || disposed || document.visibilityState !== "visible" || pollTimer !== null) {
+      return;
+    }
+
     const delay = androidPollDelay(useConnectionStore.getState().status);
     pollTimer = setTimeout(async () => {
       pollTimer = null;
       if (disposed || document.visibilityState !== "visible") return;
+
       try {
         const status = await invoke<ConnectionStatus>("get_status");
-        useConnectionStore.setState({
-          status,
-          ...(terminalStateClearsInteraction(status) ? { accessCodeRequired: false } : {}),
-        });
+        updateStatus(status);
       } catch {
         // The foreground service can be between lifecycle states.
       }
@@ -365,6 +438,8 @@ export async function initConnectionListeners(): Promise<() => void> {
             last_id: number;
           }>("get_android_logs", { afterId: lastNativeLogId });
           lastNativeLogId = Math.max(lastNativeLogId, batch.last_id);
+
+          for (const entry of batch.entries) updateScanBudgetFromLine(entry.line);
           appendLogBatch(
             batch.entries.map((entry) => ({ timestamp: entry.timestamp, line: entry.line })),
           );
@@ -381,16 +456,18 @@ export async function initConnectionListeners(): Promise<() => void> {
     const visible = document.visibilityState === "visible";
     const enabled = useConnectionStore.getState().loggingEnabled && visible;
     void invoke("set_android_logging", { enabled }).catch(() => undefined);
+
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+
     if (visible) {
-      if (pollTimer !== null) clearTimeout(pollTimer);
       scheduleAndroidPoll();
     } else {
+      clearBufferedLogs();
       useConnectionStore.setState({ logs: [] });
       lastNativeLogId = 0;
-      if (pollTimer !== null) {
-        clearTimeout(pollTimer);
-        pollTimer = null;
-      }
     }
   };
 
@@ -406,6 +483,9 @@ export async function initConnectionListeners(): Promise<() => void> {
     unlistenLog();
     if (flushTimer !== null) clearTimeout(flushTimer);
     if (pollTimer !== null) clearTimeout(pollTimer);
+    pendingLogs = [];
+    clearBufferedLogs();
+
     if (isAndroid) {
       document.removeEventListener("visibilitychange", syncAndroidVisibility);
       void invoke("set_android_logging", { enabled: false }).catch(() => undefined);
