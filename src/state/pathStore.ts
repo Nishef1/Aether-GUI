@@ -5,6 +5,7 @@ import {
   MAX_PATHS,
   rankPaths,
   recordPathFailure,
+  recordPathQuality,
   recordPathSuccess,
   type ObservedPath,
   type PathHealth,
@@ -170,15 +171,25 @@ export function initPathIntelligence(): () => void {
   let disposed = false;
   let unlistenPath: (() => void) | null = null;
 
-  const selectionForAttempt = (attemptId: number): RuntimePathSelection | null =>
-    selectedPath?.attemptId === attemptId
-      ? { endpoint: selectedPath.endpoint, transport: selectedPath.transport }
-      : null;
+  const selectionForAttempt = (attemptId: number): RuntimePathSelection | null => {
+    if (selectedPath?.attemptId === attemptId) {
+      return { endpoint: selectedPath.endpoint, transport: selectedPath.transport };
+    }
+    const connection = useConnectionStore.getState();
+    return connection.runtimePathAttemptId === attemptId ? connection.runtimePath : null;
+  };
+
+  const androidPathMetadataReady = (attemptId: number): boolean => {
+    if (!isAndroid) return true;
+    const connection = useConnectionStore.getState();
+    return connection.runtimePathAttemptId === attemptId;
+  };
 
   const maybeRecordSuccess = () => {
     const connection = useConnectionStore.getState();
     const telemetry = useTelemetryStore.getState().snapshot;
     if (!telemetryProvesHealthy(telemetry)) return;
+    if (!androidPathMetadataReady(connection.attemptId)) return;
 
     lastProbeFailureCount = 0;
     const sessionKey = stableSessionKey(connection.status, connection.attemptId);
@@ -194,6 +205,32 @@ export function initPathIntelligence(): () => void {
     updatePath(
       (path) =>
         recordPathSuccess(path, {
+          latencyMs: telemetry.smoothed_latency_ms ?? telemetry.latency_ms,
+          jitterMs: telemetry.jitter_ms ?? null,
+          qualityScore: telemetry.quality_score ?? null,
+          qualityConfidence: telemetry.quality_confidence ?? null,
+          countryCode: telemetry.country_code,
+        }),
+      selectionForAttempt(connection.attemptId),
+    );
+  };
+
+  const maybeRefreshQuality = () => {
+    const connection = useConnectionStore.getState();
+    const telemetry = useTelemetryStore.getState().snapshot;
+    const sessionKey = stableSessionKey(connection.status, connection.attemptId);
+    if (
+      sessionKey == null ||
+      sessionKey !== lastSuccessSession ||
+      !telemetryProvesHealthy(telemetry) ||
+      !androidPathMetadataReady(connection.attemptId)
+    ) {
+      return;
+    }
+
+    updatePath(
+      (path) =>
+        recordPathQuality(path, {
           latencyMs: telemetry.smoothed_latency_ms ?? telemetry.latency_ms,
           jitterMs: telemetry.jitter_ms ?? null,
           qualityScore: telemetry.quality_score ?? null,
@@ -268,32 +305,48 @@ export function initPathIntelligence(): () => void {
       selectedPath = null;
       lastProbeFailureCount = 0;
       lastProbeFailureSampleAt = 0;
+      lastSuccessSession = null;
       errorStateRecorded = false;
     }
 
-    if (state.status.state !== previous.status.state) {
+    if (
+      state.status.state !== previous.status.state ||
+      state.runtimePathAttemptId !== previous.runtimePathAttemptId ||
+      state.runtimePath !== previous.runtimePath
+    ) {
       if (state.status.state !== "Error") errorStateRecorded = false;
       maybeRecordSuccess();
+      maybeRefreshQuality();
       maybeRecordProbeFailure();
       maybeRecordFailure();
     }
   });
 
   const unsubscribeTelemetry = useTelemetryStore.subscribe((state, previous) => {
-    if (
+    const healthChanged =
       state.snapshot.egress_probe_complete !== previous.snapshot.egress_probe_complete ||
       state.snapshot.path_health !== previous.snapshot.path_health ||
       state.snapshot.probe_failures !== previous.snapshot.probe_failures ||
-      state.snapshot.sampled_at_ms !== previous.snapshot.sampled_at_ms ||
+      state.snapshot.sampled_at_ms !== previous.snapshot.sampled_at_ms;
+    const qualityChanged =
+      state.snapshot.smoothed_latency_ms !== previous.snapshot.smoothed_latency_ms ||
+      state.snapshot.jitter_ms !== previous.snapshot.jitter_ms ||
       state.snapshot.quality_score !== previous.snapshot.quality_score ||
-      state.snapshot.quality_confidence !== previous.snapshot.quality_confidence
-    ) {
+      state.snapshot.quality_confidence !== previous.snapshot.quality_confidence ||
+      state.snapshot.capacity_probe_complete !== previous.snapshot.capacity_probe_complete ||
+      state.snapshot.download_kbps !== previous.snapshot.download_kbps ||
+      state.snapshot.upload_kbps !== previous.snapshot.upload_kbps ||
+      state.snapshot.upload_limited !== previous.snapshot.upload_limited;
+
+    if (healthChanged || qualityChanged) {
       maybeRecordSuccess();
+      if (qualityChanged) maybeRefreshQuality();
       maybeRecordProbeFailure();
     }
   });
 
   maybeRecordSuccess();
+  maybeRefreshQuality();
   maybeRecordProbeFailure();
   maybeRecordFailure();
 
