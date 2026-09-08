@@ -1,6 +1,6 @@
 import { Switch } from "@/components/ui/switch";
 import { useConnectionStore } from "@/state/connectionStore";
-import type { ConnectionProfile, PerfProfile } from "@/types/connection";
+import type { ConnectionProfile, H2MaskMode, PerfProfile } from "@/types/connection";
 
 function TextField({
   label,
@@ -137,9 +137,17 @@ export function CoreAdvancedSettings() {
   const masqueFamily = profile.protocol === "auto" || profile.protocol === "masque";
   const wireGuardFamily = profile.protocol === "wireguard" || profile.protocol === "gool";
   const gool = profile.protocol === "gool";
+  const h2Mask: H2MaskMode = profile.masque_mask ?? (profile.fragment ? "legacy" : "off");
 
   const set = <K extends keyof ConnectionProfile>(field: K, value: ConnectionProfile[K]) =>
     setField(field, value);
+
+  const setH2Mask = (mode: H2MaskMode) => {
+    set("masque_mask", mode);
+    // Keep the old boolean coherent for saved-profile compatibility. New
+    // deterministic modes are selected by the explicit mask environment value.
+    set("fragment", mode === "legacy");
+  };
 
   return (
     <details className="group rounded-2xl bg-black/15 p-3.5 ring-1 ring-white/10">
@@ -232,14 +240,24 @@ export function CoreAdvancedSettings() {
               disabled={locked}
               onChange={(value) => set("ech", value)}
             />
-            <BooleanField
-              label="Fragment HTTP/2 ClientHello"
-              description="Splits the TLS ClientHello to resist simple DPI on TCP-only networks."
-              checked={profile.fragment}
-              disabled={locked || !profile.masque_http2}
-              onChange={(value) => set("fragment", value)}
-            />
-            {profile.fragment && (
+            <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">HTTP/2 ClientHello mask</span>
+              <span className="text-[11px] leading-4">
+                Off is safest. Deterministic modes alter only ClientHello TCP write boundaries; Patterniha is experimental and never selected automatically.
+              </span>
+              <select
+                value={h2Mask}
+                disabled={locked || !profile.masque_http2}
+                onChange={(event) => setH2Mask(event.target.value as H2MaskMode)}
+                className="min-h-11 rounded-xl bg-surface-2 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+              >
+                <option value="off">Off</option>
+                <option value="legacy">Legacy random TCP fragment</option>
+                <option value="clienthello">Deterministic ClientHello split</option>
+                <option value="patterniha">Patterniha-inspired (experimental)</option>
+              </select>
+            </label>
+            {h2Mask === "legacy" && (
               <div className="grid grid-cols-2 gap-2">
                 <TextField
                   label="Fragment size"
