@@ -46,6 +46,9 @@ struct MobileConnectionProfile {
     no_data_check: bool,
     validate_secs: u16,
     reconnect_secs: u16,
+    /// Optional because profiles saved before mask v2 only carry the legacy
+    /// `fragment` boolean. `None` intentionally preserves that old behavior.
+    masque_mask: Option<String>,
     fragment: bool,
     fragment_size: String,
     fragment_delay: String,
@@ -93,6 +96,7 @@ impl Default for MobileConnectionProfile {
             no_data_check: false,
             validate_secs: 10,
             reconnect_secs: 2,
+            masque_mask: None,
             fragment: false,
             fragment_size: "16-32".into(),
             fragment_delay: "2-10".into(),
@@ -126,6 +130,34 @@ impl MobileConnectionProfile {
         sanitized.access_token.clear();
         sanitized.upstream.clear();
         sanitized
+    }
+
+    fn apply_h2_mask_bridge(&mut self) {
+        if !self.masque_http2 {
+            self.fragment = false;
+            return;
+        }
+
+        match self.masque_mask.as_deref() {
+            // Missing field means an old profile. Keep its legacy boolean/range
+            // untouched so saved users do not silently change behavior.
+            None => {}
+            Some("off") => self.fragment = false,
+            Some("legacy") => self.fragment = true,
+            Some("clienthello") => {
+                self.fragment = true;
+                self.fragment_size = "clienthello".into();
+                self.fragment_delay = "0".into();
+            }
+            Some("patterniha") => {
+                self.fragment = true;
+                self.fragment_size = "patterniha".into();
+                self.fragment_delay = "0".into();
+            }
+            // Validation rejects this before runtime; keep the match exhaustive
+            // and conservative if corrupted settings somehow bypass it.
+            Some(_) => self.fragment = false,
+        }
     }
 
     /// Keep the user's hidden values in the editable profile, but never hand
@@ -166,8 +198,8 @@ impl MobileConnectionProfile {
                 self.wiw_scan = false;
                 if !self.masque_http2 {
                     self.h2_peer.clear();
-                    self.fragment = false;
                 }
+                self.apply_h2_mask_bridge();
             }
         }
         self
@@ -266,6 +298,11 @@ fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
         "auto" | "low" | "medium" | "high"
     ) {
         return Err("Unknown performance profile".into());
+    }
+    if let Some(mask) = profile.masque_mask.as_deref() {
+        if !matches!(mask, "off" | "legacy" | "clienthello" | "patterniha") {
+            return Err("Unknown HTTP/2 ClientHello mask".into());
+        }
     }
     if !profile.http_proxy.trim().is_empty() {
         let address = profile
