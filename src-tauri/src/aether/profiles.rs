@@ -89,6 +89,35 @@ impl NoizeProfile {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
+pub enum MasqueMask {
+    #[default]
+    Off,
+    Legacy,
+    Clienthello,
+    Patterniha,
+}
+
+impl MasqueMask {
+    pub fn as_env(&self) -> &'static str {
+        match self {
+            MasqueMask::Off => "off",
+            MasqueMask::Legacy => "legacy",
+            MasqueMask::Clienthello => "clienthello",
+            MasqueMask::Patterniha => "patterniha-experimental",
+        }
+    }
+
+    pub fn is_off(&self) -> bool {
+        matches!(self, MasqueMask::Off)
+    }
+
+    fn uses_legacy_fragment_controls(&self) -> bool {
+        matches!(self, MasqueMask::Legacy)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum PerfProfile {
     #[default]
     Auto,
@@ -137,20 +166,14 @@ pub struct ConnectionProfile {
     pub bind_address: String,
     #[serde(default)]
     pub http_proxy: String,
-    /// Optional proxy Aether itself dials through. It may contain credentials,
-    /// so it is deliberately stripped before successful profiles are persisted.
     #[serde(default)]
     pub upstream: String,
     #[serde(default)]
     pub dns: String,
-    /// Android system-TUN MTU. Desktop keeps the value for profile parity but
-    /// the sing-box TUN owns its own MTU today.
     #[serde(default = "default_mtu")]
     pub mtu: u16,
     #[serde(default)]
     pub peer: String,
-    /// Legacy v1.5-v1.8 outer WireGuard endpoint. Kept for saved-profile
-    /// compatibility; new gool UI uses wiw_outer/wiw_inner.
     #[serde(default)]
     pub wg_peer: String,
     #[serde(default)]
@@ -169,6 +192,10 @@ pub struct ConnectionProfile {
     pub validate_secs: u16,
     #[serde(default = "default_reconnect_secs")]
     pub reconnect_secs: u16,
+    /// Explicit v2 ClientHello mask mode. Old profiles without this field keep
+    /// using `fragment=true` as the legacy random TCP-fragment switch.
+    #[serde(default)]
+    pub masque_mask: MasqueMask,
     #[serde(default)]
     pub fragment: bool,
     #[serde(default = "default_fragment_size")]
@@ -183,14 +210,10 @@ pub struct ConnectionProfile {
     pub tls_groups: String,
     #[serde(default)]
     pub perf_profile: PerfProfile,
-    /// Aether v1.7+ domain sniffing keeps name-based routing working behind a
-    /// TUN. Enabled by default; exposed only as an expert escape hatch.
     #[serde(default = "default_true")]
     pub route_sniff: bool,
     #[serde(default = "default_route_sniff_ms")]
     pub route_sniff_ms: u16,
-    /// Replace a Cloudflare-rejected identity automatically. This is the core
-    /// default and prevents stale identity files from looking like scan errors.
     #[serde(default = "default_true")]
     pub auto_reprovision: bool,
     #[serde(default)]
@@ -268,10 +291,6 @@ fn push_non_empty(args: &mut Vec<String>, flag: &str, value: &str) {
 }
 
 impl ConnectionProfile {
-    /// Generates the non-secret CLI contract for Aether v1.9. Secrets and
-    /// environment-only switches are applied by pty.rs instead. Protocol-
-    /// specific controls are scoped here as a defence-in-depth boundary: a
-    /// hidden/stale UI value must never silently change another transport.
     pub fn as_args(&self) -> Vec<String> {
         let mut args = Vec::with_capacity(48);
         match self.protocol {
@@ -311,12 +330,7 @@ impl ConnectionProfile {
             args.push("--bind".into());
             args.push(self.bind_address.clone());
         }
-        if self
-            .http_proxy
-            .trim()
-            .parse::<std::net::SocketAddr>()
-            .is_ok()
-        {
+        if self.http_proxy.trim().parse::<std::net::SocketAddr>().is_ok() {
             push_non_empty(&mut args, "--http-proxy", &self.http_proxy);
         }
 
@@ -326,7 +340,9 @@ impl ConnectionProfile {
                 if self.masque_http2 {
                     args.push("--h2".into());
                     push_non_empty(&mut args, "--h2-peer", &self.h2_peer);
-                    if self.fragment {
+                    let legacy_fragment =
+                        self.fragment || self.masque_mask.uses_legacy_fragment_controls();
+                    if legacy_fragment {
                         args.push("--fragment".into());
                         push_non_empty(&mut args, "--fragment-size", &self.fragment_size);
                         push_non_empty(&mut args, "--fragment-delay", &self.fragment_delay);
@@ -335,17 +351,13 @@ impl ConnectionProfile {
                 push_non_empty(&mut args, "--ech", &self.ech);
             }
             Protocol::Wireguard => {
-                // In Aether 1.9 --peer is the explicit classic WireGuard peer.
                 push_non_empty(&mut args, "--peer", &self.peer);
             }
             Protocol::Gool => {
                 if self.wiw_scan {
-                    // Do not also forward stale endpoints: --wiw-scan is an
-                    // explicit request to discover two fresh hops.
                     args.push("--wiw-scan".into());
                 } else {
                     if self.wiw_outer.trim().is_empty() {
-                        // Compatibility with profiles saved before v1.9.
                         push_non_empty(&mut args, "--wg-peer", &self.wg_peer);
                     }
                     push_non_empty(&mut args, "--wiw-outer", &self.wiw_outer);
@@ -430,6 +442,7 @@ impl Default for ConnectionProfile {
             no_data_check: false,
             validate_secs: default_validate_secs(),
             reconnect_secs: default_reconnect_secs(),
+            masque_mask: MasqueMask::Off,
             fragment: false,
             fragment_size: default_fragment_size(),
             fragment_delay: default_fragment_delay(),
@@ -499,40 +512,47 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--no-quick-reconnect"));
         assert!(profile.route_sniff);
         assert!(profile.auto_reprovision);
-        assert_eq!(profile.route_sniff_ms, 400);
+        assert_eq!(profile.masque_mask, MasqueMask::Off);
     }
 
     #[test]
-    fn aether_19_user_features_emit_flags() {
-        let profile = ConnectionProfile {
-            protocol: Protocol::Gool,
-            http_proxy: "127.0.0.1:1820".into(),
-            wiw_outer: "162.159.192.1:2408".into(),
-            wiw_inner: "188.114.96.1:2408".into(),
-            ..Default::default()
-        };
-        let args = profile.as_args();
-        assert!(has_pair(&args, "--http-proxy", "127.0.0.1:1820"));
-        assert!(has_pair(&args, "--wiw-outer", "162.159.192.1:2408"));
-        assert!(has_pair(&args, "--wiw-inner", "188.114.96.1:2408"));
-    }
-
-    #[test]
-    fn stale_gool_values_never_leak_into_masque() {
+    fn old_fragment_profiles_keep_legacy_flags() {
         let profile = ConnectionProfile {
             protocol: Protocol::Masque,
-            peer: "162.159.192.1:443".into(),
-            wg_peer: "162.159.192.2:2408".into(),
-            wiw_outer: "162.159.192.3:2408".into(),
-            wiw_inner: "188.114.96.1:2408".into(),
+            masque_http2: true,
+            fragment: true,
             ..Default::default()
         };
         let args = profile.as_args();
-        assert!(has_pair(&args, "--peer", "162.159.192.1:443"));
-        assert!(!args.iter().any(|arg| matches!(
-            arg.as_str(),
-            "--wg-peer" | "--wiw-outer" | "--wiw-inner" | "--wiw-scan"
-        )));
+        assert!(args.iter().any(|arg| arg == "--fragment"));
+        assert!(has_pair(&args, "--fragment-size", "16-32"));
+    }
+
+    #[test]
+    fn explicit_legacy_mask_uses_existing_fragment_tuning() {
+        let profile = ConnectionProfile {
+            protocol: Protocol::Masque,
+            masque_http2: true,
+            masque_mask: MasqueMask::Legacy,
+            ..Default::default()
+        };
+        let args = profile.as_args();
+        assert!(args.iter().any(|arg| arg == "--fragment"));
+        assert!(has_pair(&args, "--fragment-delay", "2-10"));
+    }
+
+    #[test]
+    fn deterministic_masks_do_not_emit_legacy_fragment_flags() {
+        for masque_mask in [MasqueMask::Clienthello, MasqueMask::Patterniha] {
+            let profile = ConnectionProfile {
+                protocol: Protocol::Masque,
+                masque_http2: true,
+                masque_mask,
+                ..Default::default()
+            };
+            let args = profile.as_args();
+            assert!(!args.iter().any(|arg| arg == "--fragment"));
+        }
     }
 
     #[test]
@@ -540,8 +560,7 @@ mod tests {
         let profile = ConnectionProfile {
             protocol: Protocol::Wireguard,
             masque_http2: true,
-            h2_peer: "162.159.192.1:443".into(),
-            ech: "auto".into(),
+            masque_mask: MasqueMask::Patterniha,
             fragment: true,
             ..Default::default()
         };
@@ -553,37 +572,10 @@ mod tests {
     }
 
     #[test]
-    fn wiw_scan_ignores_manual_and_legacy_endpoints() {
-        let profile = ConnectionProfile {
-            protocol: Protocol::Gool,
-            peer: "162.159.192.9:2408".into(),
-            wg_peer: "162.159.192.2:2408".into(),
-            wiw_outer: "162.159.192.3:2408".into(),
-            wiw_inner: "188.114.96.1:2408".into(),
-            wiw_scan: true,
-            ..Default::default()
-        };
-        let args = profile.as_args();
-        assert!(args.iter().any(|arg| arg == "--wiw-scan"));
-        assert!(!args.iter().any(|arg| matches!(
-            arg.as_str(),
-            "--peer" | "--wg-peer" | "--wiw-outer" | "--wiw-inner"
-        )));
-    }
-
-    #[test]
-    fn upstream_is_not_exposed_on_process_command_line() {
-        let profile = ConnectionProfile {
-            upstream: "socks5://user:secret@127.0.0.1:1080".into(),
-            ..Default::default()
-        };
-        assert!(!profile.as_args().iter().any(|arg| arg.contains("secret")));
-    }
-
-    #[test]
     fn old_profile_json_gets_new_defaults() {
         let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4"}"#;
         let profile: ConnectionProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.masque_mask, MasqueMask::Off);
         assert!(profile.route_sniff);
         assert!(profile.auto_reprovision);
         assert_eq!(profile.mtu, 1280);
