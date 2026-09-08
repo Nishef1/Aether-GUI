@@ -47,6 +47,10 @@ data class FinalRuntimeTelemetry(
      */
     val sampledAtMs: Long = 0L,
     val egressProbeComplete: Boolean = false,
+    val capacityProbeComplete: Boolean = false,
+    val downloadKbps: Long? = null,
+    val uploadKbps: Long? = null,
+    val uploadLimited: Boolean = false,
 ) {
     fun toJsObject(): JSObject = JSObject().apply {
         put("receivedBytes", receivedBytes)
@@ -56,6 +60,10 @@ data class FinalRuntimeTelemetry(
         latencyMs?.let { put("latencyMs", it) }
         put("sampledAtMs", sampledAtMs)
         put("egressProbeComplete", egressProbeComplete)
+        put("capacityProbeComplete", capacityProbeComplete)
+        downloadKbps?.let { put("downloadKbps", it) }
+        uploadKbps?.let { put("uploadKbps", it) }
+        put("uploadLimited", uploadLimited)
     }
 }
 
@@ -76,6 +84,7 @@ internal object AndroidVpnRuntime {
     private val activeTunBridge = AtomicReference<HevTun2Socks?>(null)
     private val telemetry = AtomicReference(FinalRuntimeTelemetry())
     private val loggingEnabled = AtomicBoolean(false)
+    private val capacityProbeClaimed = AtomicBoolean(false)
     private val logSequence = AtomicLong(0L)
     private val processInput = AtomicReference<BufferedWriter?>(null)
     private val visibleLogs = ArrayDeque<FinalNativeLogEntry>()
@@ -259,9 +268,12 @@ internal object AndroidVpnRuntime {
     }
 
     fun resetTelemetry() {
+        capacityProbeClaimed.set(false)
         telemetry.set(FinalRuntimeTelemetry(sampledAtMs = System.currentTimeMillis()))
         synchronized(controlLogs) { controlLogs.clear() }
     }
+
+    fun claimCapacityProbe(): Boolean = capacityProbeClaimed.compareAndSet(false, true)
 
     fun trafficSnapshot(): FinalNativeTraffic {
         val bridge = activeTunBridge.get()
@@ -294,6 +306,17 @@ internal object AndroidVpnRuntime {
                 latencyMs = latencyMs,
                 sampledAtMs = System.currentTimeMillis(),
                 egressProbeComplete = true,
+            )
+        }
+    }
+
+    fun publishCapacity(downloadKbps: Long, uploadKbps: Long, uploadLimited: Boolean) {
+        telemetry.updateAndGet { current ->
+            current.copy(
+                capacityProbeComplete = true,
+                downloadKbps = downloadKbps.coerceAtLeast(1L),
+                uploadKbps = uploadKbps.coerceAtLeast(1L),
+                uploadLimited = uploadLimited,
             )
         }
     }
