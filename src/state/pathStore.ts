@@ -11,6 +11,7 @@ import {
   type PathTransport,
   type RuntimePathSelection,
 } from "@/lib/pathIntelligence";
+import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
 import type { ConnectionStatus, LogLine, RuntimeTelemetry } from "@/types/connection";
@@ -164,6 +165,7 @@ export function initPathIntelligence(): () => void {
   let selectedPath: AttemptPathSelection | null = null;
   let lastSuccessSession: string | null = null;
   let lastProbeFailureCount = 0;
+  let lastProbeFailureSampleAt = 0;
   let errorStateRecorded = false;
   let disposed = false;
   let unlistenPath: (() => void) | null = null;
@@ -206,16 +208,22 @@ export function initPathIntelligence(): () => void {
     const connection = useConnectionStore.getState();
     const telemetry = useTelemetryStore.getState().snapshot;
     const probeFailures = telemetry.probe_failures ?? 0;
+    const sampleAt = telemetry.sampled_at_ms ?? 0;
+    const nativeCounterAdvanced = probeFailures > lastProbeFailureCount;
+    const androidProbeAdvanced =
+      isAndroid && telemetryProvesFailure(telemetry) && sampleAt > lastProbeFailureSampleAt;
+
     if (
       connection.attemptId <= 0 ||
       stableSessionKey(connection.status, connection.attemptId) == null ||
-      probeFailures <= lastProbeFailureCount ||
-      !telemetryProvesFailure(telemetry)
+      !telemetryProvesFailure(telemetry) ||
+      (!nativeCounterAdvanced && !androidProbeAdvanced)
     ) {
       return;
     }
 
-    lastProbeFailureCount = probeFailures;
+    lastProbeFailureCount = Math.max(lastProbeFailureCount, probeFailures);
+    lastProbeFailureSampleAt = Math.max(lastProbeFailureSampleAt, sampleAt);
     updatePath(
       (path) =>
         recordPathFailure(path, {
@@ -259,6 +267,7 @@ export function initPathIntelligence(): () => void {
     if (state.attemptId !== previous.attemptId) {
       selectedPath = null;
       lastProbeFailureCount = 0;
+      lastProbeFailureSampleAt = 0;
       errorStateRecorded = false;
     }
 
@@ -275,6 +284,7 @@ export function initPathIntelligence(): () => void {
       state.snapshot.egress_probe_complete !== previous.snapshot.egress_probe_complete ||
       state.snapshot.path_health !== previous.snapshot.path_health ||
       state.snapshot.probe_failures !== previous.snapshot.probe_failures ||
+      state.snapshot.sampled_at_ms !== previous.snapshot.sampled_at_ms ||
       state.snapshot.quality_score !== previous.snapshot.quality_score ||
       state.snapshot.quality_confidence !== previous.snapshot.quality_confidence
     ) {
