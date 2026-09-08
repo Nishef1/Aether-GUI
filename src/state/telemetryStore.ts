@@ -47,16 +47,73 @@ function isStableConnected(): boolean {
   return state === "Connected" || state === "Tunneling";
 }
 
+function inferredPathHealth(snapshot: RuntimeTelemetry): NonNullable<RuntimeTelemetry["path_health"]> {
+  if (snapshot.path_health != null) return snapshot.path_health;
+  if (!snapshot.egress_probe_complete) return "unknown";
+  return snapshot.public_ip != null ? "healthy" : "suspect";
+}
+
+function inferredTunnelValidation(
+  snapshot: RuntimeTelemetry,
+  pathHealth: NonNullable<RuntimeTelemetry["path_health"]>,
+): NonNullable<RuntimeTelemetry["tunnel_validation"]> {
+  if (snapshot.tunnel_validation != null) return snapshot.tunnel_validation;
+  if (!isAndroid) return "unknown";
+
+  const status = useConnectionStore.getState().status.state;
+  if (status === "StartingTunnel") return "pending";
+  if (status !== "Tunneling") return "unknown";
+  if (pathHealth === "failed") return "failed";
+  if (pathHealth === "suspect") return "suspect";
+  if (pathHealth !== "healthy") return "pending";
+
+  return snapshot.received_bytes > 0 || snapshot.sent_bytes > 0 ? "healthy" : "pending";
+}
+
+function inferredQualityScore(
+  health: NonNullable<RuntimeTelemetry["path_health"]>,
+  latencyMs: number | null,
+): number {
+  const base = health === "healthy" ? 100 : health === "suspect" ? 45 : health === "failed" ? 0 : 25;
+  const latencyPenalty = latencyMs == null ? (health === "unknown" ? 20 : 0) : Math.min(35, Math.floor(latencyMs / 10));
+  return Math.max(0, base - latencyPenalty);
+}
+
+function inferredQualityConfidence(
+  health: NonNullable<RuntimeTelemetry["path_health"]>,
+): number {
+  switch (health) {
+    case "healthy":
+      return 60;
+    case "suspect":
+      return 36;
+    case "failed":
+      return 0;
+    default:
+      return 10;
+  }
+}
+
 function normalizeTelemetry(snapshot: RuntimeTelemetry): RuntimeTelemetry {
+  const pathHealth = inferredPathHealth(snapshot);
+  const smoothedLatency = snapshot.smoothed_latency_ms ?? (isAndroid ? snapshot.latency_ms : null);
+  const qualityScore =
+    snapshot.quality_score ??
+    (isAndroid ? inferredQualityScore(pathHealth, smoothedLatency ?? snapshot.latency_ms) : 0);
+  const qualityConfidence =
+    snapshot.quality_confidence ?? (isAndroid ? inferredQualityConfidence(pathHealth) : 0);
+
   return {
     ...snapshot,
-    path_health: snapshot.path_health ?? "unknown",
-    tunnel_validation: snapshot.tunnel_validation ?? "unknown",
-    probe_failures: snapshot.probe_failures ?? 0,
-    smoothed_latency_ms: snapshot.smoothed_latency_ms ?? null,
+    path_health: pathHealth,
+    tunnel_validation: inferredTunnelValidation(snapshot, pathHealth),
+    probe_failures:
+      snapshot.probe_failures ??
+      (isAndroid && (pathHealth === "suspect" || pathHealth === "failed") ? 1 : 0),
+    smoothed_latency_ms: smoothedLatency,
     jitter_ms: snapshot.jitter_ms ?? null,
-    quality_score: snapshot.quality_score ?? 0,
-    quality_confidence: snapshot.quality_confidence ?? 0,
+    quality_score: qualityScore,
+    quality_confidence: qualityConfidence,
   };
 }
 
