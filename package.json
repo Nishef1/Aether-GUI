@@ -13,6 +13,7 @@
     "prepare:android-native:custom": "node scripts/prepare-android-native.mjs --custom",
     "core:aether": "node scripts/prepare-custom-aether.mjs",
     "verify:runtimes": "node scripts/ci/verify-runtime-manifest.mjs",
+    "verify:custom-core": "node scripts/ci/verify-custom-aether-pin.mjs",
     "verify:release": "npm run sync:version && npm run verify:runtimes && npm run typecheck",
     "dev": "npm run prepare:app-icon && npm run prepare:aether && npm run prepare:sidecars && vite",
     "dev:custom": "node scripts/prepare-app-icon.mjs && node scripts/prepare-custom-aether.mjs && node scripts/prepare-sidecars.mjs && vite",
