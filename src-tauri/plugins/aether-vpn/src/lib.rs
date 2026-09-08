@@ -67,7 +67,6 @@ pub struct VpnProfile {
     pub fragment_delay: String,
     pub keepalive: u16,
     pub no_profile_retry: bool,
-    pub tls_profile: String,
     pub tls_groups: String,
     pub perf_profile: String,
     pub route_sniff: bool,
