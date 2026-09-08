@@ -15,7 +15,7 @@ function isTlsProfileMode(
  * Converts the Android-only compact TLS bridge back into the public GUI model.
  * Old/mobile settings remain editable without exposing implementation syntax.
  */
-export function decodeNativeProfile(
+export function decodeNativeConnectionProfile(
   profile: Partial<ConnectionProfile>,
 ): Partial<ConnectionProfile> {
   if (!isAndroid || typeof profile.tls_groups !== "string") return profile;
@@ -40,7 +40,9 @@ export function decodeNativeProfile(
  * custom Core decodes the profile before applying key-share groups.
  */
 export function profileForNativeInvoke(profile: ConnectionProfile): ConnectionProfile {
-  if (!isAndroid) return profile;
+  if (!isAndroid || (profile.protocol !== "masque" && profile.protocol !== "auto")) {
+    return profile;
+  }
   const tlsProfile = profile.tls_profile ?? "automatic";
   if (tlsProfile === "automatic") return profile;
   const groups = profile.tls_groups.trim();
