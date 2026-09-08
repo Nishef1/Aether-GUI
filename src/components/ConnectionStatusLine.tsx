@@ -24,15 +24,45 @@ const MOBILE_TEXT_TRANSITION = {
 const TEXT_TRANSITION = isAndroid ? MOBILE_TEXT_TRANSITION : DESKTOP_TEXT_TRANSITION;
 const BYTE_UNITS = ["KiB", "MiB", "GiB", "TiB"];
 
-function useElapsed(sinceMs: number | null): { formatted: string; totalSeconds: number } {
-  const [now, setNow] = useState(() => Date.now());
+let regionNames: Intl.DisplayNames | null | undefined;
+
+function getRegionNames(): Intl.DisplayNames | null {
+  if (regionNames !== undefined) return regionNames;
+  try {
+    regionNames = new Intl.DisplayNames([navigator.language || "en"], { type: "region" });
+  } catch {
+    regionNames = null;
+  }
+  return regionNames;
+}
+
+function useDocumentVisible(): boolean {
+  const [visible, setVisible] = useState(() => document.visibilityState === "visible");
+
   useEffect(() => {
-    if (sinceMs == null) return;
+    const onVisibilityChange = () => setVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+
+  return visible;
+}
+
+function useElapsed(
+  sinceMs: number | null,
+  active: boolean,
+): { formatted: string; totalSeconds: number } {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (sinceMs == null || !active) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [sinceMs]);
+  }, [active, sinceMs]);
+
   if (sinceMs == null) return { formatted: "", totalSeconds: 0 };
-  const total = Math.max(0, Math.floor((now - sinceMs) / 1000));
+  const effectiveNow = active ? now : Math.max(now, sinceMs);
+  const total = Math.max(0, Math.floor((effectiveNow - sinceMs) / 1000));
   const h = String(Math.floor(total / 3600)).padStart(2, "0");
   const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
   const s = String(total % 60).padStart(2, "0");
@@ -51,21 +81,18 @@ function formatBytes(bytes: number): string {
 }
 
 function countryName(code: string): string {
-  try {
-    return new Intl.DisplayNames([navigator.language || "en"], { type: "region" }).of(code) ?? code;
-  } catch {
-    return code;
-  }
+  return getRegionNames()?.of(code) ?? code;
 }
 
-function ScanProgressBar({ percent }: { percent: number | null }) {
-  const focused = useWindowFocused();
-
+function ScanProgressBar({ percent, active }: { percent: number | null; active: boolean }) {
   if (isAndroid) {
     return (
       <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
         {percent == null ? (
-          <div className="android-scan-indeterminate h-full w-1/3 rounded-full bg-status-connecting" />
+          <div
+            className="android-scan-indeterminate h-full w-1/3 rounded-full bg-status-connecting"
+            style={{ animationPlayState: active ? "running" : "paused" }}
+          />
         ) : (
           <div
             className="h-full rounded-full bg-status-connecting transition-[width] duration-300 ease-out"
@@ -81,9 +108,9 @@ function ScanProgressBar({ percent }: { percent: number | null }) {
       {percent == null ? (
         <motion.div
           className="h-full w-1/3 rounded-full bg-status-connecting"
-          animate={focused ? { x: ["-100%", "220%"] } : { x: "50%", opacity: 0.6 }}
+          animate={active ? { x: ["-100%", "220%"] } : { x: "50%", opacity: 0.6 }}
           transition={
-            focused
+            active
               ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" }
               : { duration: 0.3 }
           }
@@ -99,22 +126,40 @@ function ScanProgressBar({ percent }: { percent: number | null }) {
   );
 }
 
+function TunnelTraffic() {
+  const receivedBytes = useTelemetryStore((state) => state.snapshot.received_bytes);
+  const sentBytes = useTelemetryStore((state) => state.snapshot.sent_bytes);
+
+  return (
+    <span className="font-mono text-[10px] text-muted-foreground" aria-label="Tunnel traffic">
+      ↓ {formatBytes(receivedBytes)} · ↑ {formatBytes(sentBytes)}
+    </span>
+  );
+}
+
 export function ConnectionStatusLine() {
   const status = useConnectionStore((state) => state.status);
   const scanBudgetSecs = useConnectionStore((state) => state.scanBudgetSecs);
-  const telemetry = useTelemetryStore((state) => state.snapshot);
+  const publicIp = useTelemetryStore((state) => state.snapshot.public_ip);
+  const countryCodeRaw = useTelemetryStore((state) => state.snapshot.country_code);
+  const latencyMs = useTelemetryStore((state) => state.snapshot.latency_ms);
+  const egressProbeComplete = useTelemetryStore((state) => state.snapshot.egress_probe_complete);
   const retryPrivacyExit = useTelemetryStore((state) => state.retryPrivacyExit);
   const exitPreference = useExitPolicyStore((state) => state.preference);
   const privacyRetryCount = useExitPolicyStore((state) => state.retryCount);
   const privacyRerolling = useExitPolicyStore((state) => state.rerolling);
   const privacyExhausted = useExitPolicyStore((state) => state.exhausted);
+  const focused = useWindowFocused();
+  const documentVisible = useDocumentVisible();
+  const active = focused && documentVisible;
+
   const connectedAt =
     status.state === "Connected" ||
     status.state === "StartingTunnel" ||
     status.state === "Tunneling"
       ? status.connected_at_ms
       : null;
-  const { formatted: elapsed } = useElapsed(connectedAt);
+  const { formatted: elapsed } = useElapsed(connectedAt, active);
   const connectionReady = connectedAt != null;
   const stableConnected = status.state === "Connected" || status.state === "Tunneling";
   const systemTunnelError = status.state === "Error" && status.phase === "system-tunnel";
@@ -122,7 +167,7 @@ export function ConnectionStatusLine() {
     systemTunnelError &&
     /administrator|approval|uac|pkexec|polkit|permission|privilege/i.test(status.message);
 
-  const countryCode = telemetry.country_code?.toUpperCase() ?? null;
+  const countryCode = countryCodeRaw?.toUpperCase() ?? null;
   const privacyPreferred = isPrivacyPreferredExit(countryCode);
   const privacySearching =
     exitPreference === "privacy" &&
@@ -144,6 +189,7 @@ export function ConnectionStatusLine() {
     status.state === "AwaitingAccessCode";
   const { formatted: attemptElapsed, totalSeconds: attemptSeconds } = useElapsed(
     isAttempting ? attemptStartedAt : null,
+    active,
   );
   const scanPercent =
     scanBudgetSecs != null
@@ -200,13 +246,11 @@ export function ConnectionStatusLine() {
       break;
   }
 
-  const hasEgressInfo = Boolean(
-    telemetry.public_ip || telemetry.country_code || telemetry.latency_ms != null,
-  );
+  const hasEgressInfo = Boolean(publicIp || countryCodeRaw || latencyMs != null);
   const canRetryPrivacy =
     stableConnected &&
     exitPreference === "privacy" &&
-    telemetry.egress_probe_complete &&
+    egressProbeComplete &&
     !privacyPreferred &&
     !privacyRerolling &&
     (privacyExhausted || !countryCode);
@@ -249,16 +293,16 @@ export function ConnectionStatusLine() {
       )}
 
       {(status.state === "Connecting" || status.state === "Launching") && (
-        <ScanProgressBar percent={scanPercent} />
+        <ScanProgressBar percent={scanPercent} active={active} />
       )}
 
-      {connectionReady && !telemetry.egress_probe_complete && (
+      {connectionReady && !egressProbeComplete && (
         <span className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
           <Globe2 size={11} aria-hidden="true" />
           Checking exit IP…
         </span>
       )}
-      {connectionReady && telemetry.egress_probe_complete && !hasEgressInfo && (
+      {connectionReady && egressProbeComplete && !hasEgressInfo && (
         <span className="font-mono text-[10px] text-muted-foreground">
           Exit information unavailable
         </span>
@@ -277,20 +321,20 @@ export function ConnectionStatusLine() {
               Approx. {countryName(countryCode)}
             </span>
           )}
-          {telemetry.public_ip && <span title="Verified public tunnel egress IP">{telemetry.public_ip}</span>}
-          {telemetry.latency_ms != null && (
+          {publicIp && <span title="Verified public tunnel egress IP">{publicIp}</span>}
+          {latencyMs != null && (
             <span
               className="inline-flex items-center gap-1"
               title="End-to-end latency through the tunnel"
             >
               <Gauge size={11} aria-hidden="true" />
-              {telemetry.latency_ms} ms
+              {latencyMs} ms
             </span>
           )}
         </div>
       )}
 
-      {connectionReady && exitPreference === "privacy" && telemetry.egress_probe_complete && (
+      {connectionReady && exitPreference === "privacy" && egressProbeComplete && (
         <div className="flex max-w-xs flex-col items-center gap-1.5">
           <span
             className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10px] ring-1 ${
@@ -307,6 +351,7 @@ export function ConnectionStatusLine() {
               <RefreshCw
                 size={11}
                 className={isAndroid ? "android-connect-spin" : "animate-spin"}
+                style={{ animationPlayState: active ? "running" : "paused" }}
                 aria-hidden="true"
               />
             ) : (
@@ -333,11 +378,7 @@ export function ConnectionStatusLine() {
         </div>
       )}
 
-      {status.state === "Tunneling" && (
-        <span className="font-mono text-[10px] text-muted-foreground" aria-label="Tunnel traffic">
-          ↓ {formatBytes(telemetry.received_bytes)} · ↑ {formatBytes(telemetry.sent_bytes)}
-        </span>
-      )}
+      {status.state === "Tunneling" && <TunnelTraffic />}
     </div>
   );
 }
