@@ -80,6 +80,14 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${BYTE_UNITS[unit]}`;
 }
 
+function formatKbps(kbps: number): string {
+  if (kbps >= 1000) {
+    const mbps = kbps / 1000;
+    return `${mbps.toFixed(mbps >= 10 ? 0 : 1)} Mbps`;
+  }
+  return `${Math.max(1, Math.round(kbps))} kbps`;
+}
+
 function countryName(code: string): string {
   return getRegionNames()?.of(code) ?? code;
 }
@@ -144,6 +152,12 @@ export function ConnectionStatusLine() {
   const countryCodeRaw = useTelemetryStore((state) => state.snapshot.country_code);
   const latencyMs = useTelemetryStore((state) => state.snapshot.latency_ms);
   const egressProbeComplete = useTelemetryStore((state) => state.snapshot.egress_probe_complete);
+  const capacityProbeComplete = useTelemetryStore(
+    (state) => state.snapshot.capacity_probe_complete ?? false,
+  );
+  const downloadKbps = useTelemetryStore((state) => state.snapshot.download_kbps ?? null);
+  const uploadKbps = useTelemetryStore((state) => state.snapshot.upload_kbps ?? null);
+  const uploadLimited = useTelemetryStore((state) => state.snapshot.upload_limited ?? false);
   const retryPrivacyExit = useTelemetryStore((state) => state.retryPrivacyExit);
   const exitPreference = useExitPolicyStore((state) => state.preference);
   const privacyRetryCount = useExitPolicyStore((state) => state.retryCount);
@@ -247,6 +261,8 @@ export function ConnectionStatusLine() {
   }
 
   const hasEgressInfo = Boolean(publicIp || countryCodeRaw || latencyMs != null);
+  const hasCapacityInfo =
+    capacityProbeComplete && downloadKbps != null && uploadKbps != null;
   const canRetryPrivacy =
     stableConnected &&
     exitPreference === "privacy" &&
@@ -331,7 +347,22 @@ export function ConnectionStatusLine() {
               {latencyMs} ms
             </span>
           )}
+          {hasCapacityInfo && !uploadLimited && (
+            <span title="Small bounded path sample; not a continuous speed test">
+              ↓ {formatKbps(downloadKbps)} · ↑ {formatKbps(uploadKbps)}
+            </span>
+          )}
         </div>
+      )}
+
+      {connectionReady && hasCapacityInfo && uploadLimited && (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full bg-status-connecting/8 px-2.5 py-1 font-mono text-[10px] text-status-connecting ring-1 ring-status-connecting/20"
+          title="A small bounded path sample found severe upstream asymmetry; the connection remains usable"
+        >
+          <TriangleAlert size={11} aria-hidden="true" />
+          Upstream constrained · ↑ {formatKbps(uploadKbps)}
+        </span>
       )}
 
       {connectionReady && exitPreference === "privacy" && egressProbeComplete && (
