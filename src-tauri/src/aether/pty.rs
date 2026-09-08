@@ -95,6 +95,7 @@ pub fn spawn(
     if profile.masque_http2 && !profile.masque_mask.is_off() {
         command.env("AETHER_MASQUE_H2_MASK", profile.masque_mask.as_env());
     }
+    command.env("AETHER_TLS_PROFILE", profile.tls_profile.as_env());
     command.env(
         "AETHER_ROUTE_SNIFF",
         if profile.route_sniff { "1" } else { "0" },
