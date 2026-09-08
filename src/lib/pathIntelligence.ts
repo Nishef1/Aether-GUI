@@ -161,6 +161,29 @@ export function recordPathSuccess(
   };
 }
 
+export function recordPathQuality(
+  path: ObservedPath,
+  input: {
+    latencyMs?: number | null;
+    jitterMs?: number | null;
+    qualityScore?: number | null;
+    qualityConfidence?: number | null;
+    countryCode?: string | null;
+    now?: number;
+  },
+): ObservedPath {
+  const now = input.now ?? Date.now();
+  return {
+    ...path,
+    lastSeenAt: now,
+    latencyMs: input.latencyMs ?? path.latencyMs,
+    jitterMs: input.jitterMs ?? path.jitterMs,
+    qualityScore: boundedPercent(input.qualityScore) ?? path.qualityScore,
+    qualityConfidence: boundedPercent(input.qualityConfidence) ?? path.qualityConfidence,
+    countryCode: input.countryCode?.toUpperCase() ?? path.countryCode,
+  };
+}
+
 export function recordPathFailure(
   path: ObservedPath,
   input: {
