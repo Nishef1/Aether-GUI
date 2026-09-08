@@ -25,8 +25,8 @@ function configureGeneratedAndroidProject() {
   console.log("[android-native] configured extracted ARM64 native library packaging");
 }
 
-function runGit(args) {
-  const result = spawnSync("git", args, { cwd: root, stdio: "inherit" });
+function run(command, args) {
+  const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
@@ -34,7 +34,8 @@ function runGit(args) {
 configureGeneratedAndroidProject();
 
 if (customCore) {
-  runGit(["submodule", "update", "--init", "--recursive", "--checkout", "vendor/aether"]);
+  run("git", ["submodule", "update", "--init", "--recursive", "--checkout", "vendor/aether"]);
+  run(process.execPath, [path.join(root, "scripts", "ci", "verify-custom-aether-pin.mjs")]);
 }
 
 const script = path.join(root, "scripts", "prepare-android-native.sh");
