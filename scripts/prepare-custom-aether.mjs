@@ -18,13 +18,29 @@ const cargoManifest = path.join(vendorRoot, "aether", "Cargo.toml");
 const runtimeManifest = JSON.parse(
   readFileSync(path.join(root, "scripts", "runtime-versions.json"), "utf8"),
 );
+const customPin = JSON.parse(
+  readFileSync(path.join(root, "scripts", "ci", "custom-core-pin.json"), "utf8"),
+);
 const expectedVersion = String(runtimeManifest.aether?.version ?? "").replace(/^v/, "");
+const expectedCustomVersion = String(customPin.version ?? "");
+const expectedCommit = String(customPin.commit ?? "");
 const windows = process.platform === "win32";
 const target = path.join(root, "src-tauri", "binaries", windows ? "aether.exe" : "aether");
 const stamp = path.join(root, "src-tauri", "binaries", "aether-version.txt");
 
 if (!/^\d+\.\d+\.\d+$/.test(expectedVersion)) {
   throw new Error("Invalid Aether version in scripts/runtime-versions.json");
+}
+if (customPin.repository !== "Nishef1/Aether") {
+  throw new Error(`Unexpected custom Aether repository: ${customPin.repository}`);
+}
+if (expectedCustomVersion !== expectedVersion) {
+  throw new Error(
+    `Custom core version ${expectedCustomVersion || "unknown"} does not match runtime baseline ${expectedVersion}`,
+  );
+}
+if (!/^[0-9a-f]{40}$/.test(expectedCommit)) {
+  throw new Error("Invalid custom Aether commit in scripts/ci/custom-core-pin.json");
 }
 
 function run(command, args, options = {}) {
@@ -50,6 +66,11 @@ if (!existsSync(cargoManifest)) {
   );
 }
 
+const head = run("git", ["rev-parse", "HEAD"], { cwd: vendorRoot, capture: true });
+if (head !== expectedCommit) {
+  throw new Error(`Custom Aether checkout ${head} does not match pinned commit ${expectedCommit}`);
+}
+
 const cargoToml = readFileSync(cargoManifest, "utf8");
 const packageBlock = cargoToml.match(/\[package\][\s\S]*?(?=\n\[|$)/)?.[0] ?? "";
 const coreVersion = packageBlock.match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? "";
@@ -59,7 +80,6 @@ if (coreVersion !== expectedVersion) {
   );
 }
 
-const head = run("git", ["rev-parse", "HEAD"], { cwd: vendorRoot, capture: true });
 const dirty = run("git", ["status", "--porcelain"], { cwd: vendorRoot, capture: true }).length > 0;
 const stampValue = `custom:${head}${dirty ? ":dirty" : ""}`;
 
@@ -78,12 +98,12 @@ if (!dirty && existsSync(target) && existsSync(stamp)) {
   }
 }
 
-console.log(`[core] building custom Aether ${expectedVersion} from ${head.slice(0, 12)}${dirty ? " (dirty)" : ""}`);
-run(
-  "cargo",
-  ["build", "--release", "--manifest-path", cargoManifest],
-  { env: { CARGO_TERM_COLOR: process.env.CARGO_TERM_COLOR ?? "always" } },
+console.log(
+  `[core] building custom Aether ${expectedVersion} from ${head.slice(0, 12)}${dirty ? " (dirty)" : ""}`,
 );
+run("cargo", ["build", "--release", "--manifest-path", cargoManifest], {
+  env: { CARGO_TERM_COLOR: process.env.CARGO_TERM_COLOR ?? "always" },
+});
 
 const built = path.join(
   vendorRoot,
