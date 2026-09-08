@@ -30,6 +30,7 @@ const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoin
 const PATH_UNAVAILABLE_MARKER = "[gui] path unavailable";
 const CAPACITY_MARKER_RE =
   /^\[gui\] capacity download_kbps=(\d+) upload_kbps=(\d+) upload_limited=(0|1)$/;
+const TLS_GROUPS_BRIDGE_PREFIX = "@profile=";
 const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
   turbo: 75,
   balanced: 150,
@@ -68,6 +69,7 @@ const DEFAULT_PROFILE: ConnectionProfile = {
   fragment_delay: "2-10",
   keepalive: 5,
   no_profile_retry: false,
+  tls_profile: "automatic",
   tls_groups: "",
   perf_profile: "auto",
   route_sniff: true,
@@ -132,19 +134,58 @@ interface ConnectionState {
   retryAfterSidecarError: () => void;
 }
 
+function isTlsProfileMode(
+  value: string,
+): value is NonNullable<ConnectionProfile["tls_profile"]> {
+  return ["automatic", "current", "native-minimal", "compatibility", "experimental"].includes(
+    value,
+  );
+}
+
+function decodeAndroidTlsBridge(
+  profile: Partial<ConnectionProfile>,
+): Partial<ConnectionProfile> {
+  if (!isAndroid || typeof profile.tls_groups !== "string") return profile;
+  const raw = profile.tls_groups.trim();
+  if (!raw.startsWith(TLS_GROUPS_BRIDGE_PREFIX)) return profile;
+
+  const rest = raw.slice(TLS_GROUPS_BRIDGE_PREFIX.length);
+  const separator = rest.indexOf(";groups=");
+  const encodedProfile = separator >= 0 ? rest.slice(0, separator) : rest;
+  const groups = separator >= 0 ? rest.slice(separator + ";groups=".length) : "";
+  return {
+    ...profile,
+    tls_profile: isTlsProfileMode(encodedProfile) ? encodedProfile : "automatic",
+    tls_groups: groups,
+  };
+}
+
 function normalizedProfile(profile: Partial<ConnectionProfile>): ConnectionProfile {
+  const decoded = decodeAndroidTlsBridge(profile);
   return {
     ...DEFAULT_PROFILE,
-    ...profile,
-    mtu: profile.mtu ?? DEFAULT_PROFILE.mtu,
-    validate_secs: profile.validate_secs ?? DEFAULT_PROFILE.validate_secs,
-    reconnect_secs: profile.reconnect_secs ?? DEFAULT_PROFILE.reconnect_secs,
-    keepalive: profile.keepalive ?? DEFAULT_PROFILE.keepalive,
-    route_sniff: profile.route_sniff ?? DEFAULT_PROFILE.route_sniff,
-    route_sniff_ms: profile.route_sniff_ms ?? DEFAULT_PROFILE.route_sniff_ms,
-    auto_reprovision: profile.auto_reprovision ?? DEFAULT_PROFILE.auto_reprovision,
+    ...decoded,
+    mtu: decoded.mtu ?? DEFAULT_PROFILE.mtu,
+    validate_secs: decoded.validate_secs ?? DEFAULT_PROFILE.validate_secs,
+    reconnect_secs: decoded.reconnect_secs ?? DEFAULT_PROFILE.reconnect_secs,
+    keepalive: decoded.keepalive ?? DEFAULT_PROFILE.keepalive,
+    tls_profile: decoded.tls_profile ?? DEFAULT_PROFILE.tls_profile,
+    route_sniff: decoded.route_sniff ?? DEFAULT_PROFILE.route_sniff,
+    route_sniff_ms: decoded.route_sniff_ms ?? DEFAULT_PROFILE.route_sniff_ms,
+    auto_reprovision: decoded.auto_reprovision ?? DEFAULT_PROFILE.auto_reprovision,
     // Upstream URLs can contain credentials and are intentionally session-only.
     upstream: "",
+  };
+}
+
+function profileForNativeInvoke(profile: ConnectionProfile): ConnectionProfile {
+  if (!isAndroid) return profile;
+  const tlsProfile = profile.tls_profile ?? "automatic";
+  if (tlsProfile === "automatic") return profile;
+  const groups = profile.tls_groups.trim();
+  return {
+    ...profile,
+    tls_groups: `${TLS_GROUPS_BRIDGE_PREFIX}${tlsProfile}${groups ? `;groups=${groups}` : ""}`,
   };
 }
 
@@ -247,7 +288,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       attemptId: state.attemptId + 1,
     }));
     try {
-      await invoke("connect", { profileOverride: profile });
+      await invoke("connect", { profileOverride: profileForNativeInvoke(profile) });
     } catch (error) {
       const message = String(error);
       if (
