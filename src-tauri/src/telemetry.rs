@@ -10,8 +10,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
+#[cfg(target_os = "macos")]
+const ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
+#[cfg(not(target_os = "macos"))]
 const ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
-const IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
+const IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(15);
 const PROBE_INTERVAL: Duration = Duration::from_secs(60);
 const TRACE_URL: &str = "https://www.cloudflare.com/cdn-cgi/trace";
 
@@ -86,16 +89,21 @@ fn traffic_delta(previous: Option<TrafficStats>, current: Option<TrafficStats>) 
 }
 
 fn add_traffic_sample(app: &AppHandle, raw: Option<TrafficStats>) {
-    let payload = telemetry_state().lock().ok().map(|mut state| {
+    let payload = telemetry_state().lock().ok().and_then(|mut state| {
         let delta = traffic_delta(state.last_raw_traffic, raw);
+        state.last_raw_traffic = raw;
+
+        if delta.received_bytes == 0 && delta.sent_bytes == 0 {
+            return None;
+        }
+
         state.snapshot.received_bytes = state
             .snapshot
             .received_bytes
             .saturating_add(delta.received_bytes);
         state.snapshot.sent_bytes = state.snapshot.sent_bytes.saturating_add(delta.sent_bytes);
         state.snapshot.sampled_at_ms = now_millis();
-        state.last_raw_traffic = raw;
-        state.snapshot.clone()
+        Some(state.snapshot.clone())
     });
     if let Some(payload) = payload {
         emit_snapshot(app, payload);
