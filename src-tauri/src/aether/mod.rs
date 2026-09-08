@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
+const CONNECTED_MONITOR_INTERVAL: Duration = Duration::from_secs(1);
+
 pub struct AetherManager {
     session: Option<PtySession>,
     state: ConnectionState,
@@ -58,11 +60,7 @@ fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
         .path()
         .resource_dir()
         .map_err(|error| AetherError::Internal(error.to_string()))?;
-    let name = if cfg!(windows) {
-        "aether.exe"
-    } else {
-        "aether"
-    };
+    let name = if cfg!(windows) { "aether.exe" } else { "aether" };
     let path = dir.join("binaries").join(name);
     if !path.exists() {
         return Err(AetherError::BinaryMissing(path.display().to_string()));
@@ -437,7 +435,7 @@ fn monitor_connected(
     generation: u64,
 ) {
     loop {
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(CONNECTED_MONITOR_INTERVAL);
         let mut manager_guard = manager.lock().unwrap();
         if !is_current(&manager_guard, generation) {
             return;
