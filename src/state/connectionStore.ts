@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { decodeNativeConnectionProfile, profileForNativeInvoke } from "@/lib/nativeProfile";
 import { RingBuffer } from "@/lib/ringBuffer";
 import { isAndroid } from "@/lib/platform";
 import type { RuntimePathSelection, PathTransport } from "@/lib/pathIntelligence";
@@ -30,7 +31,6 @@ const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoin
 const PATH_UNAVAILABLE_MARKER = "[gui] path unavailable";
 const CAPACITY_MARKER_RE =
   /^\[gui\] capacity download_kbps=(\d+) upload_kbps=(\d+) upload_limited=(0|1)$/;
-const TLS_GROUPS_BRIDGE_PREFIX = "@profile=";
 const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
   turbo: 75,
   balanced: 150,
@@ -134,34 +134,8 @@ interface ConnectionState {
   retryAfterSidecarError: () => void;
 }
 
-function isTlsProfileMode(
-  value: string,
-): value is NonNullable<ConnectionProfile["tls_profile"]> {
-  return ["automatic", "current", "native-minimal", "compatibility", "experimental"].includes(
-    value,
-  );
-}
-
-function decodeAndroidTlsBridge(
-  profile: Partial<ConnectionProfile>,
-): Partial<ConnectionProfile> {
-  if (!isAndroid || typeof profile.tls_groups !== "string") return profile;
-  const raw = profile.tls_groups.trim();
-  if (!raw.startsWith(TLS_GROUPS_BRIDGE_PREFIX)) return profile;
-
-  const rest = raw.slice(TLS_GROUPS_BRIDGE_PREFIX.length);
-  const separator = rest.indexOf(";groups=");
-  const encodedProfile = separator >= 0 ? rest.slice(0, separator) : rest;
-  const groups = separator >= 0 ? rest.slice(separator + ";groups=".length) : "";
-  return {
-    ...profile,
-    tls_profile: isTlsProfileMode(encodedProfile) ? encodedProfile : "automatic",
-    tls_groups: groups,
-  };
-}
-
 function normalizedProfile(profile: Partial<ConnectionProfile>): ConnectionProfile {
-  const decoded = decodeAndroidTlsBridge(profile);
+  const decoded = decodeNativeConnectionProfile(profile);
   return {
     ...DEFAULT_PROFILE,
     ...decoded,
@@ -175,17 +149,6 @@ function normalizedProfile(profile: Partial<ConnectionProfile>): ConnectionProfi
     auto_reprovision: decoded.auto_reprovision ?? DEFAULT_PROFILE.auto_reprovision,
     // Upstream URLs can contain credentials and are intentionally session-only.
     upstream: "",
-  };
-}
-
-function profileForNativeInvoke(profile: ConnectionProfile): ConnectionProfile {
-  if (!isAndroid) return profile;
-  const tlsProfile = profile.tls_profile ?? "automatic";
-  if (tlsProfile === "automatic") return profile;
-  const groups = profile.tls_groups.trim();
-  return {
-    ...profile,
-    tls_groups: `${TLS_GROUPS_BRIDGE_PREFIX}${tlsProfile}${groups ? `;groups=${groups}` : ""}`,
   };
 }
 
