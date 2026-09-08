@@ -104,6 +104,10 @@ pub struct RuntimeTelemetry {
     pub latency_ms: Option<u64>,
     pub sampled_at_ms: u64,
     pub egress_probe_complete: bool,
+    pub capacity_probe_complete: bool,
+    pub download_kbps: Option<u64>,
+    pub upload_kbps: Option<u64>,
+    pub upload_limited: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

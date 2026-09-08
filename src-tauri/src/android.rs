@@ -604,6 +604,10 @@ fn get_runtime_telemetry(app: AppHandle) -> Result<Value, String> {
                 "latency_ms": telemetry.latency_ms,
                 "sampled_at_ms": telemetry.sampled_at_ms,
                 "egress_probe_complete": telemetry.egress_probe_complete,
+                "capacity_probe_complete": telemetry.capacity_probe_complete,
+                "download_kbps": telemetry.download_kbps,
+                "upload_kbps": telemetry.upload_kbps,
+                "upload_limited": telemetry.upload_limited,
             })
         })
         .map_err(|error| error.to_string())
