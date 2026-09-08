@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { EXIT_RETRY_LIMIT, isPrivacyPreferredExit } from "@/lib/exitPolicy";
+import { canCollectTelemetry, shouldClearTelemetryOnDisconnect } from "@/lib/telemetryLifecycle";
+import { nextTelemetryDelay } from "@/lib/telemetryScheduler";
 import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useExitPolicyStore } from "@/state/exitPolicyStore";
@@ -34,6 +36,33 @@ function isConnected(): boolean {
 function isStableConnected(): boolean {
   const state = useConnectionStore.getState().status.state;
   return state === "Connected" || state === "Tunneling";
+}
+
+function telemetryEqual(left: RuntimeTelemetry, right: RuntimeTelemetry): boolean {
+  return (
+    left.received_bytes === right.received_bytes &&
+    left.sent_bytes === right.sent_bytes &&
+    left.public_ip === right.public_ip &&
+    left.country_code === right.country_code &&
+    left.latency_ms === right.latency_ms &&
+    left.sampled_at_ms === right.sampled_at_ms &&
+    left.egress_probe_complete === right.egress_probe_complete
+  );
+}
+
+function publishTelemetry(snapshot: RuntimeTelemetry): void {
+  const current = useTelemetryStore.getState().snapshot;
+  if (!telemetryEqual(current, snapshot)) {
+    useTelemetryStore.setState({ snapshot });
+  }
+  evaluateExitPolicy(snapshot);
+}
+
+function clearTelemetry(): void {
+  const current = useTelemetryStore.getState().snapshot;
+  if (!telemetryEqual(current, EMPTY_TELEMETRY)) {
+    useTelemetryStore.setState({ snapshot: { ...EMPTY_TELEMETRY } });
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -70,7 +99,7 @@ async function rerollPrivacyExit(epoch: number): Promise<void> {
     // A privacy reroll must perform fresh discovery. Reusing the previous quick
     // route can deterministically reproduce the same WARP egress.
     const rerollProfile = { ...profile, quick_reconnect: false };
-    useTelemetryStore.setState({ snapshot: { ...EMPTY_TELEMETRY } });
+    clearTelemetry();
     useConnectionStore.setState((state) => ({
       status: { state: "Launching" },
       logs: [],
@@ -122,13 +151,22 @@ function evaluateExitPolicy(snapshot: RuntimeTelemetry): void {
   if (epoch != null) void rerollPrivacyExit(epoch);
 }
 
-export const useTelemetryStore = create<TelemetryStore>((set) => ({
+export const useTelemetryStore = create<TelemetryStore>(() => ({
   snapshot: { ...EMPTY_TELEMETRY },
   refresh: async () => {
+    if (
+      isAndroid &&
+      !canCollectTelemetry({
+        visible: document.visibilityState === "visible",
+        connected: isConnected(),
+      })
+    ) {
+      return;
+    }
+
     try {
       const snapshot = await invoke<RuntimeTelemetry>("get_runtime_telemetry");
-      set({ snapshot });
-      evaluateExitPolicy(snapshot);
+      publishTelemetry(snapshot);
     } catch {
       // Telemetry is supplementary and must never affect basic connectivity.
     }
@@ -144,54 +182,79 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
 
 export async function initTelemetryListeners(): Promise<() => void> {
   const unlisten = await listen<RuntimeTelemetry>("aether://telemetry", (event) => {
-    useTelemetryStore.setState({ snapshot: event.payload });
-    evaluateExitPolicy(event.payload);
+    publishTelemetry(event.payload);
   });
-  await useTelemetryStore.getState().refresh();
+
+  if (!isAndroid || document.visibilityState === "visible") {
+    await useTelemetryStore.getState().refresh();
+  }
 
   let disposed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
-  const schedule = () => {
-    if (!isAndroid || disposed || document.visibilityState !== "visible" || !isConnected()) {
-      return;
+  const cancelTimer = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
     }
+  };
+
+  const schedule = () => {
+    if (!isAndroid || disposed || timer !== null) return;
+
+    const delay = nextTelemetryDelay({
+      visible: document.visibilityState === "visible",
+      connected: isConnected(),
+    });
+    if (delay == null) return;
+
     timer = setTimeout(async () => {
       timer = null;
-      if (disposed || document.visibilityState !== "visible" || !isConnected()) return;
+      if (disposed) return;
+
+      const collect = canCollectTelemetry({
+        visible: document.visibilityState === "visible",
+        connected: isConnected(),
+      });
+      if (!collect) return;
+
       await useTelemetryStore.getState().refresh();
       schedule();
-    }, 2_000);
+    }, delay);
+  };
+
+  const restartSchedule = (refreshNow: boolean) => {
+    cancelTimer();
+    if (!isAndroid || disposed) return;
+
+    const collect = canCollectTelemetry({
+      visible: document.visibilityState === "visible",
+      connected: isConnected(),
+    });
+    if (!collect) return;
+
+    if (refreshNow) void useTelemetryStore.getState().refresh();
+    schedule();
   };
 
   const visibilityChanged = () => {
     if (!isAndroid) return;
-    if (timer !== null) {
-      clearTimeout(timer);
-      timer = null;
-    }
-    if (document.visibilityState === "visible") {
-      void useTelemetryStore.getState().refresh();
-      schedule();
-    }
+    restartSchedule(document.visibilityState === "visible");
   };
 
   const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
-    if (state.status.state !== previous.status.state) {
-      if (isStableConnected()) evaluateExitPolicy(useTelemetryStore.getState().snapshot);
+    if (state.status.state === previous.status.state) return;
+
+    if (isStableConnected()) {
+      evaluateExitPolicy(useTelemetryStore.getState().snapshot);
     }
 
-    if (!isAndroid || state.status.state === previous.status.state) return;
-    if (timer !== null) {
-      clearTimeout(timer);
-      timer = null;
+    if (!isAndroid) return;
+
+    if (shouldClearTelemetryOnDisconnect(isConnected())) {
+      clearTelemetry();
     }
-    if (isConnected() && document.visibilityState === "visible") {
-      void useTelemetryStore.getState().refresh();
-      schedule();
-    } else if (!isConnected()) {
-      useTelemetryStore.setState({ snapshot: { ...EMPTY_TELEMETRY } });
-    }
+    restartSchedule(isConnected() && document.visibilityState === "visible");
   });
 
   if (isAndroid) {
@@ -201,9 +264,9 @@ export async function initTelemetryListeners(): Promise<() => void> {
 
   return () => {
     disposed = true;
+    cancelTimer();
     unlisten();
     unsubscribeConnection();
-    if (timer !== null) clearTimeout(timer);
     if (isAndroid) document.removeEventListener("visibilitychange", visibilityChanged);
   };
 }
