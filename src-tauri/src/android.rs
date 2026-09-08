@@ -470,6 +470,10 @@ async fn connect(
         .settings
         .lock()
         .map_err(|_| "mobile state unavailable")? = settings.clone();
+    // Keep the Rust process environment synchronized as an additional bridge
+    // for child runtimes that inherit it. Core also detects the underlay itself
+    // when Android's ProcessBuilder does not reflect a post-start env change.
+    crate::network_context::sync_process_environment();
     emit_status(&app, &json!({ "state": "Launching" }));
     match app
         .aether_vpn()
@@ -606,6 +610,11 @@ fn get_runtime_telemetry(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn get_network_context() -> Option<String> {
+    crate::network_context::current_network_key()
+}
+
+#[tauri::command]
 fn get_android_logs(app: AppHandle, after_id: u64) -> Result<Value, String> {
     app.aether_vpn()
         .logs(after_id)
@@ -676,6 +685,7 @@ pub fn run_inner() {
             set_system_tunnel,
             set_android_logging,
             get_runtime_telemetry,
+            get_network_context,
             get_android_logs,
             get_close_to_tray,
             set_close_to_tray,
