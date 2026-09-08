@@ -33,6 +33,12 @@ export type NoizeProfile =
 export type MasqueNoize = NoizeProfile;
 export type WgNoize = NoizeProfile;
 export type H2MaskMode = "off" | "legacy" | "clienthello" | "patterniha";
+export type TlsProfileMode =
+  | "automatic"
+  | "current"
+  | "native-minimal"
+  | "compatibility"
+  | "experimental";
 export type ZeroTrustAuth = "email" | "service" | "token";
 export type SystemTunnelSelection = "off" | "singbox" | "native";
 export type PerfProfile = "auto" | "low" | "medium" | "high";
@@ -79,6 +85,7 @@ export interface ConnectionProfile {
   fragment_delay: string;
   keepalive: number;
   no_profile_retry: boolean;
+  tls_profile?: TlsProfileMode;
   tls_groups: string;
   perf_profile: PerfProfile;
   route_sniff: boolean;
