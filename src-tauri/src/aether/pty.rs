@@ -6,6 +6,7 @@ use crate::events::{now_millis, should_forward_log, LogEvent};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashSet;
 use std::io::{Read, Write};
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -178,6 +179,42 @@ fn forward_log(log_tx: &Sender<LogEvent>, line: String) {
     });
 }
 
+fn endpoint_token(text: &str) -> Option<&str> {
+    let endpoint = text.split_whitespace().next()?.trim();
+    endpoint.parse::<SocketAddr>().ok()?;
+    Some(endpoint)
+}
+
+fn selected_path_marker(line: &str, profile: &ConnectionProfile) -> Option<String> {
+    if let Some((_, rest)) = line.split_once("selected MASQUE gateway ") {
+        let endpoint = endpoint_token(rest)?;
+        let transport = if profile.masque_http2 { "h2" } else { "h3" };
+        return Some(format!(
+            "[gui] path selected transport={transport} endpoint={endpoint}"
+        ));
+    }
+
+    if let Some((_, rest)) = line.split_once("selected WireGuard endpoint ") {
+        let endpoint = endpoint_token(rest)?;
+        return Some(format!(
+            "[gui] path selected transport=wg endpoint={endpoint}"
+        ));
+    }
+
+    if let Some((_, rest)) = line.split_once("using cloudflare edge ") {
+        let (outer, inner_rest) = rest.split_once(" (outer) and ")?;
+        let inner = inner_rest.split_once(" (inner)")?.0.trim();
+        let outer = outer.trim();
+        outer.parse::<SocketAddr>().ok()?;
+        inner.parse::<SocketAddr>().ok()?;
+        return Some(format!(
+            "[gui] path selected transport=gool endpoint={outer}>{inner}"
+        ));
+    }
+
+    None
+}
+
 fn read_loop(
     reader: &mut dyn Read,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -209,6 +246,9 @@ fn read_loop(
                     current_section = Some(rule.id);
                     answered.remove(rule.id);
                 }
+            }
+            if let Some(marker) = selected_path_marker(&line, &profile) {
+                forward_log(&log_tx, marker);
             }
             forward_log(&log_tx, line);
         }

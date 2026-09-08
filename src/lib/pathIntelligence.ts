@@ -3,6 +3,11 @@ import type { ConnectionProfile } from "@/types/connection";
 export type PathHealth = "healthy" | "suspect" | "failed";
 export type PathTransport = "h2" | "h3" | "wg" | "gool" | "unknown";
 
+export interface RuntimePathSelection {
+  endpoint: string;
+  transport: PathTransport;
+}
+
 export interface ObservedPath {
   id: string;
   endpoint: string;
@@ -56,9 +61,12 @@ function endpointForProfile(profile: ConnectionProfile, transport: PathTransport
   }
 }
 
-export function pathIdForProfile(profile: ConnectionProfile): string {
-  const transport = inferTransport(profile);
-  const endpoint = endpointForProfile(profile, transport);
+export function pathIdForProfile(
+  profile: ConnectionProfile,
+  selection?: RuntimePathSelection | null,
+): string {
+  const transport = selection?.transport ?? inferTransport(profile);
+  const endpoint = selection?.endpoint.trim() || endpointForProfile(profile, transport);
   const noize = transport === "wg" || transport === "gool" ? profile.wg_noize : profile.masque_noize;
   return [
     transport,
@@ -72,11 +80,16 @@ export function pathIdForProfile(profile: ConnectionProfile): string {
   ].join("|");
 }
 
-export function createObservedPath(profile: ConnectionProfile, now = Date.now()): ObservedPath {
-  const transport = inferTransport(profile);
+export function createObservedPath(
+  profile: ConnectionProfile,
+  now = Date.now(),
+  selection?: RuntimePathSelection | null,
+): ObservedPath {
+  const transport = selection?.transport ?? inferTransport(profile);
+  const endpoint = selection?.endpoint.trim() || endpointForProfile(profile, transport);
   return {
-    id: pathIdForProfile(profile),
-    endpoint: endpointForProfile(profile, transport),
+    id: pathIdForProfile(profile, selection),
+    endpoint,
     transport,
     health: "suspect",
     successes: 0,

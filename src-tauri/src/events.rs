@@ -7,6 +7,7 @@ pub const TELEMETRY_EVENT: &str = "aether://telemetry";
 
 const ACCESS_CODE_MARKER: &str = "[gui] Zero Trust access code required";
 const BUDGET_MARKER: &str = "budget=";
+const PATH_SELECTION_MARKER: &str = "[gui] path selected ";
 
 static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -24,6 +25,7 @@ pub fn should_forward_log(line: &str) -> bool {
     DIAGNOSTICS_ENABLED.load(Ordering::Relaxed)
         || line.contains(ACCESS_CODE_MARKER)
         || line.contains(BUDGET_MARKER)
+        || line.contains(PATH_SELECTION_MARKER)
 }
 
 pub fn now_millis() -> u64 {
