@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { automaticAttemptBudgetMs, buildAutomaticCandidates } from "@/lib/automaticPolicy";
+import { profileForNativeInvoke } from "@/lib/nativeProfile";
 import { useConnectionStore } from "@/state/connectionStore";
 import { usePathStore } from "@/state/pathStore";
 import type { ConnectionProfile, ConnectionStatus } from "@/types/connection";
@@ -86,7 +87,7 @@ function prepareAttempt(profile: ConnectionProfile, budgetMs: number): void {
 
 async function invokeCandidate(profile: ConnectionProfile): Promise<string | null> {
   try {
-    await invoke("connect", { profileOverride: profile });
+    await invoke("connect", { profileOverride: profileForNativeInvoke(profile) });
     return null;
   } catch (error) {
     return String(error);
