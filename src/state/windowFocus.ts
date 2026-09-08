@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSyncExternalStore } from "react";
+import { RingBuffer } from "@/lib/ringBuffer";
 
 /**
  * Single source of truth for "is the host window focused". Primary feed:
@@ -20,21 +21,22 @@ const listeners = new Set<() => void>();
 function set(next: boolean) {
   if (next === focused) return;
   focused = next;
-  listeners.forEach((l) => l());
+  listeners.forEach((listener) => listener());
 }
 
-const eventLog: Array<{ t: number; focused: boolean; src: string }> = [];
+const eventLog = new RingBuffer<{ t: number; focused: boolean; src: string }>(32);
+
 function record(next: boolean, src: string) {
   eventLog.push({ t: Date.now(), focused: next, src });
   set(next);
 }
 
 try {
-  void listen<boolean>("app://focused", (e) => record(e.payload, "rust"));
+  void listen<boolean>("app://focused", (event) => record(event.payload, "rust"));
   void getCurrentWindow().onFocusChanged(({ payload }) => record(payload, "tauri"));
   (window as unknown as { __focus?: object }).__focus = {
     state: () => focused,
-    events: () => eventLog.slice(-10),
+    events: () => eventLog.toArray(10),
   };
 } catch {
   // Not inside Tauri (plain-browser dev) — stays "focused".
@@ -42,9 +44,9 @@ try {
 
 export function useWindowFocused(): boolean {
   return useSyncExternalStore(
-    (cb) => {
-      listeners.add(cb);
-      return () => listeners.delete(cb);
+    (callback) => {
+      listeners.add(callback);
+      return () => listeners.delete(callback);
     },
     () => focused,
   );
