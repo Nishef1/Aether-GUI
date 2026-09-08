@@ -4,7 +4,9 @@ export class RingBuffer<T> {
   private size = 0;
 
   constructor(private readonly capacity: number) {
-    if (capacity <= 0) throw new Error("capacity must be positive");
+    if (!Number.isInteger(capacity) || capacity <= 0) {
+      throw new Error("capacity must be a positive integer");
+    }
     this.values = new Array<T>(capacity);
   }
 
@@ -18,11 +20,14 @@ export class RingBuffer<T> {
     for (const item of items) this.push(item);
   }
 
-  toArray(): T[] {
-    const result = new Array<T>(this.size);
-    const start = (this.cursor - this.size + this.capacity) % this.capacity;
+  toArray(limit = this.size): T[] {
+    const count = Math.max(0, Math.min(this.size, Math.floor(limit)));
+    if (count === 0) return [];
 
-    for (let index = 0; index < this.size; index++) {
+    const result = new Array<T>(count);
+    const start = (this.cursor - count + this.capacity) % this.capacity;
+
+    for (let index = 0; index < count; index++) {
       result[index] = this.values[(start + index) % this.capacity];
     }
 
