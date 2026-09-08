@@ -181,10 +181,11 @@ function clearBufferedLogs(): void {
 
 async function syncNativeLogging(enabled: boolean): Promise<void> {
   const active = enabled && (!isAndroid || document.visibilityState === "visible");
-  await invoke("set_diagnostics_logging", { enabled: active });
   if (isAndroid) {
     await invoke("set_android_logging", { enabled: active });
+    return;
   }
+  await invoke("set_diagnostics_logging", { enabled: active });
 }
 
 function updateStatus(status: ConnectionStatus, resetDesktopBudget = false): void {
