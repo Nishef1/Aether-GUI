@@ -572,6 +572,23 @@ class FinalAetherVpnService : VpnService() {
                 initialProbe.countryCode,
                 initialProbe.latencyMs,
             )
+            val selectedPath = AndroidPathSelectionReader.resolve(
+                filesDir = filesDir,
+                protocol = profile.protocol,
+                masqueHttp2 = profile.masqueHttp2,
+                peer = profile.peer,
+                wgPeer = profile.wgPeer,
+                wiwOuter = profile.wiwOuter,
+                wiwInner = profile.wiwInner,
+                h2Peer = profile.h2Peer,
+            )
+            if (selectedPath != null) {
+                AndroidVpnRuntime.appendControlLine(
+                    "[gui] path selected transport=${selectedPath.transport} endpoint=${selectedPath.endpoint}",
+                )
+            } else {
+                AndroidVpnRuntime.appendControlLine("[gui] path unavailable")
+            }
             val connectedAt = System.currentTimeMillis()
 
             if (profile.connectionMode == "proxy") {
@@ -602,6 +619,7 @@ class FinalAetherVpnService : VpnService() {
                     throw CancellationException("Connection cancelled before TUN attachment")
                 }
                 tunnelAttached = true
+                validateTunnelLiveness(token, tunnel.bridge)
                 updateSnapshotIfActive(
                     token,
                     FinalServiceSnapshot(
@@ -755,6 +773,20 @@ class FinalAetherVpnService : VpnService() {
                     put("AETHER_ACCESS_TOKEN", profile.accessToken.trim())
                 }
             }
+        }
+    }
+
+    private fun validateTunnelLiveness(token: Long, bridge: HevTun2Socks) {
+        repeat(TUN_LIVENESS_SAMPLES) {
+            ensureActive(token)
+            if (!bridge.isRunning()) {
+                error("Android device tunnel stopped during startup validation")
+            }
+            val stats = bridge.TProxyGetStats()
+            if (stats.size < 4) {
+                error("Android device tunnel statistics are unavailable during startup validation")
+            }
+            if (it + 1 < TUN_LIVENESS_SAMPLES) Thread.sleep(TUN_LIVENESS_SAMPLE_MS)
         }
     }
 
@@ -1127,6 +1159,8 @@ class FinalAetherVpnService : VpnService() {
         private const val PROCESS_FORCE_TIMEOUT_SECONDS = 1L
         private const val SOCKS_POLL_CONNECT_TIMEOUT_MS = 300
         private const val SOCKS_POLL_INTERVAL_MS = 200L
+        private const val TUN_LIVENESS_SAMPLES = 3
+        private const val TUN_LIVENESS_SAMPLE_MS = 100L
         private const val EGRESS_PROBE_INTERVAL_MS = 300_000L
 
         fun markStartRequested() =

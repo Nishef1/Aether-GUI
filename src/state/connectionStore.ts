@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { RingBuffer } from "@/lib/ringBuffer";
 import { isAndroid } from "@/lib/platform";
+import type { RuntimePathSelection, PathTransport } from "@/lib/pathIntelligence";
 import type {
   ConnectionProfile,
   ConnectionStatus,
@@ -20,6 +21,8 @@ const MAX_LOG_LINE_LIMIT = 500;
 const LOG_FLUSH_MS = isAndroid ? 250 : 100;
 const BUDGET_RE = /budget=(\d+)s/;
 const ACCESS_CODE_MARKER = "[gui] Zero Trust access code required";
+const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoint=(.+)$/;
+const PATH_UNAVAILABLE_MARKER = "[gui] path unavailable";
 const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
   turbo: 75,
   balanced: 150,
@@ -85,6 +88,8 @@ interface ConnectionState {
   scanBudgetSecs: number | null;
   attemptId: number;
   accessCodeRequired: boolean;
+  runtimePath: RuntimePathSelection | null;
+  runtimePathAttemptId: number | null;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   clearAccessCodeRequirement: () => void;
@@ -214,6 +219,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   scanBudgetSecs: null,
   attemptId: 0,
   accessCodeRequired: false,
+  runtimePath: null,
+  runtimePathAttemptId: null,
 
   connect: async () => {
     const profile = get().profile;
@@ -221,6 +228,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set((state) => ({
       logs: [],
       accessCodeRequired: false,
+      runtimePath: null,
+      runtimePathAttemptId: null,
       scanBudgetSecs: isAndroid ? ANDROID_SCAN_BUDGETS[profile.scan_mode] : null,
       attemptId: state.attemptId + 1,
     }));
@@ -340,6 +349,29 @@ function updateScanBudgetFromLine(line: string): void {
   }
 }
 
+function updateControlStateFromLine(line: string): void {
+  const state = useConnectionStore.getState();
+
+  if (line.includes(ACCESS_CODE_MARKER) && !state.accessCodeRequired) {
+    useConnectionStore.setState({ accessCodeRequired: true });
+  }
+
+  updateScanBudgetFromLine(line);
+
+  const pathMatch = PATH_MARKER_RE.exec(line.trim());
+  if (pathMatch) {
+    useConnectionStore.setState({
+      runtimePath: {
+        transport: pathMatch[1] as PathTransport,
+        endpoint: pathMatch[2].trim(),
+      },
+      runtimePathAttemptId: state.attemptId,
+    });
+  } else if (line.trim() === PATH_UNAVAILABLE_MARKER) {
+    useConnectionStore.setState({ runtimePath: null, runtimePathAttemptId: state.attemptId });
+  }
+}
+
 function appendLogBatch(batch: LogLine[]): void {
   if (batch.length === 0) return;
 
@@ -368,6 +400,10 @@ function androidPollDelay(status: ConnectionStatus): number {
   }
 }
 
+function stableStatus(status: ConnectionStatus): boolean {
+  return status.state === "Connected" || status.state === "Tunneling";
+}
+
 export async function initConnectionListeners(): Promise<() => void> {
   let pendingLogs: LogLine[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -385,17 +421,7 @@ export async function initConnectionListeners(): Promise<() => void> {
       updateStatus(event.payload, !isAndroid && event.payload.state === "Launching");
     }),
     listen<LogLine>("aether://log", (event) => {
-      const { line } = event.payload;
-
-      // Interaction events are control-plane state, not diagnostics. Detect
-      // them even when the user-visible live-log buffer is disabled.
-      if (!isAndroid && line.includes(ACCESS_CODE_MARKER)) {
-        if (!useConnectionStore.getState().accessCodeRequired) {
-          useConnectionStore.setState({ accessCodeRequired: true });
-        }
-      }
-
-      updateScanBudgetFromLine(line);
+      updateControlStateFromLine(event.payload.line);
 
       if (!useConnectionStore.getState().loggingEnabled) return;
       pendingLogs.push(event.payload);
@@ -438,7 +464,13 @@ export async function initConnectionListeners(): Promise<() => void> {
         // The foreground service can be between lifecycle states.
       }
 
-      if (useConnectionStore.getState().loggingEnabled) {
+      const connection = useConnectionStore.getState();
+      const needsPathControl =
+        connection.attemptId > 0 &&
+        stableStatus(connection.status) &&
+        connection.runtimePathAttemptId !== connection.attemptId;
+
+      if (connection.loggingEnabled || needsPathControl) {
         try {
           const batch = await invoke<{
             entries: Array<{ id: number; timestamp: number; line: string }>;
@@ -446,12 +478,12 @@ export async function initConnectionListeners(): Promise<() => void> {
           }>("get_android_logs", { afterId: lastNativeLogId });
           lastNativeLogId = Math.max(lastNativeLogId, batch.last_id);
 
-          for (const entry of batch.entries) updateScanBudgetFromLine(entry.line);
+          for (const entry of batch.entries) updateControlStateFromLine(entry.line);
           appendLogBatch(
             batch.entries.map((entry) => ({ timestamp: entry.timestamp, line: entry.line })),
           );
         } catch {
-          // Logging is supplementary and must never destabilize the VPN.
+          // Control metadata and logging are supplementary and must not destabilize the VPN.
         }
       }
       scheduleAndroidPoll();

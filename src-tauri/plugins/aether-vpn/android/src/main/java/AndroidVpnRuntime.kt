@@ -57,11 +57,13 @@ data class FinalRuntimeTelemetry(
 /**
  * Process-local Android runtime state.
  *
- * Logs are opt-in, memory-only and cleared as soon as logging is disabled.
- * No diagnostic or traffic log is ever written to app storage.
+ * Diagnostics are opt-in and memory-only. A separate tiny control queue stays
+ * available while diagnostics are off so the WebView can receive interaction
+ * and path-selection metadata without enabling verbose core logging.
  */
 internal object AndroidVpnRuntime {
     private const val MAX_VISIBLE_LOG_LINES = 400
+    private const val MAX_CONTROL_LOG_LINES = 24
     private const val MAX_INTERNAL_TAIL_LINES = 32
     private const val MAX_PARTIAL_CHARS = 16 * 1024
 
@@ -72,6 +74,7 @@ internal object AndroidVpnRuntime {
     private val logSequence = AtomicLong(0L)
     private val processInput = AtomicReference<BufferedWriter?>(null)
     private val visibleLogs = ArrayDeque<FinalNativeLogEntry>()
+    private val controlLogs = ArrayDeque<FinalNativeLogEntry>()
     private val internalTail = ArrayDeque<String>()
     private val parserLock = Any()
     private var partialOutput = ""
@@ -123,20 +126,34 @@ internal object AndroidVpnRuntime {
 
     fun isLoggingEnabled(): Boolean = loggingEnabled.get()
 
-    fun logsAfter(afterId: Long): List<FinalNativeLogEntry> = synchronized(visibleLogs) {
-        if (!loggingEnabled.get()) emptyList() else visibleLogs.filter { it.id > afterId }
+    fun logsAfter(afterId: Long): List<FinalNativeLogEntry> {
+        val controls = synchronized(controlLogs) { controlLogs.filter { it.id > afterId } }
+        if (!loggingEnabled.get()) return controls
+        val diagnostics = synchronized(visibleLogs) { visibleLogs.filter { it.id > afterId } }
+        return (controls + diagnostics).sortedBy { it.id }
     }
+
+    private fun newLogEntry(line: String) = FinalNativeLogEntry(
+        id = logSequence.incrementAndGet(),
+        timestamp = System.currentTimeMillis(),
+        line = line,
+    )
 
     private fun appendVisible(line: String) {
         if (!loggingEnabled.get()) return
-        val entry = FinalNativeLogEntry(
-            id = logSequence.incrementAndGet(),
-            timestamp = System.currentTimeMillis(),
-            line = line,
-        )
+        val entry = newLogEntry(line)
         synchronized(visibleLogs) {
             if (visibleLogs.size >= MAX_VISIBLE_LOG_LINES) visibleLogs.removeFirst()
             visibleLogs.addLast(entry)
+        }
+    }
+
+    fun appendControlLine(line: String) {
+        if (line.isBlank()) return
+        val entry = newLogEntry(line)
+        synchronized(controlLogs) {
+            if (controlLogs.size >= MAX_CONTROL_LOG_LINES) controlLogs.removeFirst()
+            controlLogs.addLast(entry)
         }
     }
 
@@ -179,7 +196,7 @@ internal object AndroidVpnRuntime {
                         connectedAtMs = current.connectedAtMs,
                     ),
                 )
-                appendVisible("[gui] Zero Trust access code required")
+                appendControlLine("[gui] Zero Trust access code required")
             }
             accessCodePromptVisible = prompt
         }
@@ -237,6 +254,7 @@ internal object AndroidVpnRuntime {
 
     fun resetTelemetry() {
         telemetry.set(FinalRuntimeTelemetry(sampledAtMs = System.currentTimeMillis()))
+        synchronized(controlLogs) { controlLogs.clear() }
     }
 
     fun trafficSnapshot(): FinalNativeTraffic {

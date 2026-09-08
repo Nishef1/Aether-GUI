@@ -1,5 +1,5 @@
-import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
+import { isAndroid } from "@/lib/platform";
 import {
   createObservedPath,
   MAX_PATHS,
@@ -13,20 +13,15 @@ import {
 } from "@/lib/pathIntelligence";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
-import type { ConnectionStatus, LogLine } from "@/types/connection";
+import type { ConnectionStatus } from "@/types/connection";
 
 const STORAGE_KEY = "aether.path-intelligence.v1";
-const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoint=(.+)$/;
 const TRANSPORTS = new Set<PathTransport>(["h2", "h3", "wg", "gool", "unknown"]);
 const HEALTH_STATES = new Set<PathHealth>(["healthy", "suspect", "failed"]);
 
 interface PathStore {
   paths: ObservedPath[];
   clear: () => void;
-}
-
-interface AttemptPathSelection extends RuntimePathSelection {
-  attemptId: number;
 }
 
 function finiteOr(value: unknown, fallback: number): number {
@@ -137,28 +132,27 @@ function stableSessionKey(status: ConnectionStatus, attemptId: number): string |
   }
 }
 
+function runtimeSelectionForAttempt(attemptId: number): RuntimePathSelection | null {
+  const connection = useConnectionStore.getState();
+  return connection.runtimePathAttemptId === attemptId ? connection.runtimePath : null;
+}
+
 export function initPathIntelligence(): () => void {
-  let selectedPath: AttemptPathSelection | null = null;
   let lastSuccessSession: string | null = null;
   let errorStateRecorded = false;
-  let disposed = false;
-  let unlistenPath: (() => void) | null = null;
-
-  const selectionForAttempt = (attemptId: number): RuntimePathSelection | null =>
-    selectedPath?.attemptId === attemptId
-      ? { endpoint: selectedPath.endpoint, transport: selectedPath.transport }
-      : null;
 
   const maybeRecordSuccess = () => {
     const connection = useConnectionStore.getState();
     const telemetry = useTelemetryStore.getState().snapshot;
     const sessionKey = stableSessionKey(connection.status, connection.attemptId);
+    const selection = runtimeSelectionForAttempt(connection.attemptId);
 
     if (
       sessionKey == null ||
       connection.attemptId <= 0 ||
       sessionKey === lastSuccessSession ||
-      !telemetry.egress_probe_complete
+      !telemetry.egress_probe_complete ||
+      (isAndroid && selection == null)
     ) {
       return;
     }
@@ -170,46 +164,33 @@ export function initPathIntelligence(): () => void {
           latencyMs: telemetry.latency_ms,
           countryCode: telemetry.country_code,
         }),
-      selectionForAttempt(connection.attemptId),
+      selection,
     );
   };
 
   const maybeRecordFailure = () => {
     const connection = useConnectionStore.getState();
-    if (connection.status.state !== "Error" || connection.attemptId <= 0 || errorStateRecorded) {
+    const selection = runtimeSelectionForAttempt(connection.attemptId);
+    if (
+      connection.status.state !== "Error" ||
+      connection.attemptId <= 0 ||
+      errorStateRecorded ||
+      (isAndroid && selection == null)
+    ) {
       return;
     }
 
     errorStateRecorded = true;
-    updatePath(
-      (path) => recordPathFailure(path),
-      selectionForAttempt(connection.attemptId),
-    );
+    updatePath((path) => recordPathFailure(path), selection);
   };
-
-  void listen<LogLine>("aether://log", (event) => {
-    const match = PATH_MARKER_RE.exec(event.payload.line.trim());
-    if (!match) return;
-
-    const connection = useConnectionStore.getState();
-    if (connection.attemptId <= 0) return;
-    selectedPath = {
-      attemptId: connection.attemptId,
-      transport: match[1] as PathTransport,
-      endpoint: match[2].trim(),
-    };
-  }).then((unlisten) => {
-    if (disposed) unlisten();
-    else unlistenPath = unlisten;
-  });
 
   const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
     if (state.attemptId !== previous.attemptId) {
-      selectedPath = null;
       errorStateRecorded = false;
     }
 
-    if (state.status.state !== previous.status.state) {
+    const pathResolvedChanged = state.runtimePathAttemptId !== previous.runtimePathAttemptId;
+    if (state.status.state !== previous.status.state || pathResolvedChanged) {
       if (state.status.state !== "Error") errorStateRecorded = false;
       maybeRecordSuccess();
       maybeRecordFailure();
@@ -229,8 +210,6 @@ export function initPathIntelligence(): () => void {
   maybeRecordFailure();
 
   return () => {
-    disposed = true;
-    unlistenPath?.();
     unsubscribeConnection();
     unsubscribeTelemetry();
   };
