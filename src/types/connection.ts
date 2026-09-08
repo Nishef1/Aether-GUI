@@ -103,6 +103,10 @@ export interface RuntimeTelemetry {
   path_health?: PathHealth;
   tunnel_validation?: TunnelValidation;
   probe_failures?: number;
+  smoothed_latency_ms?: number | null;
+  jitter_ms?: number | null;
+  quality_score?: number;
+  quality_confidence?: number;
 }
 
 export interface LogLine {

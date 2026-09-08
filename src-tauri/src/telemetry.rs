@@ -1,6 +1,7 @@
 use crate::engine::EngineRuntime;
 use crate::events::{now_millis, TELEMETRY_EVENT};
 use crate::path_health::{PathHealth, PathHealthSnapshot};
+use crate::path_score;
 use crate::state::ConnectionState;
 use crate::traffic::{self, TrafficStats};
 use crate::tunnel_validation::{TunnelProbe, TunnelValidation};
@@ -32,6 +33,10 @@ pub struct RuntimeTelemetry {
     pub path_health: PathHealth,
     pub tunnel_validation: TunnelValidation,
     pub probe_failures: u32,
+    pub smoothed_latency_ms: Option<u64>,
+    pub jitter_ms: Option<u64>,
+    pub quality_score: u8,
+    pub quality_confidence: u8,
 }
 
 #[derive(Debug, Default)]
@@ -116,11 +121,7 @@ fn traffic_delta(previous: Option<TrafficStats>, current: Option<TrafficStats>) 
     }
 }
 
-fn add_traffic_sample(
-    app: &AppHandle,
-    raw: Option<TrafficStats>,
-    tunnel_required: bool,
-) {
+fn add_traffic_sample(app: &AppHandle, raw: Option<TrafficStats>, tunnel_required: bool) {
     let payload = telemetry_state().lock().ok().and_then(|mut state| {
         let previous_validation = state.snapshot.tunnel_validation;
         let delta = traffic_delta(state.last_raw_traffic, raw);
@@ -179,8 +180,13 @@ fn publish_probe_result(app: &AppHandle, token: u64, result: Result<EgressProbe,
             }
         }
 
+        let quality = path_score::calculate(&state.health);
         state.snapshot.path_health = state.health.health;
         state.snapshot.probe_failures = state.health.failures;
+        state.snapshot.smoothed_latency_ms = state.health.smoothed_latency_ms;
+        state.snapshot.jitter_ms = state.health.jitter_ms;
+        state.snapshot.quality_score = quality.score;
+        state.snapshot.quality_confidence = quality.confidence;
         state.snapshot.tunnel_validation = validation_for(&state);
         state.snapshot.clone()
     });
@@ -390,6 +396,16 @@ mod tests {
                 sent_bytes: 75,
             }
         );
+    }
+
+    #[test]
+    fn quality_score_penalizes_jitter_without_extra_network_requests() {
+        let mut health = PathHealthSnapshot::default();
+        health.mark_success(40, 1000);
+        let stable = path_score::calculate(&health);
+        health.mark_success(440, 2000);
+        let jittery = path_score::calculate(&health);
+        assert!(stable.score > jittery.score);
     }
 
     #[test]

@@ -14,6 +14,8 @@ pub enum PathHealth {
 pub struct PathHealthSnapshot {
     pub health: PathHealth,
     pub latency_ms: Option<u64>,
+    pub smoothed_latency_ms: Option<u64>,
+    pub jitter_ms: Option<u64>,
     pub last_success_ms: Option<u64>,
     pub failures: u32,
     pub successes: u32,
@@ -21,6 +23,17 @@ pub struct PathHealthSnapshot {
 
 impl PathHealthSnapshot {
     pub fn mark_success(&mut self, latency_ms: u64, now_ms: u64) {
+        let previous = self.smoothed_latency_ms.or(self.latency_ms);
+        let instantaneous_jitter = previous.map(|value| value.abs_diff(latency_ms));
+
+        self.smoothed_latency_ms = Some(match previous {
+            Some(value) => value.saturating_mul(3).saturating_add(latency_ms) / 4,
+            None => latency_ms,
+        });
+        self.jitter_ms = instantaneous_jitter.map(|sample| match self.jitter_ms {
+            Some(value) => value.saturating_mul(3).saturating_add(sample) / 4,
+            None => sample,
+        });
         self.health = PathHealth::Healthy;
         self.latency_ms = Some(latency_ms);
         self.last_success_ms = Some(now_ms);
@@ -51,12 +64,18 @@ impl PathHealthSnapshot {
         };
 
         let latency_penalty = self
-            .latency_ms
+            .smoothed_latency_ms
+            .or(self.latency_ms)
             .map(|latency| (latency / 10).min(35) as u16)
             .unwrap_or(20);
+        let jitter_penalty = self
+            .jitter_ms
+            .map(|jitter| (jitter / 20).min(15) as u16)
+            .unwrap_or(0);
         let failure_penalty = self.failures.min(25) as u16;
 
         base.saturating_sub(latency_penalty)
+            .saturating_sub(jitter_penalty)
             .saturating_sub(failure_penalty)
     }
 }
@@ -72,6 +91,15 @@ mod tests {
         state.mark_success(42, 1000);
         assert_eq!(state.health, PathHealth::Healthy);
         assert_eq!(state.failures, 0);
+    }
+
+    #[test]
+    fn repeated_successes_track_smoothed_latency_and_jitter() {
+        let mut state = PathHealthSnapshot::default();
+        state.mark_success(40, 1000);
+        state.mark_success(80, 2000);
+        assert_eq!(state.smoothed_latency_ms, Some(50));
+        assert_eq!(state.jitter_ms, Some(40));
     }
 
     #[test]

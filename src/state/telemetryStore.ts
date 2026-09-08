@@ -20,6 +20,10 @@ const EMPTY_TELEMETRY: RuntimeTelemetry = {
   path_health: "unknown",
   tunnel_validation: "unknown",
   probe_failures: 0,
+  smoothed_latency_ms: null,
+  jitter_ms: null,
+  quality_score: 0,
+  quality_confidence: 0,
 };
 
 const REROLL_STOP_TIMEOUT_MS = 8_000;
@@ -49,6 +53,10 @@ function normalizeTelemetry(snapshot: RuntimeTelemetry): RuntimeTelemetry {
     path_health: snapshot.path_health ?? "unknown",
     tunnel_validation: snapshot.tunnel_validation ?? "unknown",
     probe_failures: snapshot.probe_failures ?? 0,
+    smoothed_latency_ms: snapshot.smoothed_latency_ms ?? null,
+    jitter_ms: snapshot.jitter_ms ?? null,
+    quality_score: snapshot.quality_score ?? 0,
+    quality_confidence: snapshot.quality_confidence ?? 0,
   };
 }
 
@@ -63,7 +71,11 @@ function telemetryEqual(left: RuntimeTelemetry, right: RuntimeTelemetry): boolea
     left.egress_probe_complete === right.egress_probe_complete &&
     (left.path_health ?? "unknown") === (right.path_health ?? "unknown") &&
     (left.tunnel_validation ?? "unknown") === (right.tunnel_validation ?? "unknown") &&
-    (left.probe_failures ?? 0) === (right.probe_failures ?? 0)
+    (left.probe_failures ?? 0) === (right.probe_failures ?? 0) &&
+    (left.smoothed_latency_ms ?? null) === (right.smoothed_latency_ms ?? null) &&
+    (left.jitter_ms ?? null) === (right.jitter_ms ?? null) &&
+    (left.quality_score ?? 0) === (right.quality_score ?? 0) &&
+    (left.quality_confidence ?? 0) === (right.quality_confidence ?? 0)
   );
 }
 
