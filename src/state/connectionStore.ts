@@ -15,6 +15,11 @@ import type {
 } from "@/types/connection";
 
 export type LogLineLimit = 100 | 250 | 500;
+export interface RuntimeCapacitySelection {
+  downloadKbps: number;
+  uploadKbps: number;
+  uploadLimited: boolean;
+}
 
 const DEFAULT_LOG_LINE_LIMIT: LogLineLimit = 250;
 const MAX_LOG_LINE_LIMIT = 500;
@@ -23,6 +28,8 @@ const BUDGET_RE = /budget=(\d+)s/;
 const ACCESS_CODE_MARKER = "[gui] Zero Trust access code required";
 const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoint=(.+)$/;
 const PATH_UNAVAILABLE_MARKER = "[gui] path unavailable";
+const CAPACITY_MARKER_RE =
+  /^\[gui\] capacity download_kbps=(\d+) upload_kbps=(\d+) upload_limited=(0|1)$/;
 const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
   turbo: 75,
   balanced: 150,
@@ -90,6 +97,8 @@ interface ConnectionState {
   accessCodeRequired: boolean;
   runtimePath: RuntimePathSelection | null;
   runtimePathAttemptId: number | null;
+  runtimeCapacity: RuntimeCapacitySelection | null;
+  runtimeCapacityAttemptId: number | null;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   clearAccessCodeRequirement: () => void;
@@ -221,6 +230,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   accessCodeRequired: false,
   runtimePath: null,
   runtimePathAttemptId: null,
+  runtimeCapacity: null,
+  runtimeCapacityAttemptId: null,
 
   connect: async () => {
     const profile = get().profile;
@@ -230,6 +241,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       accessCodeRequired: false,
       runtimePath: null,
       runtimePathAttemptId: null,
+      runtimeCapacity: null,
+      runtimeCapacityAttemptId: null,
       scanBudgetSecs: isAndroid ? ANDROID_SCAN_BUDGETS[profile.scan_mode] : null,
       attemptId: state.attemptId + 1,
     }));
@@ -358,7 +371,20 @@ function updateControlStateFromLine(line: string): void {
 
   updateScanBudgetFromLine(line);
 
-  const pathMatch = PATH_MARKER_RE.exec(line.trim());
+  const trimmed = line.trim();
+  const capacityMatch = CAPACITY_MARKER_RE.exec(trimmed);
+  if (capacityMatch) {
+    useConnectionStore.setState({
+      runtimeCapacity: {
+        downloadKbps: Number(capacityMatch[1]),
+        uploadKbps: Number(capacityMatch[2]),
+        uploadLimited: capacityMatch[3] === "1",
+      },
+      runtimeCapacityAttemptId: state.attemptId,
+    });
+  }
+
+  const pathMatch = PATH_MARKER_RE.exec(trimmed);
   if (pathMatch) {
     useConnectionStore.setState({
       runtimePath: {
@@ -367,7 +393,7 @@ function updateControlStateFromLine(line: string): void {
       },
       runtimePathAttemptId: state.attemptId,
     });
-  } else if (line.trim() === PATH_UNAVAILABLE_MARKER) {
+  } else if (trimmed === PATH_UNAVAILABLE_MARKER) {
     useConnectionStore.setState({ runtimePath: null, runtimePathAttemptId: state.attemptId });
   }
 }
