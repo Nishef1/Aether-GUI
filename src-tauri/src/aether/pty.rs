@@ -1,5 +1,5 @@
 use super::orphan;
-use super::profiles::{ConnectionProfile, ZeroTrustAuth};
+use super::profiles::{ConnectionProfile, Protocol, ZeroTrustAuth};
 use super::prompts::{looks_like_choice_prompt, PROMPT_TABLE};
 use crate::error::AetherError;
 use crate::events::{now_millis, should_forward_log, LogEvent};
@@ -92,6 +92,9 @@ pub fn spawn(
         "AETHER_MASQUE_HTTP2",
         if profile.masque_http2 { "1" } else { "0" },
     );
+    if profile.masque_http2 && !profile.masque_mask.is_off() {
+        command.env("AETHER_MASQUE_H2_MASK", profile.masque_mask.as_env());
+    }
     command.env(
         "AETHER_ROUTE_SNIFF",
         if profile.route_sniff { "1" } else { "0" },
@@ -202,13 +205,34 @@ fn selected_path_marker(line: &str, profile: &ConnectionProfile) -> Option<Strin
     }
 
     if let Some((_, rest)) = line.split_once("using cloudflare edge ") {
-        let (outer, inner_rest) = rest.split_once(" (outer) and ")?;
-        let inner = inner_rest.split_once(" (inner)")?.0.trim();
-        let outer = outer.trim();
-        outer.parse::<SocketAddr>().ok()?;
-        inner.parse::<SocketAddr>().ok()?;
+        // Gool names both hops on one line.
+        if let Some((outer, inner_rest)) = rest.split_once(" (outer) and ") {
+            let inner = inner_rest.split_once(" (inner)")?.0.trim();
+            let outer = outer.trim();
+            outer.parse::<SocketAddr>().ok()?;
+            inner.parse::<SocketAddr>().ok()?;
+            return Some(format!(
+                "[gui] path selected transport=gool endpoint={outer}>{inner}"
+            ));
+        }
+
+        // Quick reconnect, forced peers and last-known-good retries skip the
+        // scanner's `selected ...` log and only emit `using cloudflare edge`.
+        // Surface those too so Path Intelligence learns the actual runtime path.
+        let endpoint = endpoint_token(rest)?;
+        let transport = match profile.protocol {
+            Protocol::Wireguard => "wg",
+            Protocol::Gool => return None,
+            Protocol::Auto | Protocol::Masque => {
+                if profile.masque_http2 {
+                    "h2"
+                } else {
+                    "h3"
+                }
+            }
+        };
         return Some(format!(
-            "[gui] path selected transport=gool endpoint={outer}>{inner}"
+            "[gui] path selected transport={transport} endpoint={endpoint}"
         ));
     }
 
@@ -437,6 +461,39 @@ mod tests {
         assert_eq!(
             strip_terminal_sequences("\u{1b}]0;title\u{1b}\\ready"),
             "ready"
+        );
+    }
+
+    #[test]
+    fn quick_reconnect_masque_path_gets_a_marker() {
+        let profile = ConnectionProfile {
+            protocol: Protocol::Masque,
+            masque_http2: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            selected_path_marker(
+                "[+] using cloudflare edge 162.159.192.1:443",
+                &profile
+            )
+            .as_deref(),
+            Some("[gui] path selected transport=h2 endpoint=162.159.192.1:443")
+        );
+    }
+
+    #[test]
+    fn quick_reconnect_wireguard_path_gets_a_marker() {
+        let profile = ConnectionProfile {
+            protocol: Protocol::Wireguard,
+            ..Default::default()
+        };
+        assert_eq!(
+            selected_path_marker(
+                "[+] using cloudflare edge 162.159.192.1:2408",
+                &profile
+            )
+            .as_deref(),
+            Some("[gui] path selected transport=wg endpoint=162.159.192.1:2408")
         );
     }
 }
