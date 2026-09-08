@@ -23,29 +23,31 @@ internal object AndroidPathSelectionReader {
         wiwOuter: String,
         wiwInner: String,
         h2Peer: String,
-    ): AndroidPathSelection? = when (protocol) {
-        "wireguard" -> {
-            val endpoint = firstValidEndpoint(
-                peer,
-                wgPeer,
-                readLastConnectionPeer(File(filesDir, "aether-wg-lastconn.toml")),
-            ) ?: return null
-            AndroidPathSelection("wg", endpoint)
-        }
-        "gool" -> {
-            val outer = validEndpoint(wiwOuter) ?: validEndpoint(wgPeer)
-            val inner = validEndpoint(wiwInner)
-            if (outer == null || inner == null) null
-            else AndroidPathSelection("gool", "$outer>$inner")
-        }
-        else -> {
-            val transport = if (masqueHttp2) "h2" else "h3"
-            val explicit = if (masqueHttp2) h2Peer.ifBlank { peer } else peer
-            val endpoint = firstValidEndpoint(
-                explicit,
-                readLastConnectionPeer(File(filesDir, "aether-masque-lastconn.toml")),
-            ) ?: return null
-            AndroidPathSelection(transport, endpoint)
+    ): AndroidPathSelection? {
+        return when (protocol) {
+            "wireguard" -> {
+                val endpoint = firstValidEndpoint(
+                    peer,
+                    wgPeer,
+                    readLastConnectionPeer(File(filesDir, "aether-wg-lastconn.toml")),
+                ) ?: return null
+                AndroidPathSelection("wg", endpoint)
+            }
+            "gool" -> {
+                val outer = validEndpoint(wiwOuter) ?: validEndpoint(wgPeer)
+                val inner = validEndpoint(wiwInner)
+                if (outer == null || inner == null) null
+                else AndroidPathSelection("gool", "$outer>$inner")
+            }
+            else -> {
+                val transport = if (masqueHttp2) "h2" else "h3"
+                val explicit = if (masqueHttp2) h2Peer.ifBlank { peer } else peer
+                val endpoint = firstValidEndpoint(
+                    explicit,
+                    readLastConnectionPeer(File(filesDir, "aether-masque-lastconn.toml")),
+                ) ?: return null
+                AndroidPathSelection(transport, endpoint)
+            }
         }
     }
 
