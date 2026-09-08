@@ -111,6 +111,10 @@ export interface RuntimeTelemetry {
   jitter_ms?: number | null;
   quality_score?: number;
   quality_confidence?: number;
+  capacity_probe_complete?: boolean;
+  download_kbps?: number | null;
+  upload_kbps?: number | null;
+  upload_limited?: boolean;
 }
 
 export interface LogLine {
