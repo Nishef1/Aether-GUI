@@ -67,6 +67,7 @@ export function ConnectButton() {
   const phase = phaseOf(status);
   const Icon = ICONS[phase];
   const color = STATUS_COLOR[phase];
+  const animationPlayState = focused ? ("running" as const) : ("paused" as const);
 
   const handleClick = () => {
     if (phase === "idle" || phase === "error") {
@@ -117,7 +118,7 @@ export function ConnectButton() {
               : phase === "connecting"
                 ? `0 0 22px color-mix(in oklch, ${color} 28%, transparent)`
                 : undefined,
-          animationPlayState: focused ? "running" : "paused",
+          animationPlayState,
         }}
       />
 
@@ -141,7 +142,7 @@ export function ConnectButton() {
         <span
           aria-hidden
           className="android-connect-ripple pointer-events-none absolute inset-1 rounded-full border"
-          style={{ borderColor: color }}
+          style={{ borderColor: color, animationPlayState }}
         />
       )}
 
@@ -157,6 +158,7 @@ export function ConnectButton() {
           <Icon
             size={46}
             strokeWidth={2}
+            style={{ animationPlayState }}
             className={cn(
               phase === "connecting" && !isAndroid && "animate-spin",
               phase === "connecting" && isAndroid && "android-connect-spin",
