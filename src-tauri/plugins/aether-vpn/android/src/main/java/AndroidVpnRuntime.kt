@@ -40,6 +40,11 @@ data class FinalRuntimeTelemetry(
     val publicIp: String? = null,
     val countryCode: String? = null,
     val latencyMs: Long? = null,
+    /**
+     * Timestamp of the last egress-probe outcome, not of a cheap traffic sample.
+     * Keeping these separate lets Path Intelligence distinguish a new probe
+     * failure from a routine foreground telemetry refresh.
+     */
     val sampledAtMs: Long = 0L,
     val egressProbeComplete: Boolean = false,
 ) {
@@ -115,6 +120,7 @@ internal object AndroidVpnRuntime {
                 connectedAtMs = current.connectedAtMs,
             ),
         )
+        publishProbeFailure()
     }
 
     fun setLoggingEnabled(enabled: Boolean) {
@@ -275,7 +281,6 @@ internal object AndroidVpnRuntime {
             current.copy(
                 receivedBytes = traffic.receivedBytes,
                 sentBytes = traffic.sentBytes,
-                sampledAtMs = System.currentTimeMillis(),
             )
         }
         return traffic
@@ -287,6 +292,23 @@ internal object AndroidVpnRuntime {
                 publicIp = publicIp,
                 countryCode = countryCode,
                 latencyMs = latencyMs,
+                sampledAtMs = System.currentTimeMillis(),
+                egressProbeComplete = true,
+            )
+        }
+    }
+
+    /**
+     * A failed end-to-end probe invalidates old identity/latency immediately.
+     * Keeping the previous successful IP here made a dead path look healthy to
+     * the WebView until a later successful probe happened to overwrite it.
+     */
+    fun publishProbeFailure() {
+        telemetry.updateAndGet { current ->
+            current.copy(
+                publicIp = null,
+                countryCode = null,
+                latencyMs = null,
                 sampledAtMs = System.currentTimeMillis(),
                 egressProbeComplete = true,
             )
