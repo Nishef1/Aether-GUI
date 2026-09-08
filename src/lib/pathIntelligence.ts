@@ -64,6 +64,16 @@ function endpointForProfile(profile: ConnectionProfile, transport: PathTransport
   }
 }
 
+function maskKeyForProfile(profile: ConnectionProfile, transport: PathTransport): string {
+  if (transport !== "h2") return "mask:n/a";
+
+  const mode = profile.masque_mask ?? (profile.fragment ? "legacy" : "off");
+  if (mode === "legacy") {
+    return `mask:legacy:${profile.fragment_size}@${profile.fragment_delay}`;
+  }
+  return `mask:${mode}`;
+}
+
 export function pathIdForProfile(
   profile: ConnectionProfile,
   selection?: RuntimePathSelection | null,
@@ -77,7 +87,7 @@ export function pathIdForProfile(
     profile.ip_version,
     profile.scan_mode,
     noize,
-    profile.fragment ? `${profile.fragment_size}@${profile.fragment_delay}` : "no-fragment",
+    maskKeyForProfile(profile, transport),
     profile.ech.trim() ? "ech" : "no-ech",
     profile.tls_groups.trim() || "default-groups",
   ].join("|");
