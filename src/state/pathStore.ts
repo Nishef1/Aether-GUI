@@ -184,7 +184,7 @@ export function initPathIntelligence(): () => void {
     updatePath(
       (path) =>
         recordPathSuccess(path, {
-          latencyMs: telemetry.latency_ms,
+          latencyMs: telemetry.smoothed_latency_ms ?? telemetry.latency_ms,
           countryCode: telemetry.country_code,
         }),
       selectionForAttempt(connection.attemptId),
