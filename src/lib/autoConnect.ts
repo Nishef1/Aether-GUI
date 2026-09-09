@@ -69,7 +69,7 @@ async function stopBetweenCandidates(epoch: number): Promise<boolean> {
   return epoch === automationEpoch;
 }
 
-function prepareAttempt(profile: ConnectionProfile, budgetMs: number): void {
+function prepareAttempt(budgetMs: number): void {
   const connection = useConnectionStore.getState();
   connection.clearLogs();
   useConnectionStore.setState((state) => ({
@@ -125,7 +125,7 @@ export async function connectWithAutomaticPolicy(): Promise<void> {
     if (epoch !== automationEpoch) return;
     const candidate = candidates[index];
     const budgetMs = automaticAttemptBudgetMs(candidate.profile);
-    prepareAttempt(candidate.profile, budgetMs);
+    prepareAttempt(budgetMs);
 
     const launchError = await invokeCandidate(candidate.profile);
     if (launchError != null) {
