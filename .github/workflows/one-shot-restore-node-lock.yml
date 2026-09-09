@@ -1,0 +1,35 @@
+name: One-shot restore npm lock
+
+on:
+  push:
+    paths:
+      - '.github/workflows/one-shot-restore-node-lock.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Regenerate lockfile from restored manifest
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Verify reproducible install and Tauri CLI
+        run: |
+          npm ci --no-audit --no-fund
+          ./node_modules/.bin/tauri --version
+          npm run typecheck
+      - name: Commit lockfile and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/one-shot-restore-node-lock.yml
+          git add package-lock.json
+          git commit -m 'build: restore npm dependency lock metadata'
+          git push origin HEAD:main
