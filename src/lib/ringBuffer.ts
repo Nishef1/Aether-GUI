@@ -1,12 +1,14 @@
 export class RingBuffer<T> {
   private readonly values: T[];
+  private readonly capacity: number;
   private cursor = 0;
   private size = 0;
 
-  constructor(private readonly capacity: number) {
+  constructor(capacity: number) {
     if (!Number.isInteger(capacity) || capacity <= 0) {
       throw new Error("capacity must be a positive integer");
     }
+    this.capacity = capacity;
     this.values = new Array<T>(capacity);
   }
 
