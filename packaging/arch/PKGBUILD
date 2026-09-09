@@ -21,6 +21,7 @@ makedepends=(
   'nodejs'
   'npm'
   'rust'
+  'cmake'
   'openssl'
   'librsvg'
   'xdotool'
