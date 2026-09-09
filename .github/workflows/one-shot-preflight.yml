@@ -1,0 +1,34 @@
+name: One-shot final build preflight
+
+on:
+  push:
+    paths:
+      - '.github/workflows/one-shot-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Verify release contracts
+        run: npm run verify:release
+      - name: ESLint
+        run: npm run lint
+      - name: Project build typecheck
+        run: npx tsc -b
+      - name: Frontend production build
+        run: npx vite build
+      - name: Verify Android web build keeps custom Core
+        shell: bash
+        run: |
+          grep -Fq '["scripts/prepare-android-native.mjs", "--custom"]' scripts/build-android-web.mjs
