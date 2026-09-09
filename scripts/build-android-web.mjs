@@ -9,7 +9,7 @@ function run(command, args, env = process.env) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-run(process.execPath, ["scripts/prepare-android-native.mjs"]);
+run(process.execPath, ["scripts/prepare-android-native.mjs", "--custom"]);
 const env = { ...process.env, VITE_AETHER_PLATFORM: "android" };
 const executable = process.platform === "win32" ? "npx.cmd" : "npx";
 run(executable, ["tsc", "-b"], env);
