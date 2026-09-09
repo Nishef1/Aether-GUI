@@ -207,7 +207,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --needed --noconfirm \
-            git curl wget file nodejs npm rust openssl librsvg xdotool patchelf \
+            git curl wget file nodejs npm rust cmake openssl librsvg xdotool patchelf \
             webkit2gtk-4.1 gtk3 libayatana-appindicator polkit
           useradd --create-home builder
 
