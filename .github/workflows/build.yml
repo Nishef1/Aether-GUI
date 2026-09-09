@@ -113,6 +113,10 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 scripts/tests/test_android_feature_parity.py
 
+      - name: Path Intelligence unit tests
+        if: runner.os == 'Linux'
+        run: node --test scripts/tests/test_path_intelligence.mjs
+
       - name: Rust formatting check
         if: runner.os == 'Linux'
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
@@ -207,7 +211,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --needed --noconfirm \
-            git curl wget file nodejs npm rust cmake openssl librsvg xdotool patchelf \
+            git curl wget file nodejs npm rust cmake clang openssl librsvg xdotool patchelf \
             webkit2gtk-4.1 gtk3 libayatana-appindicator polkit
           useradd --create-home builder
 

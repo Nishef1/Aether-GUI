@@ -43,9 +43,9 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("Protocol::Auto | Protocol::Masque", source)
         self.assertIn("Protocol::Wireguard", source)
         self.assertIn("Protocol::Gool", source)
-        self.assertIn("stale_gool_values_never_leak_into_masque", source)
-        self.assertIn("stale_masque_values_never_leak_into_wireguard", source)
-        self.assertIn("wiw_scan_ignores_manual_and_legacy_endpoints", source)
+        self.assertIn("if self.wiw_scan {", source)
+        self.assertIn('args.push("--wiw-scan".into())', source)
+        self.assertIn('push_non_empty(&mut args, "--h2-peer"', source)
         for flag in (
             "--http-proxy", "--peer", "--wg-peer", "--wiw-outer", "--wiw-inner",
             "--wiw-scan", "--h2", "--h2-peer", "--ech", "--no-data-check",
@@ -113,7 +113,8 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("ACCESS_CODE_MARKER", store)
         self.assertIn("accessCodeRequired", store)
         self.assertIn("clearAccessCodeRequirement", store)
-        self.assertIn("event.payload.line.includes(ACCESS_CODE_MARKER)", store)
+        self.assertIn("line.includes(ACCESS_CODE_MARKER)", store)
+        self.assertIn("updateControlStateFromLine(event.payload.line)", store)
         self.assertIn("accessCodeRequired", prompt)
         self.assertNotIn("logs.some", prompt)
         self.assertIn("min-h-12", prompt)
@@ -188,9 +189,18 @@ class Aether19ParityTest(unittest.TestCase):
         telemetry = self.read("src-tauri/src/telemetry.rs")
         status = self.read("src/components/ConnectionStatusLine.tsx")
         self.assertIn("ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2)", telemetry)
-        self.assertIn("IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(5)", telemetry)
+        self.assertIn("IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(15)", telemetry)
         self.assertIn("setInterval(() => setNow(Date.now()), 1000)", status)
         self.assertIn("PROBE_INTERVAL: Duration = Duration::from_secs(60)", telemetry)
+
+    def test_path_intelligence_store_keeps_network_scoped_deduplicated_history(self) -> None:
+        source = self.read("src/state/pathStore.ts")
+        self.assertIn('`${STORAGE_PREFIX}.${networkKey}`', source)
+        self.assertIn("loadPersistedPaths(activeStorageKey)", source)
+        self.assertIn("path.id !== next.id", source)
+        self.assertIn("sessionKey === lastSuccessSession", source)
+        self.assertIn("probeFailures > lastProbeFailureCount", source)
+        self.assertIn("localStorage.removeItem(LEGACY_STORAGE_KEY)", source)
 
     def test_desktop_tunnel_default_is_native_ssot_not_local_storage(self) -> None:
         native = self.read("src-tauri/src/system_tunnel/mod.rs")
@@ -272,6 +282,12 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("Device protection failed", status)
         self.assertIn("Full-device protection remains enabled", status)
         self.assertNotIn("fall back to proxy", status.lower())
+
+    def test_arch_custom_core_build_declares_bindgen_toolchain(self) -> None:
+        workflow = self.read(".github/workflows/build.yml")
+        arch = self.read("packaging/arch/PKGBUILD")
+        self.assertIn("rust cmake clang openssl", workflow)
+        self.assertIn("'clang'", arch)
 
     def test_linux_packages_declare_runtime_probe_dependencies(self) -> None:
         config = json.loads(self.read("src-tauri/tauri.conf.json"))
