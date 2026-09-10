@@ -1,4 +1,5 @@
 use crate::aether::profiles::ConnectionProfile;
+use crate::connection_acceptance::ConnectionAcceptanceReport;
 use crate::engine::EngineDescriptor;
 use crate::runtime_error::RuntimeError;
 use crate::state::{AppState, ConnectionState};
@@ -16,7 +17,8 @@ pub fn connect(
     state: State<AppState>,
     profile_override: Option<ConnectionProfile>,
 ) -> Result<(), RuntimeError> {
-    crate::network_context::sync_process_environment();
+    let network_key = crate::network_context::sync_process_environment();
+    crate::connection_acceptance::capture_underlay_baseline(network_key.as_deref());
     state.runtime.connect_aether(app, profile_override)
 }
 
@@ -71,7 +73,8 @@ pub fn connect_engine(
     profile: Option<Value>,
 ) -> Result<(), RuntimeError> {
     if engine_id == "aether" {
-        crate::network_context::sync_process_environment();
+        let network_key = crate::network_context::sync_process_environment();
+        crate::connection_acceptance::capture_underlay_baseline(network_key.as_deref());
     }
     state.runtime.connect(app, Some(&engine_id), profile)
 }
@@ -133,6 +136,11 @@ pub fn set_system_tunnel(
 #[tauri::command]
 pub fn get_runtime_telemetry() -> RuntimeTelemetry {
     crate::telemetry::snapshot()
+}
+
+#[tauri::command]
+pub fn probe_connection_acceptance(socks_addr: String) -> ConnectionAcceptanceReport {
+    crate::connection_acceptance::probe_connection_acceptance(&socks_addr)
 }
 
 #[tauri::command]
