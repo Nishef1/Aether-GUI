@@ -12,7 +12,7 @@
             android:exported="false"
             android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE"
-            android:stopWithTask="true">
+            android:stopWithTask="false">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
@@ -21,7 +21,7 @@
                 android:value="false" />
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Maintains the user-initiated Aether encrypted VPN session" />
+                android:value="Maintains the user-initiated Aether encrypted VPN session while the app UI is backgrounded" />
         </service>
     </application>
 </manifest>

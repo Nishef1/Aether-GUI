@@ -8,7 +8,6 @@ const COMMANDS: &[&str] = &[
     "logs",
     "setLogging",
     "submitAccessCode",
-    "diagnostics",
 ];
 
 fn main() {

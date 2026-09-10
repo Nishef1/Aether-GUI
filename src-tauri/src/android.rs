@@ -381,7 +381,6 @@ fn vpn_profile(profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> 
         } else {
             "proxy".into()
         },
-        tun_engine: "hev".into(),
         quick_reconnect: profile.quick_reconnect,
         masque_http2: profile.masque_http2,
         masque_noize: profile.masque_noize,
@@ -391,7 +390,6 @@ fn vpn_profile(profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> 
         bind_address: profile.bind_address,
         http_proxy: profile.http_proxy,
         upstream: profile.upstream,
-        webrtc_leak_protection: false,
         mtu: profile.mtu,
         peer: profile.peer,
         wg_peer: profile.wg_peer,
@@ -488,6 +486,10 @@ async fn connect(
             return Err("Android VPN permission was not granted".into());
         }
     }
+    // Android 13+ may hide foreground-service notifications from the drawer
+    // unless the app can post notifications. Ask while Connect is an explicit
+    // foreground user action, but never make VPN startup depend on the answer.
+    let _ = app.aether_vpn().ensure_notification_permission();
     settings.version = MOBILE_SETTINGS_VERSION;
     save_settings(&app, &settings)?;
     *state

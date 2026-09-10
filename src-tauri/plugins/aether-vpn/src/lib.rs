@@ -7,6 +7,7 @@ use tauri::{
 };
 
 const PLUGIN_IDENTIFIER: &str = "com.cluvexstudio.aethergui.vpn";
+const POST_NOTIFICATION_PERMISSION: &str = "postNotification";
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -38,8 +39,6 @@ pub struct VpnProfile {
     pub scan_mode: String,
     pub ip_version: String,
     pub connection_mode: String,
-    /// Compatibility shim for the Kotlin bridge. Android currently has one TUN engine (HEV).
-    pub tun_engine: String,
     pub quick_reconnect: bool,
     pub masque_http2: bool,
     pub masque_noize: String,
@@ -49,8 +48,6 @@ pub struct VpnProfile {
     pub bind_address: String,
     pub http_proxy: String,
     pub upstream: String,
-    /// Compatibility shim until the legacy Kotlin argument is removed atomically.
-    pub webrtc_leak_protection: bool,
     pub mtu: u16,
     pub peer: String,
     pub wg_peer: String,
@@ -125,6 +122,26 @@ pub struct NativeLogBatch {
     pub last_id: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum MobilePermissionState {
+    Granted,
+    Denied,
+    Prompt,
+    PromptWithRationale,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PermissionStatus {
+    post_notification: MobilePermissionState,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PermissionRequest<'a> {
+    permissions: &'a [&'a str],
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeLogRequest {
@@ -159,6 +176,31 @@ pub struct AetherVpn<R: Runtime>(PluginHandle<R>);
 impl<R: Runtime> AetherVpn<R> {
     pub fn prepare(&self) -> Result<PrepareResult> {
         self.0.run_mobile_plugin("prepare", ()).map_err(Into::into)
+    }
+
+    /// Requests Android 13+ notification permission only while it is still
+    /// requestable. A denial never blocks VPN startup: foreground services are
+    /// still valid, but Android may hide their notification from the drawer.
+    pub fn ensure_notification_permission(&self) -> Result<MobilePermissionState> {
+        let current: PermissionStatus = self
+            .0
+            .run_mobile_plugin("checkPermissions", ())
+            .map_err(Error::from)?;
+        match current.post_notification {
+            MobilePermissionState::Prompt | MobilePermissionState::PromptWithRationale => {
+                let requested: PermissionStatus = self
+                    .0
+                    .run_mobile_plugin(
+                        "requestPermissions",
+                        PermissionRequest {
+                            permissions: &[POST_NOTIFICATION_PERMISSION],
+                        },
+                    )
+                    .map_err(Error::from)?;
+                Ok(requested.post_notification)
+            }
+            state => Ok(state),
+        }
     }
 
     pub fn start(&self, profile: VpnProfile) -> Result<VpnStatus> {
