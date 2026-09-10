@@ -22,12 +22,12 @@ const LABELS: Record<NoizeProfile, string> = {
 };
 
 const DESCRIPTIONS: Record<NoizeProfile, string> = {
-  off: "No obfuscation. Useful only on open networks or while troubleshooting.",
-  light: "Low-overhead obfuscation for networks that need only a small amount of disguise.",
-  firewall: "A conservative censorship-resistant profile and the recommended MASQUE default.",
-  balanced: "A practical middle ground between cover traffic and overhead; the WireGuard default.",
-  gfw: "Heavier evasion for networks with aggressive DPI and active filtering.",
-  aggressive: "Maximum available obfuscation. Use when lighter profiles cannot establish a stable route.",
+  off: "No cover traffic. Useful on open networks or while troubleshooting.",
+  light: "Low-overhead cover traffic with small randomized packets and minimal setup delay.",
+  firewall: "Conservative, independently tuned cover traffic for restrictive firewalls; the recommended MASQUE default.",
+  balanced: "Moderate packet-size and signature variation with practical overhead; the WireGuard default.",
+  gfw: "A separate heavier timing and signature profile for networks with aggressive filtering or DPI. It does not guarantee evasion.",
+  aggressive: "Largest built-in cover-traffic budget and signature set. Use only when lighter profiles fail because setup time and battery cost are higher.",
 };
 
 export function NoizeProfileToggle() {
