@@ -22,6 +22,7 @@ function eligibleHistoricalTransport(path: ObservedPath, now: number): boolean {
     path.health === "healthy" &&
     path.successes >= 2 &&
     path.confidence >= 0.25 &&
+    path.uploadLimited !== true &&
     (path.cooldownUntil == null || path.cooldownUntil <= now) &&
     scorePath(path, now) >= 0.5 &&
     (path.qualityConfidence == null || path.qualityConfidence >= 40)
