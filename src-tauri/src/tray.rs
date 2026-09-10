@@ -1,13 +1,11 @@
-use crate::engine::EngineRuntime;
+use crate::events::STATUS_EVENT;
 use crate::state::ConnectionState;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager,
+    AppHandle, Listener, Manager,
 };
 
 static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
@@ -118,23 +116,6 @@ fn set_visual_state(app: &AppHandle, state: &str) {
     let _ = tray.set_tooltip(Some(format!("Aether-GUI — {label}")));
 }
 
-/// Native watcher keeps the tray accurate even when the WebView is hidden or
-/// throttled by the operating system.
-pub fn spawn_state_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
-    std::thread::spawn(move || {
-        let mut last_state: Option<&'static str> = None;
-        loop {
-            let state = runtime.status();
-            let key = state_key(&state);
-            if last_state != Some(key) {
-                set_visual_state(&app, key);
-                last_state = Some(key);
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-    });
-}
-
 pub fn init(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     load_preference(app.handle());
 
@@ -166,6 +147,17 @@ pub fn init(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.icon(status_badged_icon(icon, [148, 163, 184]));
     }
     builder.build(app)?;
+
+    // Connection state is already published as a Tauri global event. Listening
+    // here keeps the native tray exact without a permanent 250 ms polling loop
+    // while the app is idle in the background.
+    let app_handle = app.handle().clone();
+    app.listen(STATUS_EVENT, move |event| {
+        if let Ok(state) = serde_json::from_str::<ConnectionState>(event.payload()) {
+            set_visual_state(&app_handle, state_key(&state));
+        }
+    });
+
     Ok(())
 }
 
