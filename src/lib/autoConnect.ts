@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { automaticAttemptBudgetMs, buildAutomaticCandidates } from "@/lib/automaticPolicy";
 import { profileForNativeInvoke } from "@/lib/nativeProfile";
+import { useAutomaticRuntimeStore } from "@/state/automaticRuntimeStore";
 import { useConnectionStore } from "@/state/connectionStore";
 import { refreshPathNetworkContext, usePathStore } from "@/state/pathStore";
 import type { ConnectionProfile, ConnectionStatus } from "@/types/connection";
@@ -9,6 +10,8 @@ const RECONCILE_MS = 750;
 const STOP_TIMEOUT_MS = 8_000;
 
 let automationEpoch = 0;
+
+type StopOutcome = "stopped" | "cancelled" | "timeout";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -24,6 +27,19 @@ function binaryUnavailable(message: string): boolean {
     normalized.includes("binary not found") ||
     normalized.includes("bundled arm64 aether core was not found")
   );
+}
+
+function singleProfileLabel(profile: ConnectionProfile): string {
+  switch (profile.protocol) {
+    case "masque":
+      return profile.masque_http2 ? "MASQUE H2" : "MASQUE H3";
+    case "wireguard":
+      return "WireGuard";
+    case "gool":
+      return "Warp-in-Warp";
+    case "auto":
+      return "Automatic";
+  }
 }
 
 async function reconcileStatus(): Promise<ConnectionStatus> {
@@ -58,31 +74,51 @@ async function waitForOutcome(
   return "cancelled";
 }
 
-async function stopBetweenCandidates(epoch: number): Promise<boolean> {
+async function stopBetweenCandidates(epoch: number): Promise<StopOutcome> {
   await invoke("disconnect").catch(() => undefined);
   const deadline = Date.now() + STOP_TIMEOUT_MS;
-  while (epoch === automationEpoch && Date.now() < deadline) {
+  while (Date.now() < deadline) {
+    if (epoch !== automationEpoch) return "cancelled";
     const status = await reconcileStatus();
-    if (status.state === "Idle" || status.state === "Error") return true;
+    if (status.state === "Idle" || status.state === "Error") return "stopped";
     await sleep(200);
   }
-  return epoch === automationEpoch;
+  return epoch === automationEpoch ? "timeout" : "cancelled";
 }
 
-function prepareAttempt(budgetMs: number): void {
+function prepareAttempt(
+  profile: ConnectionProfile,
+  budgetMs: number,
+  label: string,
+  index: number,
+  total: number,
+): number {
   const connection = useConnectionStore.getState();
   connection.clearLogs();
-  useConnectionStore.setState((state) => ({
-    status: { state: "Launching" },
-    accessCodeRequired: false,
-    runtimePath: null,
-    runtimePathAttemptId: null,
-    runtimeCapacity: null,
-    runtimeCapacityAttemptId: null,
-    scanBudgetSecs: Math.max(1, Math.round(budgetMs / 1000) - 30),
-    sidecarError: null,
-    attemptId: state.attemptId + 1,
-  }));
+
+  let attemptId = connection.attemptId + 1;
+  useConnectionStore.setState((state) => {
+    attemptId = state.attemptId + 1;
+    return {
+      status: { state: "Launching" },
+      accessCodeRequired: false,
+      runtimePath: null,
+      runtimePathAttemptId: null,
+      runtimeCapacity: null,
+      runtimeCapacityAttemptId: null,
+      scanBudgetSecs: Math.max(1, Math.round(budgetMs / 1000) - 30),
+      sidecarError: null,
+      attemptId,
+    };
+  });
+  useAutomaticRuntimeStore.getState().beginAttempt({
+    attemptId,
+    profile,
+    label,
+    index,
+    total,
+  });
+  return attemptId;
 }
 
 async function invokeCandidate(profile: ConnectionProfile): Promise<string | null> {
@@ -94,16 +130,43 @@ async function invokeCandidate(profile: ConnectionProfile): Promise<string | nul
   }
 }
 
-export function cancelAutomaticConnect(): void {
-  automationEpoch += 1;
+function publishLaunchError(message: string, phase: string): void {
+  if (binaryUnavailable(message)) {
+    useConnectionStore.setState({
+      sidecarError: message,
+      status: { state: "Error", message, phase: "launching" },
+      accessCodeRequired: false,
+    });
+    return;
+  }
+  useConnectionStore.setState({
+    status: { state: "Error", message, phase },
+    accessCodeRequired: false,
+  });
 }
 
-export async function connectWithAutomaticPolicy(): Promise<void> {
+export function cancelAutomaticConnect(): void {
+  automationEpoch += 1;
+  useAutomaticRuntimeStore.getState().clearAttempt();
+}
+
+export async function connectWithAutomaticPolicy(
+  profileOverride?: ConnectionProfile,
+): Promise<void> {
   const connection = useConnectionStore.getState();
-  const base = connection.profile;
+  const base = profileOverride ?? connection.profile;
+
   if (base.protocol !== "auto") {
     cancelAutomaticConnect();
-    await connection.connect();
+    if (profileOverride == null) {
+      await connection.connect();
+      return;
+    }
+
+    const budgetMs = automaticAttemptBudgetMs(base);
+    prepareAttempt(base, budgetMs, singleProfileLabel(base), 1, 1);
+    const launchError = await invokeCandidate(base);
+    if (launchError != null) publishLaunchError(launchError, "launching");
     return;
   }
 
@@ -125,16 +188,13 @@ export async function connectWithAutomaticPolicy(): Promise<void> {
     if (epoch !== automationEpoch) return;
     const candidate = candidates[index];
     const budgetMs = automaticAttemptBudgetMs(candidate.profile);
-    prepareAttempt(budgetMs);
+    prepareAttempt(candidate.profile, budgetMs, candidate.label, index + 1, candidates.length);
 
     const launchError = await invokeCandidate(candidate.profile);
     if (launchError != null) {
       lastError = launchError;
       if (binaryUnavailable(launchError)) {
-        useConnectionStore.setState({
-          sidecarError: launchError,
-          status: { state: "Error", message: launchError, phase: "launching" },
-        });
+        publishLaunchError(launchError, "launching");
         return;
       }
     } else {
@@ -152,7 +212,21 @@ export async function connectWithAutomaticPolicy(): Promise<void> {
     }
 
     if (index + 1 < candidates.length) {
-      if (!(await stopBetweenCandidates(epoch))) return;
+      const stopOutcome = await stopBetweenCandidates(epoch);
+      if (stopOutcome === "cancelled") return;
+      if (stopOutcome === "timeout") {
+        if (epoch === automationEpoch) automationEpoch += 1;
+        useConnectionStore.setState({
+          status: {
+            state: "Error",
+            message:
+              "Automatic fallback stopped because the previous transport did not shut down cleanly.",
+            phase: "automatic-stop",
+          },
+          accessCodeRequired: false,
+        });
+        return;
+      }
     }
   }
 
