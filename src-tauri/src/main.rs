@@ -39,15 +39,14 @@ fn main() {
         .manage(AppState::default())
         .setup(|app| {
             let data_dir = app.handle().path().app_data_dir()?;
-            // Clone the runtime out of Tauri state before mutably borrowing the
-            // application for tray creation. This keeps setup borrow-safe while
-            // all long-lived watchers share the same runtime instance.
+            // Clone the runtime out of Tauri state before starting long-lived
+            // native services. Tray status is event-driven; telemetry still
+            // needs the shared runtime for traffic and path-health sampling.
             let runtime = app.state::<AppState>().runtime.clone();
             runtime.prepare_all(app.handle(), &data_dir)?;
-            telemetry::spawn_watcher(app.handle().clone(), runtime.clone());
+            telemetry::spawn_watcher(app.handle().clone(), runtime);
             focus::spawn_watcher(app.handle().clone());
             tray::init(app)?;
-            tray::spawn_state_watcher(app.handle().clone(), runtime);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
