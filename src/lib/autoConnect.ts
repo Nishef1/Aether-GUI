@@ -8,7 +8,12 @@ import { profileForNativeInvoke } from "@/lib/nativeProfile";
 import { isAndroid } from "@/lib/platform";
 import { useAutomaticRuntimeStore } from "@/state/automaticRuntimeStore";
 import { useConnectionStore } from "@/state/connectionStore";
-import { refreshPathNetworkContext, usePathStore } from "@/state/pathStore";
+import {
+  recordPathAcceptanceFailure,
+  refreshPathNetworkContext,
+  usePathStore,
+  type PathAcceptanceFailure,
+} from "@/state/pathStore";
 import type { ConnectionProfile, ConnectionStatus } from "@/types/connection";
 
 const RECONCILE_MS = 750;
@@ -86,6 +91,16 @@ function singleProfileLabel(profile: ConnectionProfile): string {
     case "auto":
       return "Automatic";
   }
+}
+
+function isPathAcceptanceFailure(
+  reason: AutomaticFailureReason,
+): reason is PathAcceptanceFailure {
+  return (
+    reason === "upload-limited" ||
+    reason === "identity-leak" ||
+    reason === "dataplane-failed"
+  );
 }
 
 function classifyAutomaticFailure(
@@ -453,6 +468,9 @@ export async function connectWithAutomaticPolicy(
         }
         failureReason = acceptance.reason;
         lastError = acceptance.message ?? `${candidate.label} failed post-connect acceptance`;
+        if (isPathAcceptanceFailure(failureReason)) {
+          recordPathAcceptanceFailure(useConnectionStore.getState().attemptId, failureReason);
+        }
       } else {
         if (outcome === "cancelled") return;
         const status = useConnectionStore.getState().status;
