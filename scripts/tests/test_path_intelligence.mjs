@@ -104,3 +104,31 @@ test("cooldown paths do not outrank healthy usable paths", () => {
   assert.equal(scorePath(cooling, 4_000), 0);
   assert.equal(rankPaths([cooling, healthy], 4_000)[0]?.id, healthy.id);
 });
+
+test("severe upload throttling remains first-class path evidence", () => {
+  const healthy = recordPathSuccess(createObservedPath(profile({ peer: "healthy:443" }), 1_000), {
+    latencyMs: 70,
+    jitterMs: 5,
+    qualityScore: 88,
+    qualityConfidence: 80,
+    uploadLimited: false,
+    countryCode: "DE",
+    now: 2_000,
+  });
+  const uploadLimited = recordPathSuccess(
+    createObservedPath(profile({ peer: "limited:443" }), 1_000),
+    {
+      latencyMs: 60,
+      jitterMs: 5,
+      qualityScore: 88,
+      qualityConfidence: 80,
+      uploadLimited: true,
+      countryCode: "DE",
+      now: 2_000,
+    },
+  );
+
+  assert.equal(uploadLimited.uploadLimited, true);
+  assert.ok(scorePath(healthy, 3_000) > scorePath(uploadLimited, 3_000));
+  assert.equal(rankPaths([uploadLimited, healthy], 3_000)[0]?.id, healthy.id);
+});
