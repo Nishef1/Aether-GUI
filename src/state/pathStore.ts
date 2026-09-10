@@ -38,6 +38,8 @@ interface AttemptPathSelection extends RuntimePathSelection {
   attemptId: number;
 }
 
+export type PathAcceptanceFailure = "upload-limited" | "identity-leak" | "dataplane-failed";
+
 function finiteOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -176,6 +178,28 @@ function updatePath(
   const paths = replacePath(state.paths, mutator(existing));
   usePathStore.setState({ paths });
   persist(paths);
+}
+
+export function recordPathAcceptanceFailure(
+  attemptId: number,
+  reason: PathAcceptanceFailure,
+): void {
+  if (attemptId <= 0) return;
+  const connection = useConnectionStore.getState();
+  const selection =
+    connection.runtimePathAttemptId === attemptId ? connection.runtimePath : null;
+
+  updatePath(
+    attemptId,
+    (path) => {
+      const withEvidence =
+        reason === "upload-limited"
+          ? recordPathQuality(path, { uploadLimited: true })
+          : path;
+      return recordPathFailure(withEvidence);
+    },
+    selection,
+  );
 }
 
 function stableSessionKey(status: ConnectionStatus, attemptId: number): string | null {
