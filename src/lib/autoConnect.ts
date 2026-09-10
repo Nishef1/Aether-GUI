@@ -170,18 +170,30 @@ export async function connectWithAutomaticPolicy(
     return;
   }
 
+  // Reserve the orchestration epoch before any asynchronous bootstrap work.
+  // This closes the double-click/cancel window while network fingerprinting is
+  // still resolving and prevents a stale caller from launching a candidate.
+  const epoch = ++automationEpoch;
+  useConnectionStore.setState({
+    status: { state: "Launching" },
+    accessCodeRequired: false,
+    sidecarError: null,
+  });
+
   // Historical ordering is only safe after the current underlay fingerprint is
   // resolved. An unknown context intentionally produces an empty history and
   // falls back to the baseline transport order instead of replaying another
   // network's winner.
   await refreshPathNetworkContext();
+  if (epoch !== automationEpoch) return;
+
   const candidates = buildAutomaticCandidates(base, usePathStore.getState().paths);
   if (candidates.length === 0) {
+    if (epoch === automationEpoch) automationEpoch += 1;
     await connection.connect();
     return;
   }
 
-  const epoch = ++automationEpoch;
   let lastError = "No automatic transport completed validation";
 
   for (let index = 0; index < candidates.length; index += 1) {
