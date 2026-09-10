@@ -1,19 +1,17 @@
 package com.cluvexstudio.aethergui.vpn
 
+import android.Manifest
 import android.app.Activity
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Intent
 import android.net.VpnService
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.activity.result.ActivityResult
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.Permission
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
@@ -29,13 +27,14 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 
+private const val POST_NOTIFICATION_PERMISSION_ALIAS = "postNotification"
+
 @InvokeArg
 class FinalVpnProfileArgs {
     var protocol: String = "auto"
     var scanMode: String = "balanced"
     var ipVersion: String = "v4"
     var connectionMode: String = "tunnel"
-    var tunEngine: String = "hev"
     var quickReconnect: Boolean = false
     var masqueHttp2: Boolean = false
     var masqueNoize: String = "firewall"
@@ -45,7 +44,6 @@ class FinalVpnProfileArgs {
     var bindAddress: String = "127.0.0.1:1819"
     var httpProxy: String = ""
     var upstream: String = ""
-    var webrtcLeakProtection: Boolean = false
     var mtu: Int = 1280
     var peer: String = ""
     var wgPeer: String = ""
@@ -88,7 +86,14 @@ class FinalLoggingArgs { var enabled: Boolean = false }
 @InvokeArg
 class FinalAccessCodeArgs { var code: String = "" }
 
-@TauriPlugin
+@TauriPlugin(
+    permissions = [
+        Permission(
+            strings = [Manifest.permission.POST_NOTIFICATIONS],
+            alias = POST_NOTIFICATION_PERMISSION_ALIAS,
+        ),
+    ],
+)
 class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun prepare(invoke: Invoke) {
@@ -134,7 +139,6 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             putExtra(FinalAetherVpnService.EXTRA_MASQUE_HTTP2, profile.masqueHttp2)
             putExtra(FinalAetherVpnService.EXTRA_MASQUE_NOIZE, profile.masqueNoize)
             putExtra(FinalAetherVpnService.EXTRA_WG_NOIZE, profile.wgNoize)
-            putExtra(FinalAetherVpnService.EXTRA_WEBRTC_LEAK_PROTECTION, profile.webrtcLeakProtection)
             putExtra(FinalAetherVpnService.EXTRA_MTU, profile.mtu)
             putExtra(FinalAetherVpnService.EXTRA_PEER, profile.peer)
             putExtra(FinalAetherVpnService.EXTRA_WG_PEER, profile.wgPeer)
@@ -250,14 +254,6 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             }
     }
 
-    @Command
-    fun diagnostics(invoke: Invoke) {
-        invoke.resolve(JSObject().apply {
-            put("path", "")
-            put("persistent", false)
-        })
-    }
-
     private fun validateProfile(profile: FinalVpnProfileArgs): String? {
         if (!AndroidTransportPolicy.isValidMtu(profile.mtu)) {
             return "MTU must be between ${AndroidTransportPolicy.MIN_MTU} and ${AndroidTransportPolicy.MAX_MTU}"
@@ -343,7 +339,6 @@ class FinalAetherVpnService : VpnService() {
         val masqueHttp2: Boolean,
         val masqueNoize: String,
         val wgNoize: String,
-        val webrtcLeakProtection: Boolean,
         val mtu: Int,
         val peer: String,
         val wgPeer: String,
@@ -388,10 +383,12 @@ class FinalAetherVpnService : VpnService() {
     private var coreWriter: BufferedWriter? = null
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tun2Socks: HevTun2Socks? = null
+    private lateinit var notifications: AndroidVpnNotifications
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        notifications = AndroidVpnNotifications(this)
+        notifications.createChannels()
         log("VPN service created")
     }
 
@@ -441,7 +438,7 @@ class FinalAetherVpnService : VpnService() {
 
         AndroidVpnRuntime.resetTelemetry()
         AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Launching"))
-        startForeground(NOTIFICATION_ID, buildNotification("Starting Aether…"))
+        notifications.start("Starting Aether", "Preparing a secure route…")
 
         val profile = RuntimeProfile(
             protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "masque",
@@ -461,7 +458,6 @@ class FinalAetherVpnService : VpnService() {
             masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, false),
             masqueNoize = intent.getStringExtra(EXTRA_MASQUE_NOIZE) ?: "firewall",
             wgNoize = intent.getStringExtra(EXTRA_WG_NOIZE) ?: "balanced",
-            webrtcLeakProtection = intent.getBooleanExtra(EXTRA_WEBRTC_LEAK_PROTECTION, false),
             mtu = AndroidTransportPolicy.sanitizeMtu(
                 intent.getIntExtra(EXTRA_MTU, AndroidTransportPolicy.DEFAULT_MTU),
             ),
@@ -541,7 +537,7 @@ class FinalAetherVpnService : VpnService() {
                 token,
                 FinalServiceSnapshot("Connecting", socksAddr = profile.bindAddress),
             )
-            updateNotification("Finding a working route…")
+            updateNotification("Finding a route", "Testing available transports…")
 
             val startupTimeoutMs = AndroidTransportPolicy.startupTimeoutMs(
                 profile.protocol,
@@ -564,7 +560,7 @@ class FinalAetherVpnService : VpnService() {
                 token,
                 FinalServiceSnapshot("Verifying", socksAddr = profile.bindAddress),
             )
-            updateNotification("Verifying tunnel egress…")
+            updateNotification("Verifying protection", "Checking tunnel egress…")
             val initialProbe = AndroidEgressProbe.probe(profile.bindAddress)
             ensureActive(token)
             AndroidVpnRuntime.publishProbe(
@@ -600,7 +596,11 @@ class FinalAetherVpnService : VpnService() {
                         connectedAtMs = connectedAt,
                     ),
                 )
-                updateNotification("Connected · SOCKS ${profile.bindAddress}")
+                updateNotification(
+                    "Aether connected",
+                    "SOCKS proxy is ready",
+                    connectedAtMs = connectedAt,
+                )
             } else {
                 updateSnapshotIfActive(
                     token,
@@ -629,7 +629,11 @@ class FinalAetherVpnService : VpnService() {
                         connectedAtMs = connectedAt,
                     ),
                 )
-                updateNotification("Protected · device tunnel active")
+                updateNotification(
+                    "Aether protected",
+                    "Device traffic is routed through Aether",
+                    connectedAtMs = connectedAt,
+                )
             }
 
             startEgressProbeLoop(token, profile.bindAddress)
@@ -645,7 +649,7 @@ class FinalAetherVpnService : VpnService() {
                 AndroidVpnRuntime.updateSnapshot(
                     FinalServiceSnapshot("Error", error.message ?: error.toString()),
                 )
-                updateNotification("Connection failed")
+                notifications.showFailure()
             }
         } finally {
             val owned = takeOwnedResources(process, writer, tunnel)
@@ -802,7 +806,7 @@ class FinalAetherVpnService : VpnService() {
             .addRoute("::", 0)
             .addDnsServer(profile.dnsServer)
             .setBlocking(false)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
+            .setMetered(false)
         builder.addDisallowedApplication(packageName)
         val descriptor = builder.establish()
             ?: error("Android refused to establish the VPN interface")
@@ -811,7 +815,6 @@ class FinalAetherVpnService : VpnService() {
                 socksHost = socksHost,
                 socksPort = socksPort,
                 mtu = profile.mtu,
-                webrtcLeakProtection = profile.webrtcLeakProtection,
             )
             val bridge = HevTun2Socks()
             bridge.TProxyStartService(configFile.absolutePath, descriptor.fd)
@@ -826,10 +829,8 @@ class FinalAetherVpnService : VpnService() {
         socksHost: String,
         socksPort: Int,
         mtu: Int,
-        webrtcLeakProtection: Boolean,
     ): File {
         val config = File(cacheDir, "hev-socks5-tunnel.yml")
-        val udpRelayMode = if (webrtcLeakProtection) "tcp" else "udp"
         config.writeText(
             """
             tunnel:
@@ -842,7 +843,7 @@ class FinalAetherVpnService : VpnService() {
             socks5:
               port: $socksPort
               address: '${yamlQuote(socksHost)}'
-              udp: '$udpRelayMode'
+              udp: 'udp'
               pipeline: true
 
             misc:
@@ -864,7 +865,8 @@ class FinalAetherVpnService : VpnService() {
     private fun requestStop(reason: String) {
         val stopToken = sessionGate.cancel()
         AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
-        updateNotification("Disconnecting…")
+        notifications.cancelFailure()
+        updateNotification("Disconnecting Aether", "Closing the secure tunnel…")
         log("Stopping Aether: $reason")
         val resources = detachAllResources()
         val future = cleanupExecutor.submit {
@@ -993,15 +995,27 @@ class FinalAetherVpnService : VpnService() {
     ): Boolean {
         val (host, port) = splitHostPort(bindAddress)
         var deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var accessPromptNotified = false
         while (
             SystemClock.elapsedRealtime() < deadline &&
             process.isAlive &&
             sessionGate.isActive(token)
         ) {
             if (AndroidVpnRuntime.snapshot().state == "AwaitingAccessCode") {
+                if (!accessPromptNotified) {
+                    updateNotification(
+                        "Action required",
+                        "Open Aether to enter the Zero Trust access code",
+                        actionRequired = true,
+                    )
+                    accessPromptNotified = true
+                }
                 Thread.sleep(SOCKS_POLL_INTERVAL_MS)
                 deadline += SOCKS_POLL_INTERVAL_MS
                 continue
+            } else if (accessPromptNotified) {
+                updateNotification("Finding a route", "Continuing the secure connection…")
+                accessPromptNotified = false
             }
             try {
                 Socket().use { socket ->
@@ -1019,13 +1033,19 @@ class FinalAetherVpnService : VpnService() {
         probeExecutor.execute {
             while (sessionGate.isActive(token)) {
                 val result = runCatching { AndroidEgressProbe.probe(bindAddress) }
-                if (sessionGate.isActive(token) && result.isSuccess) {
-                    val probe = result.getOrThrow()
-                    AndroidVpnRuntime.publishProbe(
-                        probe.publicIp,
-                        probe.countryCode,
-                        probe.latencyMs,
-                    )
+                if (sessionGate.isActive(token)) {
+                    result
+                        .onSuccess { probe ->
+                            AndroidVpnRuntime.publishProbe(
+                                probe.publicIp,
+                                probe.countryCode,
+                                probe.latencyMs,
+                            )
+                        }
+                        .onFailure {
+                            AndroidVpnRuntime.publishProbeFailure()
+                            log("Egress probe failed; stale public identity cleared")
+                        }
                 }
                 var remaining = EGRESS_PROBE_INTERVAL_MS
                 while (remaining > 0 && sessionGate.isActive(token)) {
@@ -1067,30 +1087,13 @@ class FinalAetherVpnService : VpnService() {
 
     private fun yamlQuote(value: String): String = value.replace("'", "''")
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "Aether connection",
-                    NotificationManager.IMPORTANCE_LOW,
-                ),
-            )
-        }
-    }
-
-    private fun buildNotification(text: String) =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("Aether")
-            .setContentText(text)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .build()
-
-    private fun updateNotification(text: String) {
-        getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, buildNotification(text))
+    private fun updateNotification(
+        title: String,
+        text: String,
+        connectedAtMs: Long? = null,
+        actionRequired: Boolean = false,
+    ) {
+        notifications.update(title, text, connectedAtMs, actionRequired)
     }
 
     private fun updateSnapshotIfActive(token: Long, snapshot: FinalServiceSnapshot) {
@@ -1115,7 +1118,6 @@ class FinalAetherVpnService : VpnService() {
         const val EXTRA_MASQUE_HTTP2 = "masqueHttp2"
         const val EXTRA_MASQUE_NOIZE = "masqueNoize"
         const val EXTRA_WG_NOIZE = "wgNoize"
-        const val EXTRA_WEBRTC_LEAK_PROTECTION = "webrtcLeakProtection"
         const val EXTRA_MTU = "mtu"
         const val EXTRA_PEER = "peer"
         const val EXTRA_WG_PEER = "wgPeer"
@@ -1148,8 +1150,6 @@ class FinalAetherVpnService : VpnService() {
         const val EXTRA_ROUTE_DIRECT = "routeDirect"
         const val EXTRA_ROUTES_FILE = "routesFile"
 
-        private const val CHANNEL_ID = "aether_connection"
-        private const val NOTIFICATION_ID = 1819
         private const val TUN_IPV4_ADDRESS = "198.18.0.1"
         private const val TUN_IPV6_ADDRESS = "fc00::1"
         private const val DEFAULT_SOCKS_ADDRESS = "127.0.0.1:1819"
