@@ -159,7 +159,7 @@ export function ConnectionDiagnostics() {
           </span>
         )}
         {uploadLimited && (
-          <span className="rounded-lg bg-warning/10 px-2 py-1 text-warning ring-1 ring-warning/20">
+          <span className="rounded-lg bg-status-connecting/10 px-2 py-1 text-status-connecting ring-1 ring-status-connecting/20">
             Upload restricted
           </span>
         )}
