@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="aether_notification_status_channel">VPN status</string>
+    <string name="aether_notification_status_channel_description">Shows the active Aether VPN connection and lets you disconnect quickly.</string>
+    <string name="aether_notification_alert_channel">Connection alerts</string>
+    <string name="aether_notification_alert_channel_description">Important Aether VPN connection failures that may need your attention.</string>
+    <string name="aether_notification_disconnect">Disconnect</string>
+    <string name="aether_notification_open">Open Aether</string>
+    <string name="aether_notification_failed_title">Aether connection failed</string>
+    <string name="aether_notification_failed_text">Aether stopped protecting traffic. Open the app to review the connection and retry.</string>
+</resources>
