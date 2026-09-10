@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
-import { connectWithAutomaticPolicy } from "@/lib/autoConnect";
 import { EXIT_RETRY_LIMIT, isPrivacyPreferredExit } from "@/lib/exitPolicy";
 import { canCollectTelemetry, shouldClearTelemetryOnDisconnect } from "@/lib/telemetryLifecycle";
 import { nextTelemetryDelay } from "@/lib/telemetryScheduler";
@@ -224,6 +223,11 @@ async function rerollPrivacyExit(epoch: number): Promise<void> {
     const rerollProfile = { ...connection.profile, quick_reconnect: false };
     connection.clearLogs();
     clearTelemetry();
+
+    // Load after the stores have completed module initialization. autoConnect
+    // depends on pathStore, which in turn consumes telemetryStore; a static
+    // import here would create a fragile initialization cycle.
+    const { connectWithAutomaticPolicy } = await import("@/lib/autoConnect");
     await connectWithAutomaticPolicy(rerollProfile);
   } catch (error) {
     const policy = useExitPolicyStore.getState();
