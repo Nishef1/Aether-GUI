@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { automaticAttemptBudgetMs, buildAutomaticCandidates } from "@/lib/automaticPolicy";
+import {
+  automaticAttemptBudgetMs,
+  buildAutomaticCandidates,
+  type AutomaticCandidate,
+} from "@/lib/automaticPolicy";
 import { profileForNativeInvoke } from "@/lib/nativeProfile";
+import { isAndroid } from "@/lib/platform";
 import { useAutomaticRuntimeStore } from "@/state/automaticRuntimeStore";
 import { useConnectionStore } from "@/state/connectionStore";
 import { refreshPathNetworkContext, usePathStore } from "@/state/pathStore";
@@ -8,10 +13,41 @@ import type { ConnectionProfile, ConnectionStatus } from "@/types/connection";
 
 const RECONCILE_MS = 750;
 const STOP_TIMEOUT_MS = 8_000;
+const ANDROID_ACCEPTANCE_GRACE_MS = 5_000;
 
 let automationEpoch = 0;
 
 type StopOutcome = "stopped" | "cancelled" | "timeout";
+type AutomaticFailureReason =
+  | "h3-unavailable"
+  | "tcp-unreachable"
+  | "tls-blocked"
+  | "h2-rejected"
+  | "dataplane-failed"
+  | "upload-limited"
+  | "identity-leak"
+  | "unknown";
+
+type AcceptanceStatus = "unverified" | "protected" | "degraded" | "leak_detected";
+
+interface ConnectionAcceptanceReport {
+  status: AcceptanceStatus;
+  public_ipv4: string | null;
+  public_ipv6: string | null;
+  ipv4_protected: boolean | null;
+  ipv6_protected: boolean | null;
+  download_kbps: number | null;
+  upload_kbps: number | null;
+  upload_limited: boolean;
+  reason: string | null;
+}
+
+interface AcceptanceDecision {
+  accepted: boolean;
+  cancelled: boolean;
+  reason: AutomaticFailureReason;
+  message: string | null;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -19,6 +55,16 @@ function sleep(ms: number): Promise<void> {
 
 function stable(status: ConnectionStatus): boolean {
   return status.state === "Connected" || status.state === "Tunneling";
+}
+
+function stableSocksAddress(status: ConnectionStatus): string | null {
+  switch (status.state) {
+    case "Connected":
+    case "Tunneling":
+      return status.socks_addr;
+    default:
+      return null;
+  }
 }
 
 function binaryUnavailable(message: string): boolean {
@@ -40,6 +86,107 @@ function singleProfileLabel(profile: ConnectionProfile): string {
     case "auto":
       return "Automatic";
   }
+}
+
+function classifyAutomaticFailure(
+  message: string,
+  candidate: AutomaticCandidate,
+): AutomaticFailureReason {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("identical to the public underlay") ||
+    normalized.includes("unprotected network identity") ||
+    normalized.includes("identity leak")
+  ) {
+    return "identity-leak";
+  }
+  if (normalized.includes("upload") && normalized.includes("throttl")) {
+    return "upload-limited";
+  }
+  if (
+    normalized.includes("data-plane") ||
+    normalized.includes("data plane") ||
+    normalized.includes("matching dns reply") ||
+    normalized.includes("egress failed") ||
+    normalized.includes("end-to-end")
+  ) {
+    return "dataplane-failed";
+  }
+  if (
+    candidate.transport === "h2" &&
+    (normalized.includes("connect-ip status") ||
+      normalized.includes("http/2") ||
+      normalized.includes("h2 connect"))
+  ) {
+    return "h2-rejected";
+  }
+  if (
+    candidate.transport === "h2" &&
+    (normalized.includes("clienthello") ||
+      normalized.includes("tls handshake") ||
+      normalized.includes("tls alert") ||
+      normalized.includes("certificate"))
+  ) {
+    return "tls-blocked";
+  }
+  if (
+    candidate.transport === "h3" &&
+    (normalized.includes("quic") ||
+      normalized.includes("udp") ||
+      normalized.includes("h3") ||
+      normalized.includes("timed out"))
+  ) {
+    return "h3-unavailable";
+  }
+  if (
+    normalized.includes("connection refused") ||
+    normalized.includes("tcp connect") ||
+    normalized.includes("network is unreachable") ||
+    normalized.includes("no route to host")
+  ) {
+    return "tcp-unreachable";
+  }
+  return "unknown";
+}
+
+function reprioritizeRemainingCandidates(
+  candidates: AutomaticCandidate[],
+  startIndex: number,
+  reason: AutomaticFailureReason,
+  failedTransport: AutomaticCandidate["transport"],
+): void {
+  if (startIndex >= candidates.length || reason === "unknown") return;
+
+  const score = (candidate: AutomaticCandidate): number => {
+    switch (reason) {
+      case "h3-unavailable":
+        if (candidate.transport === "h2") return 0;
+        if (candidate.transport === "wg") return 1;
+        if (candidate.transport === "gool") return 2;
+        return 3;
+      case "tls-blocked":
+        if (candidate.transport === "h2" && candidate.profile.masque_mask !== "off") return 0;
+        if (candidate.transport !== "h2") return 1;
+        return 3;
+      case "h2-rejected":
+      case "tcp-unreachable":
+        return candidate.transport === "h2" ? 2 : 0;
+      case "identity-leak":
+      case "upload-limited":
+      case "dataplane-failed":
+        return candidate.transport === failedTransport ? 1 : 0;
+      case "unknown":
+        return 0;
+    }
+  };
+
+  const reordered = candidates
+    .slice(startIndex)
+    .map((candidate, offset) => ({ candidate, offset, score: score(candidate) }))
+    .sort((left, right) => left.score - right.score || left.offset - right.offset)
+    .map(({ candidate }) => candidate);
+  candidates.splice(startIndex, reordered.length, ...reordered);
 }
 
 async function reconcileStatus(): Promise<ConnectionStatus> {
@@ -72,6 +219,90 @@ async function waitForOutcome(
     await sleep(RECONCILE_MS);
   }
   return "cancelled";
+}
+
+async function verifyConnectedCandidate(
+  epoch: number,
+  candidate: AutomaticCandidate,
+): Promise<AcceptanceDecision> {
+  if (epoch !== automationEpoch) {
+    return { accepted: false, cancelled: true, reason: "unknown", message: null };
+  }
+
+  if (isAndroid) {
+    const deadline = Date.now() + ANDROID_ACCEPTANCE_GRACE_MS;
+    while (Date.now() < deadline && epoch === automationEpoch) {
+      const connection = useConnectionStore.getState();
+      if (
+        connection.runtimeCapacityAttemptId === connection.attemptId &&
+        connection.runtimeCapacity != null
+      ) {
+        if (connection.runtimeCapacity.uploadLimited) {
+          return {
+            accepted: false,
+            cancelled: false,
+            reason: "upload-limited",
+            message: `${candidate.label} connected but the native acceptance probe detected severe upload throttling`,
+          };
+        }
+        return { accepted: true, cancelled: false, reason: "unknown", message: null };
+      }
+      await sleep(250);
+    }
+    return epoch === automationEpoch
+      ? { accepted: true, cancelled: false, reason: "unknown", message: null }
+      : { accepted: false, cancelled: true, reason: "unknown", message: null };
+  }
+
+  const status = useConnectionStore.getState().status;
+  const socksAddr = stableSocksAddress(status);
+  if (socksAddr == null) {
+    return {
+      accepted: false,
+      cancelled: false,
+      reason: "dataplane-failed",
+      message: `${candidate.label} lost its stable SOCKS endpoint before acceptance verification`,
+    };
+  }
+
+  let report: ConnectionAcceptanceReport;
+  try {
+    report = await invoke<ConnectionAcceptanceReport>("probe_connection_acceptance", {
+      socksAddr,
+    });
+  } catch (error) {
+    // The acceptance service is an additional guard. A probe infrastructure
+    // failure must not turn a working tunnel into a false negative.
+    return epoch === automationEpoch
+      ? { accepted: true, cancelled: false, reason: "unknown", message: String(error) }
+      : { accepted: false, cancelled: true, reason: "unknown", message: null };
+  }
+
+  if (epoch !== automationEpoch) {
+    return { accepted: false, cancelled: true, reason: "unknown", message: null };
+  }
+
+  if (report.status === "leak_detected") {
+    return {
+      accepted: false,
+      cancelled: false,
+      reason: "identity-leak",
+      message: report.reason ?? `${candidate.label} failed egress identity verification`,
+    };
+  }
+  if (report.status === "degraded" && report.upload_limited) {
+    return {
+      accepted: false,
+      cancelled: false,
+      reason: "upload-limited",
+      message: report.reason ?? `${candidate.label} has severe upload throttling`,
+    };
+  }
+
+  // "unverified" means one of the neutral public probe services was
+  // unavailable. It is intentionally accepted: transport readiness and TUN
+  // validation remain authoritative and we avoid a dependency-induced outage.
+  return { accepted: true, cancelled: false, reason: "unknown", message: report.reason };
 }
 
 async function stopBetweenCandidates(epoch: number): Promise<StopOutcome> {
@@ -202,9 +433,11 @@ export async function connectWithAutomaticPolicy(
     const budgetMs = automaticAttemptBudgetMs(candidate.profile);
     prepareAttempt(candidate.profile, budgetMs, candidate.label, index + 1, candidates.length);
 
+    let failureReason: AutomaticFailureReason = "unknown";
     const launchError = await invokeCandidate(candidate.profile);
     if (launchError != null) {
       lastError = launchError;
+      failureReason = classifyAutomaticFailure(launchError, candidate);
       if (binaryUnavailable(launchError)) {
         publishLaunchError(launchError, "launching");
         return;
@@ -212,16 +445,26 @@ export async function connectWithAutomaticPolicy(
     } else {
       const outcome = await waitForOutcome(epoch, budgetMs);
       if (outcome === "connected") {
-        if (epoch === automationEpoch) automationEpoch += 1;
-        return;
+        const acceptance = await verifyConnectedCandidate(epoch, candidate);
+        if (acceptance.cancelled) return;
+        if (acceptance.accepted) {
+          if (epoch === automationEpoch) automationEpoch += 1;
+          return;
+        }
+        failureReason = acceptance.reason;
+        lastError = acceptance.message ?? `${candidate.label} failed post-connect acceptance`;
+      } else {
+        if (outcome === "cancelled") return;
+        const status = useConnectionStore.getState().status;
+        lastError =
+          status.state === "Error"
+            ? status.message
+            : `${candidate.label} did not finish within its bounded scan window`;
+        failureReason = classifyAutomaticFailure(lastError, candidate);
       }
-      if (outcome === "cancelled") return;
-      const status = useConnectionStore.getState().status;
-      lastError =
-        status.state === "Error"
-          ? status.message
-          : `${candidate.label} did not finish within its bounded scan window`;
     }
+
+    reprioritizeRemainingCandidates(candidates, index + 1, failureReason, candidate.transport);
 
     if (index + 1 < candidates.length) {
       const stopOutcome = await stopBetweenCandidates(epoch);
@@ -248,7 +491,7 @@ export async function connectWithAutomaticPolicy(
     status: {
       state: "Error",
       message: `Automatic transport fallback exhausted: ${lastError}`,
-      phase: "automatic-v2",
+      phase: "automatic-v3",
     },
     accessCodeRequired: false,
   });
