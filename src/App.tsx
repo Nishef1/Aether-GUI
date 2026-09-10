@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { ShieldCheck } from "lucide-react";
 import { ConnectButton } from "@/components/ConnectButton";
+import { ConnectionDiagnostics } from "@/components/ConnectionDiagnostics";
 import { ConnectionStatusLine } from "@/components/ConnectionStatusLine";
 import { QuickConnectionCard } from "@/components/QuickConnectionCard";
 import { CloseToTrayToggle } from "@/components/CloseToTrayToggle";
@@ -10,6 +11,7 @@ import { SidecarErrorScreen } from "@/components/SidecarErrorScreen";
 import { AccessCodePrompt } from "@/components/AccessCodePrompt";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TitleBar } from "@/components/TitleBar";
+import { connectWithAutomaticPolicy } from "@/lib/autoConnect";
 import { isAndroid } from "@/lib/platform";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
 import { useExitPolicyStore } from "@/state/exitPolicyStore";
@@ -96,6 +98,7 @@ function MainScreen() {
           </div>
         </section>
 
+        <ConnectionDiagnostics />
         <QuickConnectionCard />
 
         <Suspense
@@ -119,7 +122,6 @@ function MainScreen() {
 export function App() {
   const sidecarError = useConnectionStore((state) => state.sidecarError);
   const retryAfterSidecarError = useConnectionStore((state) => state.retryAfterSidecarError);
-  const connect = useConnectionStore((state) => state.connect);
   const beginManualAttempt = useExitPolicyStore((state) => state.beginManualAttempt);
   const loadSystemTunnel = useSystemTunnelStore((state) => state.load);
 
@@ -157,7 +159,7 @@ export function App() {
                     onRetry={() => {
                       retryAfterSidecarError();
                       beginManualAttempt();
-                      void connect();
+                      void connectWithAutomaticPolicy();
                     }}
                   />
                 </motion.div>
