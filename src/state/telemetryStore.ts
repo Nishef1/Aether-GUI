@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
+import { connectWithAutomaticPolicy } from "@/lib/autoConnect";
 import { EXIT_RETRY_LIMIT, isPrivacyPreferredExit } from "@/lib/exitPolicy";
-import { profileForNativeInvoke } from "@/lib/nativeProfile";
 import { canCollectTelemetry, shouldClearTelemetryOnDisconnect } from "@/lib/telemetryLifecycle";
 import { nextTelemetryDelay } from "@/lib/telemetryScheduler";
 import { isAndroid } from "@/lib/platform";
@@ -224,12 +224,7 @@ async function rerollPrivacyExit(epoch: number): Promise<void> {
     const rerollProfile = { ...connection.profile, quick_reconnect: false };
     connection.clearLogs();
     clearTelemetry();
-    useConnectionStore.setState((state) => ({
-      status: { state: "Launching" },
-      accessCodeRequired: false,
-      attemptId: state.attemptId + 1,
-    }));
-    await invoke("connect", { profileOverride: profileForNativeInvoke(rerollProfile) });
+    await connectWithAutomaticPolicy(rerollProfile);
   } catch (error) {
     const policy = useExitPolicyStore.getState();
     if (policy.automationEpoch === epoch && policy.preference === "privacy") {
