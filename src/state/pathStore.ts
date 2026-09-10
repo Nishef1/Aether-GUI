@@ -89,6 +89,7 @@ function normalizePersistedPath(item: unknown): ObservedPath | null {
     jitterMs: nullableNumber(path.jitterMs),
     qualityScore: boundedPercent(path.qualityScore),
     qualityConfidence: boundedPercent(path.qualityConfidence),
+    uploadLimited: path.uploadLimited === true,
     countryCode: typeof path.countryCode === "string" ? path.countryCode.toUpperCase() : null,
     cooldownUntil: nullableNumber(path.cooldownUntil),
   };
@@ -251,6 +252,7 @@ export function initPathIntelligence(): () => void {
           jitterMs: telemetry.jitter_ms ?? null,
           qualityScore: telemetry.quality_score ?? null,
           qualityConfidence: telemetry.quality_confidence ?? null,
+          uploadLimited: telemetry.upload_limited ?? false,
           countryCode: telemetry.country_code,
         }),
       selectionForAttempt(connection.attemptId),
@@ -278,6 +280,7 @@ export function initPathIntelligence(): () => void {
           jitterMs: telemetry.jitter_ms ?? null,
           qualityScore: telemetry.quality_score ?? null,
           qualityConfidence: telemetry.quality_confidence ?? null,
+          uploadLimited: telemetry.upload_limited ?? false,
           countryCode: telemetry.country_code,
         }),
       selectionForAttempt(connection.attemptId),
