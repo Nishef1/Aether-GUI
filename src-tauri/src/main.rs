@@ -2,6 +2,7 @@
 
 mod aether;
 mod commands;
+mod connection_acceptance;
 mod engine;
 mod error;
 mod events;
@@ -66,6 +67,7 @@ fn main() {
             commands::get_system_tunnel,
             commands::set_system_tunnel,
             commands::get_runtime_telemetry,
+            commands::probe_connection_acceptance,
             commands::get_network_context,
             commands::set_diagnostics_logging,
             commands::get_close_to_tray,
