@@ -272,8 +272,22 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({ accessCodeRequired: false });
     try {
       await invoke("disconnect");
-    } catch {
-      // Native reconciliation handles an already-stopped backend.
+    } catch (error) {
+      // A stop IPC can fail after the native runtime has already transitioned.
+      // Reconcile immediately instead of leaving the UI stuck in Disconnecting
+      // until the next mobile lifecycle poll.
+      try {
+        const status = await invoke<ConnectionStatus>("get_status");
+        updateStatus(status);
+      } catch {
+        set({
+          status: {
+            state: "Error",
+            message: `Disconnect failed: ${String(error)}`,
+            phase: "disconnect",
+          },
+        });
+      }
     }
   },
 
