@@ -7,7 +7,7 @@ function oneOf<const T extends readonly string[]>(
   value: unknown,
   allowed: T,
 ): value is T[number] {
-  return typeof value === "string" && allowed.includes(value);
+  return typeof value === "string" && allowed.includes(value as T[number]);
 }
 
 function isTlsProfileMode(
