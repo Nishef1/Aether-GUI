@@ -14,6 +14,7 @@ import {
   type RuntimePathSelection,
 } from "@/lib/pathIntelligence";
 import { isAndroid } from "@/lib/platform";
+import { automaticRuntimeProfileForAttempt } from "@/state/automaticRuntimeStore";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
 import type { ConnectionStatus, LogLine, RuntimeTelemetry } from "@/types/connection";
@@ -162,10 +163,12 @@ export async function refreshPathNetworkContext(): Promise<boolean> {
 }
 
 function updatePath(
+  attemptId: number,
   mutator: (path: ObservedPath) => ObservedPath,
   selection?: RuntimePathSelection | null,
 ): void {
-  const profile = useConnectionStore.getState().profile;
+  const connection = useConnectionStore.getState();
+  const profile = automaticRuntimeProfileForAttempt(attemptId) ?? connection.profile;
   const template = createObservedPath(profile, Date.now(), selection);
   const state = usePathStore.getState();
   const existing = state.paths.find((path) => path.id === template.id) ?? template;
@@ -241,6 +244,7 @@ export function initPathIntelligence(): () => void {
 
     lastSuccessSession = sessionKey;
     updatePath(
+      connection.attemptId,
       (path) =>
         recordPathSuccess(path, {
           latencyMs: telemetry.smoothed_latency_ms ?? telemetry.latency_ms,
@@ -267,6 +271,7 @@ export function initPathIntelligence(): () => void {
     }
 
     updatePath(
+      connection.attemptId,
       (path) =>
         recordPathQuality(path, {
           latencyMs: telemetry.smoothed_latency_ms ?? telemetry.latency_ms,
@@ -300,6 +305,7 @@ export function initPathIntelligence(): () => void {
     lastProbeFailureCount = Math.max(lastProbeFailureCount, probeFailures);
     lastProbeFailureSampleAt = Math.max(lastProbeFailureSampleAt, sampleAt);
     updatePath(
+      connection.attemptId,
       (path) =>
         recordPathFailure(path, {
           qualityScore: telemetry.quality_score ?? null,
@@ -317,6 +323,7 @@ export function initPathIntelligence(): () => void {
 
     errorStateRecorded = true;
     updatePath(
+      connection.attemptId,
       (path) => recordPathFailure(path),
       selectionForAttempt(connection.attemptId),
     );
