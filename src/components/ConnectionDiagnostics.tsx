@@ -49,7 +49,7 @@ function maskLabel(profile: ConnectionProfile): string | null {
     case "clienthello":
       return "ClientHello mask";
     case "patterniha":
-      return "Patterniha mask";
+      return "Adaptive compatibility mask";
   }
 }
 
@@ -77,6 +77,7 @@ export function ConnectionDiagnostics() {
   );
   const telemetryDownload = useTelemetryStore((state) => state.snapshot.download_kbps ?? null);
   const telemetryUpload = useTelemetryStore((state) => state.snapshot.upload_kbps ?? null);
+  const telemetryUploadLimited = useTelemetryStore((state) => state.snapshot.upload_limited ?? false);
 
   if (status.state === "Idle") return null;
 
@@ -94,6 +95,7 @@ export function ConnectionDiagnostics() {
     : telemetryCapacityComplete && telemetryDownload != null && telemetryUpload != null
       ? { downloadKbps: telemetryDownload, uploadKbps: telemetryUpload }
       : null;
+  const uploadLimited = runtimeAttemptCapacity?.uploadLimited ?? telemetryUploadLimited;
   const transport = path?.transport ? path.transport.toUpperCase() : inferredTransport(profile);
   const mask = maskLabel(profile);
   const tunnel =
@@ -154,6 +156,11 @@ export function ConnectionDiagnostics() {
         {capacity && (
           <span className="inline-flex items-center gap-1 rounded-lg bg-black/15 px-2 py-1 ring-1 ring-white/7">
             <Gauge size={10} /> {capacityLabel(capacity.downloadKbps, capacity.uploadKbps)}
+          </span>
+        )}
+        {uploadLimited && (
+          <span className="rounded-lg bg-warning/10 px-2 py-1 text-warning ring-1 ring-warning/20">
+            Upload restricted
           </span>
         )}
       </div>
