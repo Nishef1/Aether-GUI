@@ -24,6 +24,7 @@ export interface ObservedPath {
   jitterMs: number | null;
   qualityScore: number | null;
   qualityConfidence: number | null;
+  uploadLimited: boolean;
   countryCode: string | null;
   cooldownUntil: number | null;
 }
@@ -129,6 +130,7 @@ export function createObservedPath(
     jitterMs: null,
     qualityScore: null,
     qualityConfidence: null,
+    uploadLimited: false,
     countryCode: null,
     cooldownUntil: null,
   };
@@ -151,6 +153,7 @@ export function recordPathSuccess(
     jitterMs?: number | null;
     qualityScore?: number | null;
     qualityConfidence?: number | null;
+    uploadLimited?: boolean;
     countryCode: string | null;
     now?: number;
   },
@@ -169,6 +172,7 @@ export function recordPathSuccess(
     jitterMs: input.jitterMs ?? path.jitterMs,
     qualityScore: boundedPercent(input.qualityScore) ?? path.qualityScore,
     qualityConfidence: boundedPercent(input.qualityConfidence) ?? path.qualityConfidence,
+    uploadLimited: input.uploadLimited ?? path.uploadLimited,
     countryCode: input.countryCode?.toUpperCase() ?? path.countryCode,
     cooldownUntil: null,
   };
@@ -181,6 +185,7 @@ export function recordPathQuality(
     jitterMs?: number | null;
     qualityScore?: number | null;
     qualityConfidence?: number | null;
+    uploadLimited?: boolean;
     countryCode?: string | null;
     now?: number;
   },
@@ -193,6 +198,7 @@ export function recordPathQuality(
     jitterMs: input.jitterMs ?? path.jitterMs,
     qualityScore: boundedPercent(input.qualityScore) ?? path.qualityScore,
     qualityConfidence: boundedPercent(input.qualityConfidence) ?? path.qualityConfidence,
+    uploadLimited: input.uploadLimited ?? path.uploadLimited,
     countryCode: input.countryCode?.toUpperCase() ?? path.countryCode,
   };
 }
@@ -231,6 +237,7 @@ export function scorePath(path: ObservedPath, now = Date.now()): number {
   const reliability = observations === 0 ? 0 : path.successes / observations;
   const latencyPenalty = path.latencyMs == null ? 0 : Math.min(path.latencyMs / 1000, 1);
   const jitterPenalty = path.jitterMs == null ? 0 : Math.min(path.jitterMs / 500, 1);
+  const uploadPenalty = path.uploadLimited ? 0.22 : 0;
   const healthBonus = path.health === "healthy" ? 1 : path.health === "suspect" ? 0.35 : 0;
   const freshness = Math.max(0, 1 - Math.max(0, now - path.lastSeenAt) / FRESHNESS_WINDOW_MS);
 
@@ -250,7 +257,8 @@ export function scorePath(path: ObservedPath, now = Date.now()): number {
       freshness * 0.14 +
       qualityEvidence * 0.2 -
       latencyPenalty * 0.05 -
-      jitterPenalty * 0.03,
+      jitterPenalty * 0.03 -
+      uploadPenalty,
   );
 }
 
