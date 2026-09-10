@@ -1,12 +1,12 @@
 use crate::engine::EngineRuntime;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Shared connection state emitted by every transport and system-tunnel
 /// adapter. The frontend lifecycle remains stable even when an implementation
 /// changes underneath it.
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "state")]
 pub enum ConnectionState {
     Idle,
