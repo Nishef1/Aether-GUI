@@ -38,9 +38,22 @@ requireContract(!connectionStore.includes('const TLS_GROUPS_BRIDGE_PREFIX = "@pr
 requireContract(!connectionStore.includes("function decodeAndroidTlsBridge"), "connection store reintroduced a duplicate native decoder");
 
 const autoConnect = read("src/lib/autoConnect.ts");
-requireContract(autoConnect.includes("profileForNativeInvoke"), "Automatic v2 bypasses the shared native profile bridge");
+requireContract(autoConnect.includes("profileForNativeInvoke"), "Automatic policy bypasses the shared native profile bridge");
 requireContract(autoConnect.includes("profileForNativeInvoke(profile)"), "Automatic candidate launch no longer encodes the native profile");
-requireContract(autoConnect.includes("refreshPathNetworkContext"), "Automatic v2 can rank stale cross-network history");
+requireContract(autoConnect.includes("refreshPathNetworkContext"), "Automatic policy can rank stale cross-network history");
+for (const reason of [
+  "h3-unavailable",
+  "tcp-unreachable",
+  "tls-blocked",
+  "h2-rejected",
+  "dataplane-failed",
+  "upload-limited",
+  "identity-leak",
+]) {
+  requireContract(autoConnect.includes(`\"${reason}\"`), `Automatic policy lost failure reason ${reason}`);
+}
+requireContract(autoConnect.includes("probe_connection_acceptance"), "desktop Automatic policy no longer verifies post-connect acceptance");
+requireContract(autoConnect.includes("reprioritizeRemainingCandidates"), "Automatic policy lost failure-driven fallback ordering");
 
 const telemetryStore = read("src/state/telemetryStore.ts");
 requireContract(telemetryStore.includes("profileForNativeInvoke(rerollProfile)"), "privacy reroll bypasses the shared native profile bridge");
@@ -48,16 +61,30 @@ requireContract(telemetryStore.includes("profileForNativeInvoke(rerollProfile)")
 const pathStore = read("src/state/pathStore.ts");
 requireContract(pathStore.includes("aether.path-intelligence.v2"), "Path Intelligence lost network-scoped storage");
 requireContract(pathStore.includes('invoke<string | null>("get_network_context")'), "Path Intelligence no longer resolves the active underlay");
+requireContract(pathStore.includes("uploadLimited: path.uploadLimited === true"), "persisted path history no longer migrates upload evidence safely");
+requireContract(pathStore.includes("uploadLimited: telemetry.upload_limited ?? false"), "Path Intelligence no longer records native upload evidence");
 
 const pathIntelligence = read("src/lib/pathIntelligence.ts");
 for (const marker of ["ech:n/a", "tls:n/a", "groups:n/a"]) {
   requireContract(pathIntelligence.includes(marker), `non-MASQUE Path IDs lost ${marker}`);
 }
 requireContract(pathIntelligence.includes("masqueTlsKeys"), "TLS identity is no longer transport-scoped in Path Intelligence");
+requireContract(pathIntelligence.includes("uploadPenalty"), "upload-limited paths no longer receive a historical score penalty");
 
 const desktopNetwork = read("src-tauri/src/network_context.rs");
 requireContract(desktopNetwork.includes("AETHER_NETWORK_KEY"), "desktop no longer scopes Core history to the underlay");
 requireContract(desktopNetwork.includes("sync_process_environment"), "desktop Core network scope is not synchronized before launch");
+
+const desktopAcceptance = read("src-tauri/src/connection_acceptance.rs");
+for (const marker of ["api4.ipify.org", "api6.ipify.org", "checkip.amazonaws.com"]) {
+  requireContract(desktopAcceptance.includes(marker), `desktop egress identity baseline lost ${marker}`);
+}
+requireContract(desktopAcceptance.includes("LeakDetected"), "desktop exact-IP identity leak classification is missing");
+requireContract(desktopAcceptance.includes("QUICK_UPLOAD_BYTES"), "desktop quick upstream acceptance probe is missing");
+
+const commands = read("src-tauri/src/commands.rs");
+requireContract(commands.includes("capture_underlay_baseline"), "desktop does not capture underlay identity before Aether launch");
+requireContract(commands.includes("probe_connection_acceptance"), "desktop acceptance command is not exposed to the frontend");
 
 const mobileBridge = read("src-tauri/plugins/aether-vpn/src/lib.rs");
 for (const field of ["capacity_probe_complete", "download_kbps", "upload_kbps", "upload_limited"]) {
@@ -78,6 +105,13 @@ requireContract(coreLastConn.includes("diversify_ranked"), "quick reconnect lost
 const coreSocks = read("vendor/aether/aether/src/socks.rs");
 requireContract(coreSocks.includes("CMD_UDP_ASSOCIATE"), "custom Core lost SOCKS5 UDP ASSOCIATE capability");
 requireContract(coreSocks.includes("handle_udp_associate"), "custom Core no longer serves SOCKS5 UDP traffic");
+
+const coreFragment = read("vendor/aether/aether/src/fragment.rs");
+requireContract(coreFragment.includes("PATTERNIHA_TLS_FIRST_PAYLOAD: usize = 104"), "compatibility mask lost the current 104-byte TLS record stage");
+requireContract(coreFragment.includes("PATTERNIHA_TCP_FIRST_WRITE: usize = 114"), "compatibility mask lost the current 114-byte TCP first write");
+requireContract(coreFragment.includes("PATTERNIHA_TCP_MAX_SPLITS: usize = 11"), "compatibility mask lost the bounded eleven-write stage");
+requireContract(coreFragment.includes("append_tls_record(&mut out, buf, &[])"), "compatibility mask no longer preserves zero-length tlshello semantics");
+requireContract(coreFragment.includes("PatternPendingWrite"), "compatibility mask lost backpressure-safe transformed write state");
 
 requireContract(pkg.scripts?.["prepare:aether"] === "node scripts/prepare-custom-aether.mjs", "default desktop core preparation is not the pinned custom core");
 requireContract(pkg.scripts?.["prepare:android-native"] === "node scripts/prepare-android-native.mjs --custom", "default Android core preparation is not the pinned custom core");
