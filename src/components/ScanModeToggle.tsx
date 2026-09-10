@@ -12,11 +12,11 @@ const LABELS: Record<ScanMode, string> = {
 };
 
 const DESCRIPTIONS: Record<ScanMode, string> = {
-  turbo: "Fastest route discovery, but the most probe traffic — an easier pattern for a censor to notice.",
-  balanced: "Good default — reasonable speed without excessive probing.",
-  thorough: "Slower, more exhaustive search for working routes.",
-  stealth: "Slowest and most cautious — hardest for a censor to fingerprint.",
-  ironclad: "Opens a real tunnel through each candidate and sends a real HTTP request before trusting it. Slowest, but guarantees the gateway actually works.",
+  turbo: "Fastest route discovery, with the highest probe concurrency and the largest scan footprint.",
+  balanced: "Good default — searches several candidates without the full cost of an exhaustive sweep.",
+  thorough: "Slower, broader discovery that searches the full supported IPv4 subnet space and a larger IPv6 sample.",
+  stealth: "Lowest-concurrency probing to reduce the scan footprint. It is quieter, but no scan mode can guarantee invisibility to a censor.",
+  ironclad: "Opens a real tunnel through each candidate and completes a real HTTP round trip before selecting it. This is the strongest point-in-time validation, not a guarantee of future availability.",
 };
 
 export function ScanModeToggle() {
