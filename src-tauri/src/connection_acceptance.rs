@@ -277,11 +277,11 @@ fn quick_upload_kbps(socks_addr: &str) -> Option<u64> {
         .stderr(Stdio::piped());
 
     let mut child = command.spawn().ok()?;
-    child
-        .stdin
-        .take()?
+    let mut stdin = child.stdin.take()?;
+    stdin
         .write_all(&vec![0u8; QUICK_UPLOAD_BYTES])
         .ok()?;
+    drop(stdin);
     let output = child.wait_with_output().ok()?;
     if !output.status.success() {
         return None;
