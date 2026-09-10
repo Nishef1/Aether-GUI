@@ -278,6 +278,30 @@ fn now_ms() -> u64 {
 }
 
 fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
+    if !matches!(
+        profile.protocol.as_str(),
+        "auto" | "masque" | "wireguard" | "gool"
+    ) {
+        return Err("Unknown connection protocol".into());
+    }
+    if !matches!(
+        profile.scan_mode.as_str(),
+        "turbo" | "balanced" | "thorough" | "stealth" | "ironclad"
+    ) {
+        return Err("Unknown route discovery mode".into());
+    }
+    if !matches!(profile.ip_version.as_str(), "v4" | "v6" | "both") {
+        return Err("Unknown IP version selection".into());
+    }
+    if !matches!(
+        profile.masque_noize.as_str(),
+        "off" | "light" | "firewall" | "balanced" | "gfw" | "aggressive"
+    ) || !matches!(
+        profile.wg_noize.as_str(),
+        "off" | "light" | "firewall" | "balanced" | "gfw" | "aggressive"
+    ) {
+        return Err("Unknown obfuscation profile".into());
+    }
     if !(MIN_MTU..=MAX_MTU).contains(&profile.mtu) {
         return Err(format!("MTU must be between {MIN_MTU} and {MAX_MTU}"));
     }
@@ -497,9 +521,26 @@ async fn connect(
 #[tauri::command]
 async fn disconnect(app: AppHandle) -> Result<(), String> {
     emit_status(&app, &json!({ "state": "Disconnecting" }));
-    let status = app.aether_vpn().stop().map_err(|error| error.to_string())?;
-    emit_status(&app, &status_value(status));
-    Ok(())
+    match app.aether_vpn().stop() {
+        Ok(status) => {
+            emit_status(&app, &status_value(status));
+            Ok(())
+        }
+        Err(error) => {
+            let message = error.to_string();
+            // Never leave the frontend stranded in Disconnecting. The service
+            // may have stopped even if the stop IPC itself failed, so reconcile
+            // from native status before falling back to an explicit error.
+            match app.aether_vpn().status() {
+                Ok(status) => emit_status(&app, &status_value(status)),
+                Err(_) => emit_status(
+                    &app,
+                    &json!({ "state": "Error", "message": message, "phase": "disconnect" }),
+                ),
+            }
+            Err(message)
+        }
+    }
 }
 
 #[tauri::command]
