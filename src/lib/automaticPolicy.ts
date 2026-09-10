@@ -193,6 +193,27 @@ function h2MasksForAutomaticAttempt(
   ];
 }
 
+function pushH2Candidate(
+  candidates: AutomaticCandidate[],
+  profile: ConnectionProfile,
+  mask: H2MaskMode,
+  historical: boolean,
+  labelSuffix?: string,
+): void {
+  candidates.push({
+    transport: "h2",
+    label: `${labelFor("h2")} · ${maskLabel(mask)}${labelSuffix ?? ""}`,
+    profile: {
+      ...profile,
+      masque_mask: mask,
+      // Legacy mask owns the random fragment controls. Deterministic modes
+      // must not inherit a stale legacy boolean from an old profile.
+      fragment: mask === "legacy" ? profile.fragment : false,
+    },
+    historical,
+  });
+}
+
 export function buildAutomaticCandidates(
   base: ConnectionProfile,
   paths: readonly ObservedPath[],
@@ -212,7 +233,12 @@ export function buildAutomaticCandidates(
     const transport = order[index];
     const isBaseline = index === 0;
     const transportHistorical = !isBaseline && history.includes(transport);
-    const profile = profileForTransport(base, transport, isBaseline);
+    // In Automatic mode an explicit v4/v6 selection is the preferred first
+    // attempt, not a reason to strand every fallback on a broken address
+    // family. Alternate transports use dual-stack without adding more scans.
+    const transportBase =
+      !isBaseline && base.ip_version !== "both" ? { ...base, ip_version: "both" as const } : base;
+    const profile = profileForTransport(transportBase, transport, isBaseline);
 
     if (transport !== "h2") {
       candidates.push({
@@ -228,17 +254,30 @@ export function buildAutomaticCandidates(
     for (const variant of h2MasksForAutomaticAttempt(base, paths, now, isBaseline)) {
       if (seen.has(variant.mask)) continue;
       seen.add(variant.mask);
+      pushH2Candidate(
+        candidates,
+        profile,
+        variant.mask,
+        transportHistorical || variant.historical,
+      );
+    }
+  }
+
+  // One bounded final retry gives the baseline transport a chance on the other
+  // address family too. This closes the v4/v6 blind spot without doubling the
+  // entire candidate matrix (important for Thorough/Ironclad and battery life).
+  if (base.ip_version !== "both") {
+    const dualBase: ConnectionProfile = { ...base, ip_version: "both" };
+    const dualProfile = profileForTransport(dualBase, baseline, false);
+    if (baseline === "h2") {
+      const variant = h2MasksForAutomaticAttempt(base, paths, now, false)[0];
+      pushH2Candidate(candidates, dualProfile, variant.mask, variant.historical, " · dual-stack retry");
+    } else {
       candidates.push({
-        transport,
-        label: `${labelFor(transport)} · ${maskLabel(variant.mask)}`,
-        profile: {
-          ...profile,
-          masque_mask: variant.mask,
-          // Legacy mask owns the random fragment controls. Deterministic modes
-          // must not inherit a stale legacy boolean from an old profile.
-          fragment: variant.mask === "legacy" ? profile.fragment : false,
-        },
-        historical: transportHistorical || variant.historical,
+        transport: baseline,
+        label: `${labelFor(baseline)} · dual-stack retry`,
+        profile: dualProfile,
+        historical: false,
       });
     }
   }
