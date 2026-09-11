@@ -271,6 +271,27 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
             }
     }
 
+    @Command
+    fun exportDiagnostics(invoke: Invoke) {
+        runCatching { AndroidDiagnosticsExporter.export(activity) }
+            .onSuccess { result ->
+                invoke.resolve(JSObject().apply {
+                    put("fileName", result.fileName)
+                    put("uri", result.uri)
+                })
+            }
+            .onFailure { error ->
+                AndroidVpnRuntime.recordFailure(
+                    "diagnostics-export",
+                    error.message ?: error.toString(),
+                )
+                invoke.reject(
+                    error.message ?: "Diagnostics could not be exported",
+                    "diagnosticsExportFailed",
+                )
+            }
+    }
+
     private fun validateProfile(profile: FinalVpnProfileArgs): String? {
         if (!AndroidTransportPolicy.isValidMtu(profile.mtu)) {
             return "MTU must be between ${AndroidTransportPolicy.MIN_MTU} and ${AndroidTransportPolicy.MAX_MTU}"
@@ -678,11 +699,13 @@ class FinalAetherVpnService : VpnService() {
         } catch (_: CancellationException) {
             log("Connection session cancelled")
         } catch (error: Throwable) {
-            log("ERROR: ${error.message ?: error}")
+            val message = error.message ?: error.toString()
+            AndroidVpnRuntime.recordFailure("session", message)
+            log("ERROR: $message")
             if (sessionGate.isActive(token)) {
                 if (hasAttachedTunnel()) recoveryHold = true
                 AndroidVpnRuntime.updateSnapshot(
-                    FinalServiceSnapshot("Error", error.message ?: error.toString()),
+                    FinalServiceSnapshot("Error", message),
                 )
                 notifications.showFailure()
             }
@@ -1265,10 +1288,11 @@ class FinalAetherVpnService : VpnService() {
         fun markRecoveryRequested() =
             AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
 
-        fun markStartFailed(error: Throwable) =
-            AndroidVpnRuntime.updateSnapshot(
-                FinalServiceSnapshot("Error", error.message ?: error.toString()),
-            )
+        fun markStartFailed(error: Throwable) {
+            val message = error.message ?: error.toString()
+            AndroidVpnRuntime.recordFailure("service-start", message)
+            AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Error", message))
+        }
 
         fun snapshot(): FinalServiceSnapshot = AndroidVpnRuntime.snapshot()
         fun trafficSnapshot(): FinalNativeTraffic = AndroidVpnRuntime.trafficSnapshot()
