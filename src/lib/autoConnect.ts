@@ -318,8 +318,12 @@ async function verifyConnectedCandidate(
   return { accepted: true, cancelled: false, reason: "unknown", message: report.reason };
 }
 
-async function stopBetweenCandidates(epoch: number): Promise<StopOutcome> {
-  await invoke("disconnect").catch(() => undefined);
+async function stopCandidateForFallback(epoch: number): Promise<StopOutcome> {
+  // Desktop keeps an already-active full-device TUN installed as a kill switch
+  // while the loopback transport changes. Android's native VPN service owns
+  // its TUN lifecycle and still uses its platform disconnect command here.
+  const command = isAndroid ? "disconnect" : "disconnect_for_recovery";
+  await invoke(command).catch(() => undefined);
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (epoch !== automationEpoch) return "cancelled";
@@ -482,22 +486,23 @@ export async function connectWithAutomaticPolicy(
 
     reprioritizeRemainingCandidates(candidates, index + 1, failureReason, candidate.transport);
 
-    if (index + 1 < candidates.length) {
-      const stopOutcome = await stopBetweenCandidates(epoch);
-      if (stopOutcome === "cancelled") return;
-      if (stopOutcome === "timeout") {
-        if (epoch === automationEpoch) automationEpoch += 1;
-        useConnectionStore.setState({
-          status: {
-            state: "Error",
-            message:
-              "Automatic fallback stopped because the previous transport did not shut down cleanly.",
-            phase: "automatic-stop",
-          },
-          accessCodeRequired: false,
-        });
-        return;
-      }
+    // Always stop the rejected transport, including the final candidate. On
+    // desktop this leaves an active full-device route installed so recovery
+    // and exhausted fallback both fail closed rather than restoring direct IP.
+    const stopOutcome = await stopCandidateForFallback(epoch);
+    if (stopOutcome === "cancelled") return;
+    if (stopOutcome === "timeout") {
+      if (epoch === automationEpoch) automationEpoch += 1;
+      useConnectionStore.setState({
+        status: {
+          state: "Error",
+          message:
+            "Automatic fallback stopped because the previous transport did not shut down cleanly.",
+          phase: "automatic-stop",
+        },
+        accessCodeRequired: false,
+      });
+      return;
     }
   }
 

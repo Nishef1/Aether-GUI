@@ -53,6 +53,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::connect,
             commands::disconnect,
+            commands::disconnect_for_recovery,
             commands::submit_access_code,
             commands::get_status,
             commands::get_default_profile,

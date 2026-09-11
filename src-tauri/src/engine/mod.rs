@@ -264,11 +264,13 @@ impl EngineRuntime {
                     if runtime.system_tunnel.selection() == SystemTunnelSelection::Off {
                         return;
                     }
-                    if !runtime.system_tunnel.is_active() {
-                        let context = TunnelContext {
-                            upstream_socks_addr: socks_addr,
-                            connected_at_ms,
-                        };
+                    let context = TunnelContext {
+                        upstream_socks_addr: socks_addr,
+                        connected_at_ms,
+                    };
+                    if runtime.system_tunnel.is_active() {
+                        runtime.system_tunnel.refresh_active_context(context);
+                    } else {
                         match runtime
                             .system_tunnel
                             .start_selected(&app, context, tunnel_epoch)
@@ -311,11 +313,16 @@ impl EngineRuntime {
                 ConnectionState::Launching
                 | ConnectionState::Connecting
                 | ConnectionState::Reconnecting { .. } => {
-                    runtime.system_tunnel.stop_for_transport_loss(&app);
+                    runtime.system_tunnel.hold_for_transport_loss(&app);
                 }
-                ConnectionState::Idle
-                | ConnectionState::Disconnecting
-                | ConnectionState::Error { .. } => {
+                ConnectionState::Error { .. } => {
+                    // If full-device protection was already active, leave the
+                    // TUN route installed so a failed recovery cannot fall back
+                    // to direct Internet. Explicit user Disconnect releases it.
+                    runtime.system_tunnel.hold_for_transport_loss(&app);
+                    return;
+                }
+                ConnectionState::Idle | ConnectionState::Disconnecting => {
                     runtime.system_tunnel.stop_for_transport_loss(&app);
                     return;
                 }
@@ -364,6 +371,15 @@ impl EngineRuntime {
     pub fn disconnect(&self, app: &AppHandle) -> Result<(), RuntimeError> {
         self.connection_generation.fetch_add(1, Ordering::SeqCst);
         self.system_tunnel.cancel_attempt(app);
+        self.adapter(None)?.disconnect(app)
+    }
+
+    /// Stop only the transport while retaining an active system tunnel as a
+    /// fail-closed route. This is for automatic fallback/recovery, never for a
+    /// user-requested Disconnect.
+    pub fn disconnect_for_recovery(&self, app: &AppHandle) -> Result<(), RuntimeError> {
+        self.connection_generation.fetch_add(1, Ordering::SeqCst);
+        self.system_tunnel.suspend_attempt_for_recovery(app);
         self.adapter(None)?.disconnect(app)
     }
 

@@ -28,6 +28,14 @@ pub fn disconnect(app: AppHandle, state: State<AppState>) -> Result<(), RuntimeE
 }
 
 #[tauri::command]
+pub fn disconnect_for_recovery(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<(), RuntimeError> {
+    state.runtime.disconnect_for_recovery(&app)
+}
+
+#[tauri::command]
 pub fn submit_access_code(state: State<AppState>, code: String) -> Result<(), RuntimeError> {
     state.runtime.submit_aether_access_code(code)
 }

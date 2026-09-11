@@ -196,12 +196,21 @@ impl SystemTunnelRuntime {
         Ok(())
     }
 
-    /// Start a new connection lineage and invalidate any startup still running
-    /// for a previous connect click.
+    /// Start a new transport lineage. If a full-device tunnel is already
+    /// active, keep it installed as a kill switch while the loopback SOCKS
+    /// transport is replaced. With strict_route and proxy as the final route,
+    /// traffic then fails closed until the new SOCKS listener is ready.
     pub fn begin_attempt(&self, app: &AppHandle) -> u64 {
         let epoch = self.attempt_epoch.fetch_add(1, Ordering::SeqCst) + 1;
-        self.stop_for_transport_loss(app);
+        self.hold_for_transport_loss(app);
         epoch
+    }
+
+    /// Invalidate a transport attempt without tearing down an already active
+    /// system tunnel. Used by automatic fallback and post-connect recovery.
+    pub fn suspend_attempt_for_recovery(&self, app: &AppHandle) {
+        self.attempt_epoch.fetch_add(1, Ordering::SeqCst);
+        self.hold_for_transport_loss(app);
     }
 
     pub fn cancel_attempt(&self, app: &AppHandle) {
@@ -274,6 +283,25 @@ impl SystemTunnelRuntime {
             },
         );
         Ok(true)
+    }
+
+    /// Preserve an already active full-device route across transport loss. If
+    /// the tunnel never became active, clean up a partial startup normally.
+    pub fn hold_for_transport_loss(&self, app: &AppHandle) {
+        if self.is_active() {
+            return;
+        }
+        self.stop_for_transport_loss(app);
+    }
+
+    /// Refresh metadata after the loopback transport reconnects without
+    /// restarting the OS-level TUN route.
+    pub fn refresh_active_context(&self, context: TunnelContext) {
+        if let Ok(mut stage) = self.stage.lock() {
+            if matches!(&*stage, TunnelStage::Active(_)) {
+                *stage = TunnelStage::Active(context);
+            }
+        }
     }
 
     pub fn stop_for_transport_loss(&self, app: &AppHandle) {
