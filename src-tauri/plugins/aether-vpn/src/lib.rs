@@ -122,6 +122,13 @@ pub struct NativeLogBatch {
     pub last_id: u64,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticsExport {
+    pub file_name: String,
+    pub uri: String,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum MobilePermissionState {
@@ -244,6 +251,12 @@ impl<R: Runtime> AetherVpn<R> {
     pub fn submit_access_code(&self, code: &str) -> Result<()> {
         self.0
             .run_mobile_plugin::<()>("submitAccessCode", AccessCodeRequest { code })
+            .map_err(Into::into)
+    }
+
+    pub fn export_diagnostics(&self) -> Result<DiagnosticsExport> {
+        self.0
+            .run_mobile_plugin("exportDiagnostics", ())
             .map_err(Into::into)
     }
 }
