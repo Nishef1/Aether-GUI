@@ -191,8 +191,6 @@ function reprioritizeRemainingCandidates(
       case "upload-limited":
       case "dataplane-failed":
         return candidate.transport === failedTransport ? 1 : 0;
-      case "unknown":
-        return 0;
     }
   };
 
@@ -448,7 +446,7 @@ export async function connectWithAutomaticPolicy(
     const budgetMs = automaticAttemptBudgetMs(candidate.profile);
     prepareAttempt(candidate.profile, budgetMs, candidate.label, index + 1, candidates.length);
 
-    let failureReason: AutomaticFailureReason = "unknown";
+    let failureReason: AutomaticFailureReason;
     const launchError = await invokeCandidate(candidate.profile);
     if (launchError != null) {
       lastError = launchError;
