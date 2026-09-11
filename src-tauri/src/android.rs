@@ -139,8 +139,6 @@ impl MobileConnectionProfile {
         }
 
         match self.masque_mask.as_deref() {
-            // Missing field means an old profile. Keep its legacy boolean/range
-            // untouched so saved users do not silently change behavior.
             None => {}
             Some("off") => self.fragment = false,
             Some("legacy") => self.fragment = true,
@@ -154,16 +152,10 @@ impl MobileConnectionProfile {
                 self.fragment_size = "patterniha".into();
                 self.fragment_delay = "0".into();
             }
-            // Validation rejects this before runtime; keep the match exhaustive
-            // and conservative if corrupted settings somehow bypass it.
             Some(_) => self.fragment = false,
         }
     }
 
-    /// Keep the user's hidden values in the editable profile, but never hand
-    /// options from an inactive transport to the Android process launcher.
-    /// This mirrors the desktop Rust boundary and protects against stale UI
-    /// state after protocol changes.
     fn for_runtime(mut self) -> Self {
         match self.protocol.as_str() {
             "wireguard" => {
@@ -187,7 +179,6 @@ impl MobileConnectionProfile {
                     self.wiw_outer.clear();
                     self.wiw_inner.clear();
                 } else if !self.wiw_outer.trim().is_empty() {
-                    // New v1.9 endpoint wins over the legacy outer-peer field.
                     self.wg_peer.clear();
                 }
             }
@@ -264,9 +255,6 @@ fn save_settings(app: &AppHandle, settings: &MobileSettings) -> Result<(), Strin
         serde_json::to_vec_pretty(&persisted).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
-    // Android uses Unix rename semantics: replacing the destination directly
-    // keeps the old valid file present until the new file is committed. Never
-    // delete the previous settings first, which creates a crash-loss window.
     fs::rename(temporary, path).map_err(|error| error.to_string())
 }
 
@@ -486,9 +474,6 @@ async fn connect(
             return Err("Android VPN permission was not granted".into());
         }
     }
-    // Android 13+ may hide foreground-service notifications from the drawer
-    // unless the app can post notifications. Ask while Connect is an explicit
-    // foreground user action, but never make VPN startup depend on the answer.
     let _ = app.aether_vpn().ensure_notification_permission();
     settings.version = MOBILE_SETTINGS_VERSION;
     save_settings(&app, &settings)?;
@@ -496,9 +481,6 @@ async fn connect(
         .settings
         .lock()
         .map_err(|_| "mobile state unavailable")? = settings.clone();
-    // Keep the Rust process environment synchronized as an additional bridge
-    // for child runtimes that inherit it. Core also detects the underlay itself
-    // when Android's ProcessBuilder does not reflect a post-start env change.
     crate::network_context::sync_process_environment();
     emit_status(&app, &json!({ "state": "Launching" }));
     match app
@@ -530,14 +512,33 @@ async fn disconnect(app: AppHandle) -> Result<(), String> {
         }
         Err(error) => {
             let message = error.to_string();
-            // Never leave the frontend stranded in Disconnecting. The service
-            // may have stopped even if the stop IPC itself failed, so reconcile
-            // from native status before falling back to an explicit error.
             match app.aether_vpn().status() {
                 Ok(status) => emit_status(&app, &status_value(status)),
                 Err(_) => emit_status(
                     &app,
                     &json!({ "state": "Error", "message": message, "phase": "disconnect" }),
+                ),
+            }
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+async fn disconnect_for_recovery(app: AppHandle) -> Result<(), String> {
+    emit_status(&app, &json!({ "state": "Disconnecting" }));
+    match app.aether_vpn().stop_for_recovery() {
+        Ok(status) => {
+            emit_status(&app, &status_value(status));
+            Ok(())
+        }
+        Err(error) => {
+            let message = error.to_string();
+            match app.aether_vpn().status() {
+                Ok(status) => emit_status(&app, &status_value(status)),
+                Err(_) => emit_status(
+                    &app,
+                    &json!({ "state": "Error", "message": message, "phase": "automatic-stop" }),
                 ),
             }
             Err(message)
@@ -724,6 +725,7 @@ pub fn run_inner() {
         .invoke_handler(tauri::generate_handler![
             connect,
             disconnect,
+            disconnect_for_recovery,
             submit_access_code,
             get_status,
             get_default_profile,
