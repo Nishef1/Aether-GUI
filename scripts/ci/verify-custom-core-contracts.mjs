@@ -163,6 +163,10 @@ for (const marker of [
   '"runtime.log"',
   "connectivity.allNetworks",
   "lastFailureSnapshot",
+  "getHistoricalProcessExitReasons",
+  "ApplicationExitInfo.REASON_CRASH_NATIVE",
+  '"historical_process_exits"',
+  "exits.take(5)",
 ]) {
   requireContract(mobileDiagnosticsExporter.includes(marker), `Android diagnostics exporter lost ${marker}`);
 }
