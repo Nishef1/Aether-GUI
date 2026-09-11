@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.ContentValues
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Environment
@@ -27,6 +29,7 @@ data class FinalDiagnosticsExport(
  */
 internal object AndroidDiagnosticsExporter {
     fun export(activity: Activity): FinalDiagnosticsExport {
+        AndroidVpnRuntime.initialize(activity)
         val generatedAtMs = System.currentTimeMillis()
         val fileName = "Aether-diagnostics-$generatedAtMs.zip"
         val resolver = activity.contentResolver
@@ -128,10 +131,32 @@ internal object AndroidDiagnosticsExporter {
     private fun networkJson(activity: Activity): JSONObject {
         val connectivity =
             activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivity.activeNetwork
-        val capabilities = network?.let(connectivity::getNetworkCapabilities)
-        val link = network?.let(connectivity::getLinkProperties)
+        val active = connectivity.activeNetwork
+        val networks = JSONArray()
+        connectivity.allNetworks.forEach { network ->
+            networks.put(
+                networkSnapshot(
+                    network = network,
+                    capabilities = connectivity.getNetworkCapabilities(network),
+                    link = connectivity.getLinkProperties(network),
+                    active = network == active,
+                ),
+            )
+        }
 
+        return JSONObject().apply {
+            put("active_network", active != null)
+            put("network_count", networks.length())
+            put("networks", networks)
+        }
+    }
+
+    private fun networkSnapshot(
+        network: Network,
+        capabilities: NetworkCapabilities?,
+        link: LinkProperties?,
+        active: Boolean,
+    ): JSONObject {
         val transports = JSONArray().apply {
             if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) put("wifi")
             if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) put("cellular")
@@ -141,7 +166,8 @@ internal object AndroidDiagnosticsExporter {
         }
 
         return JSONObject().apply {
-            put("active_network", network != null)
+            put("network_id", network.toString())
+            put("active", active)
             put("transports", transports)
             put(
                 "internet_capability",
@@ -179,7 +205,7 @@ internal object AndroidDiagnosticsExporter {
         This bundle was created locally on the device after an explicit user action.
         It contains a bounded runtime/core/service log tail, current VPN status,
         telemetry, the most recent recorded runtime failure, and Android network
-        capability metadata.
+        capability metadata for the visible VPN and underlay networks.
 
         Aether does not intentionally include Zero Trust credentials, access codes,
         access tokens, service-token secrets, or upstream proxy credentials.
