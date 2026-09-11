@@ -1,11 +1,13 @@
 package com.cluvexstudio.aethergui.vpn
 
+import android.content.Context
 import app.tauri.plugin.JSObject
 import java.io.BufferedWriter
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.system.exitProcess
 
 data class FinalServiceSnapshot(
     val state: String,
@@ -81,17 +83,26 @@ data class FinalRuntimeTelemetry(
  * and path-selection metadata without enabling verbose core logging. A bounded
  * internal tail is always retained in memory so a user can export a useful
  * troubleshooting bundle without running adb or enabling verbose logging first.
+ * Only the latest bounded failure summary is persisted, so a crash can still be
+ * diagnosed after Android restarts the app process.
  */
 internal object AndroidVpnRuntime {
     private const val MAX_VISIBLE_LOG_LINES = 400
     private const val MAX_CONTROL_LOG_LINES = 24
     private const val MAX_INTERNAL_TAIL_LINES = 160
     private const val MAX_PARTIAL_CHARS = 16 * 1024
+    private const val MAX_FAILURE_CHARS = 4 * 1024
+    private const val FAILURE_PREFS = "aether-diagnostics"
+    private const val FAILURE_TIMESTAMP = "last_failure_timestamp"
+    private const val FAILURE_SOURCE = "last_failure_source"
+    private const val FAILURE_MESSAGE = "last_failure_message"
 
     private val status = AtomicReference(idleSnapshot())
     private val activeTunBridge = AtomicReference<HevTun2Socks?>(null)
     private val telemetry = AtomicReference(FinalRuntimeTelemetry())
     private val lastFailure = AtomicReference<FinalFailureSummary?>(null)
+    private val appContext = AtomicReference<Context?>(null)
+    private val crashHandlerInstalled = AtomicBoolean(false)
     private val loggingEnabled = AtomicBoolean(false)
     private val capacityProbeClaimed = AtomicBoolean(false)
     private val logSequence = AtomicLong(0L)
@@ -102,6 +113,56 @@ internal object AndroidVpnRuntime {
     private val parserLock = Any()
     private var partialOutput = ""
     private var accessCodePromptVisible = false
+
+    fun initialize(context: Context) {
+        val application = context.applicationContext
+        appContext.compareAndSet(null, application)
+        if (lastFailure.get() == null) {
+            loadPersistedFailure(application)?.let(lastFailure::compareAndSetNull)
+        }
+        if (crashHandlerInstalled.compareAndSet(false, true)) {
+            val previous = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+                runCatching {
+                    recordFailure(
+                        "uncaught:${thread.name}",
+                        error.stackTraceToString(),
+                    )
+                }
+                if (previous != null) {
+                    previous.uncaughtException(thread, error)
+                } else {
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                    exitProcess(10)
+                }
+            }
+        }
+    }
+
+    private fun AtomicReference<FinalFailureSummary?>.compareAndSetNull(value: FinalFailureSummary) {
+        compareAndSet(null, value)
+    }
+
+    private fun loadPersistedFailure(context: Context): FinalFailureSummary? {
+        val preferences = context.getSharedPreferences(FAILURE_PREFS, Context.MODE_PRIVATE)
+        val timestamp = preferences.getLong(FAILURE_TIMESTAMP, 0L)
+        val source = preferences.getString(FAILURE_SOURCE, null).orEmpty()
+        val message = preferences.getString(FAILURE_MESSAGE, null).orEmpty()
+        if (timestamp <= 0L || source.isBlank() || message.isBlank()) return null
+        return FinalFailureSummary(timestamp, source, message)
+    }
+
+    private fun persistFailure(summary: FinalFailureSummary) {
+        val context = appContext.get() ?: return
+        context.getSharedPreferences(FAILURE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(FAILURE_TIMESTAMP, summary.timestamp)
+            .putString(FAILURE_SOURCE, summary.source)
+            .putString(FAILURE_MESSAGE, summary.message)
+            // commit() is intentional: an uncaught exception may terminate the
+            // process immediately after this handler returns.
+            .commit()
+    }
 
     fun snapshot(): FinalServiceSnapshot = status.get()
 
@@ -123,14 +184,14 @@ internal object AndroidVpnRuntime {
 
     fun recordFailure(source: String, message: String) {
         val safeSource = source.trim().take(64).ifEmpty { "runtime" }
-        val safeMessage = message.trim().take(4_096).ifEmpty { "Unknown runtime failure" }
-        lastFailure.set(
-            FinalFailureSummary(
-                timestamp = System.currentTimeMillis(),
-                source = safeSource,
-                message = safeMessage,
-            ),
+        val safeMessage = message.trim().take(MAX_FAILURE_CHARS).ifEmpty { "Unknown runtime failure" }
+        val summary = FinalFailureSummary(
+            timestamp = System.currentTimeMillis(),
+            source = safeSource,
+            message = safeMessage,
         )
+        lastFailure.set(summary)
+        persistFailure(summary)
         appendInternal("[failure:$safeSource] $safeMessage")
     }
 
