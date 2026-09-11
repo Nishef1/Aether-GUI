@@ -202,6 +202,23 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun stopForRecovery(invoke: Invoke) {
+        FinalAetherVpnService.markRecoveryRequested()
+        val intent = Intent(activity, FinalAetherVpnService::class.java).apply {
+            action = FinalAetherVpnService.ACTION_RECOVER
+        }
+        try {
+            activity.startService(intent)
+            invoke.resolve(FinalAetherVpnService.snapshot().toJsObject())
+        } catch (error: Throwable) {
+            invoke.reject(
+                error.message ?: "Android refused to pause the transport for recovery",
+                "aetherServiceRecoveryFailed",
+            )
+        }
+    }
+
+    @Command
     fun status(invoke: Invoke) = invoke.resolve(FinalAetherVpnService.snapshot().toJsObject())
 
     @Command
@@ -379,6 +396,7 @@ class FinalAetherVpnService : VpnService() {
     private val probeExecutor = Executors.newSingleThreadExecutor()
 
     @Volatile private var pendingCleanup: Future<*>? = null
+    @Volatile private var recoveryHold = false
     private var coreProcess: Process? = null
     private var coreWriter: BufferedWriter? = null
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -396,6 +414,7 @@ class FinalAetherVpnService : VpnService() {
         when (intent?.action) {
             ACTION_START -> startCore(intent)
             ACTION_STOP -> requestStop("user request")
+            ACTION_RECOVER -> requestRecovery("automatic fallback")
         }
         return START_NOT_STICKY
     }
@@ -406,6 +425,7 @@ class FinalAetherVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        recoveryHold = false
         sessionGate.cancel()
         AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
         val resources = detachAllResources()
@@ -427,8 +447,12 @@ class FinalAetherVpnService : VpnService() {
 
     private fun startCore(intent: Intent) {
         val token = sessionGate.begin()
+        val wantsSystemTunnel =
+            (intent.getStringExtra(EXTRA_CONNECTION_MODE) ?: "tunnel") != "proxy"
+        val reuseProtectedTunnel = recoveryHold && wantsSystemTunnel && hasAttachedTunnel()
+        recoveryHold = false
         val previousCleanup = pendingCleanup
-        val staleResources = detachAllResources()
+        val staleResources = if (reuseProtectedTunnel) detachCoreResources() else detachAllResources()
         val cleanupFuture = cleanupExecutor.submit {
             runCatching { previousCleanup?.get(CLEANUP_WAIT_SECONDS, TimeUnit.SECONDS) }
                 .onFailure { log("Previous cleanup wait warning: ${it.message}") }
@@ -438,7 +462,11 @@ class FinalAetherVpnService : VpnService() {
 
         AndroidVpnRuntime.resetTelemetry()
         AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Launching"))
-        notifications.start("Starting Aether", "Preparing a secure route…")
+        notifications.start(
+            if (reuseProtectedTunnel) "Recovering Aether" else "Starting Aether",
+            if (reuseProtectedTunnel) "Traffic stays blocked while a new route is selected…"
+            else "Preparing a secure route…",
+        )
 
         val profile = RuntimeProfile(
             protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "masque",
@@ -606,20 +634,26 @@ class FinalAetherVpnService : VpnService() {
                     token,
                     FinalServiceSnapshot("StartingTunnel", socksAddr = profile.bindAddress),
                 )
-                tunnel = createSystemTunnel(profile)
-                if (!attachTunnel(token, tunnel)) {
-                    cleanupResources(
-                        RuntimeResources(
-                            descriptor = tunnel.descriptor,
-                            bridge = tunnel.bridge,
-                        ),
-                        "cancel before TUN attach",
-                    )
-                    tunnel = null
-                    throw CancellationException("Connection cancelled before TUN attachment")
+                val retained = attachedTunnelResources()
+                if (retained != null) {
+                    validateTunnelLiveness(token, retained.bridge)
+                    log("Reusing protected Android VPN interface during transport recovery")
+                } else {
+                    tunnel = createSystemTunnel(profile)
+                    if (!attachTunnel(token, tunnel)) {
+                        cleanupResources(
+                            RuntimeResources(
+                                descriptor = tunnel.descriptor,
+                                bridge = tunnel.bridge,
+                            ),
+                            "cancel before TUN attach",
+                        )
+                        tunnel = null
+                        throw CancellationException("Connection cancelled before TUN attachment")
+                    }
+                    tunnelAttached = true
+                    validateTunnelLiveness(token, tunnel.bridge)
                 }
-                tunnelAttached = true
-                validateTunnelLiveness(token, tunnel.bridge)
                 updateSnapshotIfActive(
                     token,
                     FinalServiceSnapshot(
@@ -646,23 +680,33 @@ class FinalAetherVpnService : VpnService() {
         } catch (error: Throwable) {
             log("ERROR: ${error.message ?: error}")
             if (sessionGate.isActive(token)) {
+                if (hasAttachedTunnel()) recoveryHold = true
                 AndroidVpnRuntime.updateSnapshot(
                     FinalServiceSnapshot("Error", error.message ?: error.toString()),
                 )
                 notifications.showFailure()
             }
         } finally {
-            val owned = takeOwnedResources(process, writer, tunnel)
+            val owned = takeOwnedCoreResources(process, writer)
+            val unownedTunnel = if (!tunnelAttached) tunnel else null
             val finalResources = RuntimeResources(
                 process = owned.process ?: if (!processAttached) process else null,
                 writer = owned.writer ?: if (!processAttached) writer else null,
-                descriptor = owned.descriptor ?: if (!tunnelAttached) tunnel?.descriptor else null,
-                bridge = owned.bridge ?: if (!tunnelAttached) tunnel?.bridge else null,
+                descriptor = unownedTunnel?.descriptor,
+                bridge = unownedTunnel?.bridge,
             )
             cleanupResources(finalResources, "session finalizer")
             if (sessionGate.isActive(token) && snapshot().state == "Error") {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                if (hasAttachedTunnel()) {
+                    recoveryHold = true
+                    updateNotification(
+                        "Aether recovery required",
+                        "Traffic is blocked until a secure route is restored",
+                    )
+                } else {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
     }
@@ -863,6 +907,7 @@ class FinalAetherVpnService : VpnService() {
     }
 
     private fun requestStop(reason: String) {
+        recoveryHold = false
         val stopToken = sessionGate.cancel()
         AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
         notifications.cancelFailure()
@@ -876,6 +921,45 @@ class FinalAetherVpnService : VpnService() {
                 AndroidVpnRuntime.updateSnapshot(AndroidVpnRuntime.idleSnapshot())
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
+            }
+        }
+        pendingCleanup = future
+    }
+
+    private fun requestRecovery(reason: String) {
+        recoveryHold = hasAttachedTunnel()
+        val stopToken = sessionGate.cancel()
+        AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
+        notifications.cancelFailure()
+        updateNotification(
+            "Recovering Aether",
+            if (recoveryHold) "Traffic is blocked while selecting a new secure route…"
+            else "Stopping the failed transport…",
+        )
+        log("Pausing Aether transport for recovery: $reason")
+        val resources = detachCoreResources()
+        val future = cleanupExecutor.submit {
+            cleanupResources(resources, reason)
+            AndroidVpnRuntime.resetTelemetry()
+            if (sessionGate.isCurrent(stopToken) && sessionGate.isCancelled()) {
+                if (recoveryHold && hasAttachedTunnel()) {
+                    AndroidVpnRuntime.updateSnapshot(
+                        FinalServiceSnapshot(
+                            state = "Error",
+                            message = "Transport paused for protected recovery",
+                            tunAddr = TUN_IPV4_ADDRESS,
+                        ),
+                    )
+                    updateNotification(
+                        "Aether recovery",
+                        "Traffic is blocked until the next secure route is ready",
+                    )
+                } else {
+                    recoveryHold = false
+                    AndroidVpnRuntime.updateSnapshot(AndroidVpnRuntime.idleSnapshot())
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
         pendingCleanup = future
@@ -902,6 +986,24 @@ class FinalAetherVpnService : VpnService() {
             }
         }
 
+    private fun hasAttachedTunnel(): Boolean = synchronized(resourceLock) {
+        vpnInterface != null && tun2Socks != null
+    }
+
+    private fun attachedTunnelResources(): TunnelResources? = synchronized(resourceLock) {
+        val descriptor = vpnInterface
+        val bridge = tun2Socks
+        if (descriptor != null && bridge != null) TunnelResources(descriptor, bridge) else null
+    }
+
+    private fun detachCoreResources(): RuntimeResources = synchronized(resourceLock) {
+        val resources = RuntimeResources(process = coreProcess, writer = coreWriter)
+        coreProcess = null
+        coreWriter = null
+        AndroidVpnRuntime.clearProcessInput()
+        resources
+    }
+
     private fun detachAllResources(): RuntimeResources = synchronized(resourceLock) {
         val resources = RuntimeResources(coreProcess, coreWriter, vpnInterface, tun2Socks)
         coreProcess = null
@@ -913,10 +1015,9 @@ class FinalAetherVpnService : VpnService() {
         resources
     }
 
-    private fun takeOwnedResources(
+    private fun takeOwnedCoreResources(
         process: Process?,
         writer: BufferedWriter?,
-        tunnel: TunnelResources?,
     ): RuntimeResources = synchronized(resourceLock) {
         val ownedProcess = if (process != null && coreProcess === process) {
             coreProcess = null
@@ -926,17 +1027,8 @@ class FinalAetherVpnService : VpnService() {
             coreWriter = null
             writer
         } else null
-        val ownedDescriptor = if (tunnel != null && vpnInterface === tunnel.descriptor) {
-            vpnInterface = null
-            tunnel.descriptor
-        } else null
-        val ownedBridge = if (tunnel != null && tun2Socks === tunnel.bridge) {
-            tun2Socks = null
-            AndroidVpnRuntime.clearActiveTunBridge(tunnel.bridge)
-            tunnel.bridge
-        } else null
         ownedWriter?.let(AndroidVpnRuntime::clearProcessInput)
-        RuntimeResources(ownedProcess, ownedWriter, ownedDescriptor, ownedBridge)
+        RuntimeResources(process = ownedProcess, writer = ownedWriter)
     }
 
     private fun cleanupResources(resources: RuntimeResources, reason: String) {
@@ -1105,6 +1197,7 @@ class FinalAetherVpnService : VpnService() {
     companion object {
         const val ACTION_START = "com.cluvexstudio.aethergui.vpn.FINAL_START"
         const val ACTION_STOP = "com.cluvexstudio.aethergui.vpn.FINAL_STOP"
+        const val ACTION_RECOVER = "com.cluvexstudio.aethergui.vpn.FINAL_RECOVER"
         const val EXTRA_PROTOCOL = "protocol"
         const val EXTRA_SCAN_MODE = "scanMode"
         const val EXTRA_IP_VERSION = "ipVersion"
@@ -1167,6 +1260,9 @@ class FinalAetherVpnService : VpnService() {
             AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Launching"))
 
         fun markStopRequested() =
+            AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
+
+        fun markRecoveryRequested() =
             AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Disconnecting"))
 
         fun markStartFailed(error: Throwable) =
