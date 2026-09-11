@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_aether_vpn::{AetherVpnExt, VpnProfile, VpnStatus};
+use tauri_plugin_aether_vpn::{AetherVpnExt, DiagnosticsExport, VpnProfile, VpnStatus};
 
 const MOBILE_SETTINGS_VERSION: u8 = 3;
 const DEFAULT_MTU: u16 = 1280;
@@ -592,6 +592,13 @@ fn submit_access_code(app: AppHandle, code: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn export_android_diagnostics(app: AppHandle) -> Result<DiagnosticsExport, String> {
+    app.aether_vpn()
+        .export_diagnostics()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn get_system_tunnel(state: State<'_, MobileState>) -> MobileSystemTunnel {
     state
         .settings
@@ -727,6 +734,7 @@ pub fn run_inner() {
             disconnect,
             disconnect_for_recovery,
             submit_access_code,
+            export_android_diagnostics,
             get_status,
             get_default_profile,
             set_default_profile,
