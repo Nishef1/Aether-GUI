@@ -114,6 +114,9 @@ for (const field of ["capacity_probe_complete", "download_kbps", "upload_kbps", 
 }
 requireContract(mobileBridge.includes("stop_for_recovery"), "Android Rust plugin lost the recovery stop bridge");
 requireContract(mobileBridge.includes('run_mobile_plugin("stopForRecovery"'), "Android Rust plugin no longer calls the Kotlin recovery command");
+requireContract(mobileBridge.includes("pub struct DiagnosticsExport"), "Android diagnostics result contract is missing");
+requireContract(mobileBridge.includes("pub fn export_diagnostics"), "Android Rust plugin lost diagnostics export");
+requireContract(mobileBridge.includes('run_mobile_plugin("exportDiagnostics"'), "Android Rust plugin no longer calls the Kotlin diagnostics command");
 
 const mobileRuntime = read("src-tauri/src/android.rs");
 requireContract(mobileRuntime.includes("get_network_context"), "Android does not expose network context to Path Intelligence");
@@ -123,6 +126,9 @@ for (const field of ["capacity_probe_complete", "download_kbps", "upload_kbps", 
 requireContract(mobileRuntime.includes("async fn disconnect_for_recovery"), "Android Tauri runtime lost recovery-only disconnect");
 requireContract(mobileRuntime.includes("stop_for_recovery()"), "Android Tauri recovery command bypasses the native recovery bridge");
 requireContract(mobileRuntime.includes("disconnect_for_recovery,"), "Android recovery command is not registered with Tauri");
+requireContract(mobileRuntime.includes("fn export_android_diagnostics"), "Android Tauri runtime lost diagnostics export");
+requireContract(mobileRuntime.includes(".export_diagnostics()"), "Android diagnostics export bypasses the mobile plugin");
+requireContract(mobileRuntime.includes("export_android_diagnostics,"), "Android diagnostics export is not registered with Tauri");
 
 const mobileNative = read("src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt");
 requireContract(mobileNative.includes("fun stopForRecovery"), "Android Kotlin plugin lost the protected recovery command");
@@ -132,6 +138,48 @@ requireContract(mobileNative.includes("Reusing protected Android VPN interface d
 requireContract(mobileNative.includes('.addRoute("0.0.0.0", 0)'), "Android full-device VPN no longer captures IPv4 default traffic");
 requireContract(mobileNative.includes('.addRoute("::", 0)'), "Android full-device VPN no longer captures IPv6 default traffic");
 requireContract(!mobileNative.includes("allowBypass()"), "Android VPN allows applications to bypass full-device protection");
+requireContract(mobileNative.includes("fun exportDiagnostics"), "Android Kotlin plugin lost diagnostics export");
+requireContract(mobileNative.includes("AndroidDiagnosticsExporter.export(activity)"), "Android diagnostics command no longer invokes the bounded exporter");
+requireContract(mobileNative.includes('recordFailure("session"'), "Android active-session failures are absent from diagnostics");
+requireContract(mobileNative.includes('recordFailure("service-start"'), "Android service-start failures are absent from diagnostics");
+
+const mobileDiagnosticsRuntime = read("src-tauri/plugins/aether-vpn/android/src/main/java/AndroidVpnRuntime.kt");
+requireContract(mobileDiagnosticsRuntime.includes("MAX_INTERNAL_TAIL_LINES = 160"), "Android diagnostics log tail is no longer bounded");
+requireContract(mobileDiagnosticsRuntime.includes("MAX_FAILURE_CHARS = 4 * 1024"), "Android crash summary is no longer bounded");
+requireContract(mobileDiagnosticsRuntime.includes("Thread.setDefaultUncaughtExceptionHandler"), "Android crash summary no longer captures uncaught process failures");
+requireContract(mobileDiagnosticsRuntime.includes("getSharedPreferences(FAILURE_PREFS"), "Android crash summary no longer survives process restart");
+requireContract(mobileDiagnosticsRuntime.includes('recordFailure("safety"'), "Android safety failures no longer reach diagnostics");
+
+const mobileDiagnosticsInitializer = read("src-tauri/plugins/aether-vpn/android/src/main/java/AetherDiagnosticsInitializer.kt");
+requireContract(mobileDiagnosticsInitializer.includes("AndroidVpnRuntime::initialize"), "Android crash diagnostics are not initialized at process startup");
+requireContract(mobileDiagnosticsInitializer.includes("ContentProvider"), "Android early diagnostics initializer lost its process-start hook");
+
+const mobileDiagnosticsExporter = read("src-tauri/plugins/aether-vpn/android/src/main/java/AndroidDiagnosticsExporter.kt");
+for (const marker of [
+  "MediaStore.Downloads.EXTERNAL_CONTENT_URI",
+  "Environment.DIRECTORY_DOWNLOADS",
+  '"runtime.json"',
+  '"network-capabilities.json"',
+  '"runtime.log"',
+  "connectivity.allNetworks",
+  "lastFailureSnapshot",
+]) {
+  requireContract(mobileDiagnosticsExporter.includes(marker), `Android diagnostics exporter lost ${marker}`);
+}
+for (const secret of ["AETHER_ACCESS_TOKEN", "AETHER_ACCESS_CLIENT_SECRET", "AETHER_UPSTREAM"]) {
+  requireContract(!mobileDiagnosticsExporter.includes(secret), `Android diagnostics exporter references secret-bearing ${secret}`);
+}
+
+const mobileManifest = read("src-tauri/plugins/aether-vpn/android/src/main/AndroidManifest.xml");
+requireContract(mobileManifest.includes("android.permission.ACCESS_NETWORK_STATE"), "Android diagnostics cannot inspect network capabilities");
+requireContract(mobileManifest.includes("AetherDiagnosticsInitializer"), "Android crash diagnostics initializer is not registered");
+requireContract(!mobileManifest.includes("WRITE_EXTERNAL_STORAGE"), "Android diagnostics reintroduced broad legacy storage permission");
+requireContract(!mobileManifest.includes("MANAGE_EXTERNAL_STORAGE"), "Android diagnostics requests broad all-files access");
+
+const advancedPanel = read("src/components/AdvancedPanel.tsx");
+requireContract(advancedPanel.includes('invoke<AndroidDiagnosticsExport>("export_android_diagnostics")'), "Android diagnostics UI no longer invokes the native exporter");
+requireContract(advancedPanel.includes("Export ZIP"), "Android diagnostics export control disappeared");
+requireContract(advancedPanel.includes("Downloads/Aether"), "Android diagnostics UI no longer tells the user where the bundle is saved");
 
 const coreHistory = read("vendor/aether/aether/src/path_history.rs");
 requireContract(coreHistory.includes("detected_network_key"), "custom Core lost underlay detection fallback");
