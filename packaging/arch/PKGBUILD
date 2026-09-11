@@ -6,7 +6,11 @@ pkgdesc='Cross-platform GUI for the Aether censorship-circumvention tunnel'
 arch=('x86_64')
 url='https://github.com/Nishef1/Aether-GUI'
 license=('AGPL-3.0-only')
-options=('!debug')
+# Arch enables package-wide C/C++ LTO by default. BoringSSL is built as a
+# static native dependency of the Rust Aether core, and makepkg's injected
+# -flto objects are not reliably consumable by the final Rust/lld link. The
+# core already uses its own Rust release LTO, so disable makepkg LTO here.
+options=('!debug' '!lto')
 depends=(
   'webkit2gtk-4.1'
   'gtk3'
