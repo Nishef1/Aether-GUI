@@ -142,7 +142,8 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         self.assertIn("lastFailureSnapshot", exporter)
         self.assertIn("getHistoricalProcessExitReasons", exporter)
         self.assertIn("ApplicationExitInfo.REASON_CRASH_NATIVE", exporter)
-        self.assertIn('"historical_process_exit"', exporter)
+        self.assertIn('"historical_process_exits"', exporter)
+        self.assertIn("exits.take(5)", exporter)
         for secret in (
             "AETHER_ACCESS_TOKEN",
             "AETHER_ACCESS_CLIENT_SECRET",
