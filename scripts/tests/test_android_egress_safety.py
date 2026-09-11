@@ -113,6 +113,63 @@ class AndroidEgressSafetyTest(unittest.TestCase):
             mobile_service,
         )
 
+    def test_android_diagnostics_are_bounded_exportable_and_secret_free(self) -> None:
+        exporter = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidDiagnosticsExporter.kt"
+        )
+        runtime = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidVpnRuntime.kt"
+        )
+        initializer = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/AetherDiagnosticsInitializer.kt"
+        )
+        mobile_service = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
+        )
+        bridge = self.read("src-tauri/plugins/aether-vpn/src/lib.rs")
+        mobile_rust = self.read("src-tauri/src/android.rs")
+        ui = self.read("src/components/AdvancedPanel.tsx")
+        manifest = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/AndroidManifest.xml"
+        )
+
+        self.assertIn("MediaStore.Downloads.EXTERNAL_CONTENT_URI", exporter)
+        self.assertIn("Environment.DIRECTORY_DOWNLOADS", exporter)
+        self.assertIn('"runtime.json"', exporter)
+        self.assertIn('"network-capabilities.json"', exporter)
+        self.assertIn('"runtime.log"', exporter)
+        self.assertIn("connectivity.allNetworks", exporter)
+        self.assertIn("lastFailureSnapshot", exporter)
+        for secret in (
+            "AETHER_ACCESS_TOKEN",
+            "AETHER_ACCESS_CLIENT_SECRET",
+            "AETHER_UPSTREAM",
+        ):
+            self.assertNotIn(secret, exporter)
+
+        self.assertIn("MAX_INTERNAL_TAIL_LINES = 160", runtime)
+        self.assertIn("MAX_FAILURE_CHARS = 4 * 1024", runtime)
+        self.assertIn("Thread.setDefaultUncaughtExceptionHandler", runtime)
+        self.assertIn("getSharedPreferences(FAILURE_PREFS", runtime)
+        self.assertIn("recordFailure(\"safety\"", runtime)
+        self.assertIn("AndroidVpnRuntime.initialize", initializer)
+        self.assertIn("fun exportDiagnostics", mobile_service)
+        self.assertIn('recordFailure("session"', mobile_service)
+        self.assertIn('recordFailure("service-start"', mobile_service)
+        self.assertIn('run_mobile_plugin("exportDiagnostics"', bridge)
+        self.assertIn("pub struct DiagnosticsExport", bridge)
+        self.assertIn("fn export_android_diagnostics", mobile_rust)
+        self.assertIn("export_android_diagnostics,", mobile_rust)
+        self.assertIn('invoke<AndroidDiagnosticsExport>("export_android_diagnostics")', ui)
+        self.assertIn("Export ZIP", ui)
+        self.assertIn("Downloads/Aether", ui)
+
+        self.assertIn("android.permission.ACCESS_NETWORK_STATE", manifest)
+        self.assertIn("AetherDiagnosticsInitializer", manifest)
+        self.assertIn('android:exported="false"', manifest)
+        self.assertNotIn("WRITE_EXTERNAL_STORAGE", manifest)
+        self.assertNotIn("MANAGE_EXTERNAL_STORAGE", manifest)
+
     def test_direct_routing_warns_about_original_ip_exposure(self) -> None:
         routing = self.read("src/components/RoutingSettings.tsx")
         self.assertIn("Direct rules intentionally bypass Aether", routing)
