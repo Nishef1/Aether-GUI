@@ -62,7 +62,11 @@ requireContract(autoConnect.includes("if (!attemptIsCurrent(epoch, attemptId)) r
 requireContract(autoConnect.includes("recordPathAcceptanceFailure(attemptId, failureReason)"), "Automatic acceptance evidence can be attributed to the wrong attempt");
 
 const telemetryStore = read("src/state/telemetryStore.ts");
-requireContract(telemetryStore.includes("profileForNativeInvoke(rerollProfile)"), "privacy reroll bypasses the shared native profile bridge");
+requireContract(
+  telemetryStore.includes('await import("@/lib/autoConnect")') &&
+    telemetryStore.includes("connectWithAutomaticPolicy(rerollProfile)"),
+  "privacy reroll bypasses Automatic policy and its shared native profile bridge",
+);
 
 const pathStore = read("src/state/pathStore.ts");
 requireContract(pathStore.includes("aether.path-intelligence.v2"), "Path Intelligence lost network-scoped storage");
