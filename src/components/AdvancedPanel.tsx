@@ -1,8 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Check,
   ChevronDown,
   Copy,
+  Download,
   FileTerminal,
   Network,
   Settings2,
@@ -25,6 +27,11 @@ import { SystemTunnelToggle } from "@/components/SystemTunnelToggle";
 import { CoreAdvancedSettings } from "@/components/CoreAdvancedSettings";
 import { isAndroid } from "@/lib/platform";
 import { useConnectionStore, type LogLineLimit } from "@/state/connectionStore";
+
+interface AndroidDiagnosticsExport {
+  fileName: string;
+  uri: string;
+}
 
 function SectionCard({
   icon,
@@ -89,6 +96,12 @@ function AdvancedPanelContent() {
   const clearLogs = useConnectionStore((state) => state.clearLogs);
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [diagnosticsState, setDiagnosticsState] = useState<
+    | { status: "idle" }
+    | { status: "exporting" }
+    | { status: "done"; fileName: string }
+    | { status: "error"; message: string }
+  >({ status: "idle" });
   const viewportRef = useRef<HTMLDivElement>(null);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locked = status.state !== "Idle" && status.state !== "Error";
@@ -118,6 +131,20 @@ function AdvancedPanelContent() {
       }, 1_200);
     } catch {
       setCopied(false);
+    }
+  };
+
+  const exportDiagnostics = async () => {
+    if (!isAndroid || diagnosticsState.status === "exporting") return;
+    setDiagnosticsState({ status: "exporting" });
+    try {
+      const result = await invoke<AndroidDiagnosticsExport>("export_android_diagnostics");
+      setDiagnosticsState({ status: "done", fileName: result.fileName });
+    } catch (error) {
+      setDiagnosticsState({
+        status: "error",
+        message: String(error || "Diagnostics export failed"),
+      });
     }
   };
 
@@ -234,8 +261,40 @@ function AdvancedPanelContent() {
       <SectionCard
         icon={<FileTerminal size={17} />}
         title="Diagnostics"
-        description="Live logs are opt-in and memory-only, so normal Android sessions do not pay the polling cost."
+        description="Live logs are opt-in. Android can also export a bounded troubleshooting bundle without adb."
       >
+        {isAndroid && (
+          <div className="grid gap-2 rounded-2xl bg-black/15 p-3 ring-1 ring-white/8">
+            <div className="flex min-h-12 items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium text-foreground">Diagnostics bundle</p>
+                <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                  Saves runtime status, network capabilities, the latest failure and a bounded log tail to Downloads/Aether.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void exportDiagnostics()}
+                disabled={diagnosticsState.status === "exporting"}
+                className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-foreground ring-1 ring-white/12 transition hover:bg-white/5 disabled:opacity-50"
+              >
+                <Download size={13} />
+                {diagnosticsState.status === "exporting" ? "Exporting…" : "Export ZIP"}
+              </button>
+            </div>
+            {diagnosticsState.status === "done" && (
+              <p className="break-all text-[11px] text-status-connected">
+                Saved to Downloads/Aether/{diagnosticsState.fileName}
+              </p>
+            )}
+            {diagnosticsState.status === "error" && (
+              <p className="break-words text-[11px] text-destructive">
+                Export failed: {diagnosticsState.message}
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="flex min-h-12 items-center justify-between gap-4">
           <div>
             <p className="text-xs font-medium text-foreground">Live logs</p>
