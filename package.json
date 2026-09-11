@@ -30,7 +30,7 @@
     "android:build:custom": "npm run android:build",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b --pretty false",
     "preview": "vite preview",
     "tauri": "tauri"
   },
