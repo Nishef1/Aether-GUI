@@ -127,30 +127,32 @@ internal object AndroidDiagnosticsExporter {
                     }
                 } ?: JSONObject.NULL,
             )
-            put("historical_process_exit", historicalProcessExit(activity))
+            put("historical_process_exits", historicalProcessExits(activity))
         }
     }
 
-    private fun historicalProcessExit(activity: Activity): Any {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return JSONObject.NULL
+    private fun historicalProcessExits(activity: Activity): JSONArray {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return JSONArray()
         val activityManager =
             activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val exit = runCatching {
-            activityManager
-                .getHistoricalProcessExitReasons(activity.packageName, 0, 5)
-                .firstOrNull()
-        }.getOrNull() ?: return JSONObject.NULL
+        val exits = runCatching {
+            activityManager.getHistoricalProcessExitReasons(activity.packageName, 0, 5)
+        }.getOrDefault(emptyList())
 
-        return JSONObject().apply {
-            put("timestamp", exit.timestamp)
-            put("reason", exit.reason)
-            put("reason_label", exitReasonLabel(exit.reason))
-            put("status", exit.status)
-            put("importance", exit.importance)
-            put("pss_kb", exit.pss)
-            put("rss_kb", exit.rss)
-            put("description", exit.description ?: JSONObject.NULL)
-            put("process_name", exit.processName ?: JSONObject.NULL)
+        return JSONArray().apply {
+            exits.take(5).forEach { exit ->
+                put(JSONObject().apply {
+                    put("timestamp", exit.timestamp)
+                    put("reason", exit.reason)
+                    put("reason_label", exitReasonLabel(exit.reason))
+                    put("status", exit.status)
+                    put("importance", exit.importance)
+                    put("pss_kb", exit.pss)
+                    put("rss_kb", exit.rss)
+                    put("description", exit.description ?: JSONObject.NULL)
+                    put("process_name", exit.processName ?: JSONObject.NULL)
+                })
+            }
         }
     }
 
