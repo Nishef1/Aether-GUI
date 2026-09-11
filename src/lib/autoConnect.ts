@@ -222,8 +222,6 @@ async function waitForOutcome(
     if (stable(status)) return "connected";
     if (status.state === "Error") return "failed";
 
-    // Interactive Zero Trust input is user-paced and must not burn through the
-    // transport scan budget while the runtime is waiting for a one-time code.
     if (status.state === "AwaitingAccessCode") {
       deadline += RECONCILE_MS;
     } else if (Date.now() >= deadline) {
@@ -284,8 +282,6 @@ async function verifyConnectedCandidate(
       socksAddr,
     });
   } catch (error) {
-    // The acceptance service is an additional guard. A probe infrastructure
-    // failure must not turn a working tunnel into a false negative.
     return epoch === automationEpoch
       ? { accepted: true, cancelled: false, reason: "unknown", message: String(error) }
       : { accepted: false, cancelled: true, reason: "unknown", message: null };
@@ -312,18 +308,14 @@ async function verifyConnectedCandidate(
     };
   }
 
-  // "unverified" means one of the neutral public probe services was
-  // unavailable. It is intentionally accepted: transport readiness and TUN
-  // validation remain authoritative and we avoid a dependency-induced outage.
   return { accepted: true, cancelled: false, reason: "unknown", message: report.reason };
 }
 
 async function stopCandidateForFallback(epoch: number): Promise<StopOutcome> {
-  // Desktop keeps an already-active full-device TUN installed as a kill switch
-  // while the loopback transport changes. Android's native VPN service owns
-  // its TUN lifecycle and still uses its platform disconnect command here.
-  const command = isAndroid ? "disconnect" : "disconnect_for_recovery";
-  await invoke(command).catch(() => undefined);
+  // Both desktop and Android expose the same recovery-only command. Each
+  // native implementation stops the transport while preserving an already
+  // active full-device route as a fail-closed kill switch.
+  await invoke("disconnect_for_recovery").catch(() => undefined);
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (epoch !== automationEpoch) return "cancelled";
@@ -418,9 +410,6 @@ export async function connectWithAutomaticPolicy(
     return;
   }
 
-  // Reserve the orchestration epoch before any asynchronous bootstrap work.
-  // This closes the double-click/cancel window while network fingerprinting is
-  // still resolving and prevents a stale caller from launching a candidate.
   const epoch = ++automationEpoch;
   useConnectionStore.setState({
     status: { state: "Launching" },
@@ -428,10 +417,6 @@ export async function connectWithAutomaticPolicy(
     sidecarError: null,
   });
 
-  // Historical ordering is only safe after the current underlay fingerprint is
-  // resolved. An unknown context intentionally produces an empty history and
-  // falls back to the baseline transport order instead of replaying another
-  // network's winner.
   await refreshPathNetworkContext();
   if (epoch !== automationEpoch) return;
 
@@ -486,9 +471,6 @@ export async function connectWithAutomaticPolicy(
 
     reprioritizeRemainingCandidates(candidates, index + 1, failureReason, candidate.transport);
 
-    // Always stop the rejected transport, including the final candidate. On
-    // desktop this leaves an active full-device route installed so recovery
-    // and exhausted fallback both fail closed rather than restoring direct IP.
     const stopOutcome = await stopCandidateForFallback(epoch);
     if (stopOutcome === "cancelled") return;
     if (stopOutcome === "timeout") {
