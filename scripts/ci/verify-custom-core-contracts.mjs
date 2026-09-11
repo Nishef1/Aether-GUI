@@ -56,6 +56,10 @@ requireContract(autoConnect.includes("probe_connection_acceptance"), "desktop Au
 requireContract(autoConnect.includes("reprioritizeRemainingCandidates"), "Automatic policy lost failure-driven fallback ordering");
 requireContract(autoConnect.includes('invoke("disconnect_for_recovery")'), "Automatic fallback can release the full-device kill switch");
 requireContract(!autoConnect.includes('isAndroid ? "disconnect"'), "Android Automatic fallback regressed to a full disconnect");
+requireContract(autoConnect.includes("function attemptIsCurrent(epoch: number, attemptId: number)"), "Automatic policy lost its shared stale-attempt guard");
+requireContract(autoConnect.includes("epoch === automationEpoch && useConnectionStore.getState().attemptId === attemptId"), "Automatic policy no longer validates epoch and attempt identity together");
+requireContract(autoConnect.includes("if (!attemptIsCurrent(epoch, attemptId)) return null"), "native status reconciliation can overwrite a newer attempt");
+requireContract(autoConnect.includes("recordPathAcceptanceFailure(attemptId, failureReason)"), "Automatic acceptance evidence can be attributed to the wrong attempt");
 
 const telemetryStore = read("src/state/telemetryStore.ts");
 requireContract(telemetryStore.includes("profileForNativeInvoke(rerollProfile)"), "privacy reroll bypasses the shared native profile bridge");
@@ -63,6 +67,10 @@ requireContract(telemetryStore.includes("profileForNativeInvoke(rerollProfile)")
 const pathStore = read("src/state/pathStore.ts");
 requireContract(pathStore.includes("aether.path-intelligence.v2"), "Path Intelligence lost network-scoped storage");
 requireContract(pathStore.includes('invoke<string | null>("get_network_context")'), "Path Intelligence no longer resolves the active underlay");
+requireContract(pathStore.includes("NETWORK_SCOPE_POLL_MS"), "Path Intelligence no longer verifies a long-lived session's underlay scope");
+requireContract(pathStore.includes('networkInformation?.addEventListener("change"'), "Path Intelligence lost browser network-change hints");
+requireContract(pathStore.includes("telemetryFreshForNetwork"), "stale pre-transition telemetry can become evidence for a new underlay");
+requireContract(pathStore.includes("networkChangedAtMs = Date.now()"), "Path Intelligence does not invalidate session evidence on underlay change");
 requireContract(pathStore.includes("uploadLimited: path.uploadLimited === true"), "persisted path history no longer migrates upload evidence safely");
 requireContract(pathStore.includes("uploadLimited: telemetry.upload_limited ?? false"), "Path Intelligence no longer records native upload evidence");
 
@@ -90,6 +98,16 @@ requireContract(commands.includes("probe_connection_acceptance"), "desktop accep
 requireContract(commands.includes("disconnect_for_recovery"), "desktop recovery-only disconnect command is missing");
 requireContract(commands.includes("runtime.disconnect_for_recovery"), "desktop recovery command no longer preserves the system tunnel");
 
+const desktopEngine = read("src-tauri/src/engine/mod.rs");
+requireContract(desktopEngine.includes("let had_active_tunnel = self.system_tunnel.is_active()"), "desktop launch failures can no longer distinguish protected recovery from initial startup");
+requireContract(desktopEngine.includes("self.system_tunnel.suspend_attempt_for_recovery(&app)"), "desktop immediate launch failure can release an active kill switch");
+requireContract(desktopEngine.includes("hold_for_transport_loss"), "desktop transport loss no longer keeps the full-device route fail-closed");
+
+const desktopTunnel = read("src-tauri/src/system_tunnel/sing_box/config.rs");
+requireContract(desktopTunnel.includes("strict_route: true"), "desktop sing-box TUN lost strict routing");
+requireContract(desktopTunnel.includes('final_: "proxy"'), "desktop full-device route can bypass the proxy by default");
+requireContract(desktopTunnel.includes('action: "hijack-dns"'), "desktop TUN lost DNS hijacking");
+
 const mobileBridge = read("src-tauri/plugins/aether-vpn/src/lib.rs");
 for (const field of ["capacity_probe_complete", "download_kbps", "upload_kbps", "upload_limited"]) {
   requireContract(mobileBridge.includes(field), `Android telemetry bridge lost ${field}`);
@@ -111,9 +129,15 @@ requireContract(mobileNative.includes("fun stopForRecovery"), "Android Kotlin pl
 requireContract(mobileNative.includes("ACTION_RECOVER"), "Android VPN service lost its recovery action");
 requireContract(mobileNative.includes("detachCoreResources()"), "Android recovery no longer separates transport cleanup from VPN cleanup");
 requireContract(mobileNative.includes("Reusing protected Android VPN interface during transport recovery"), "Android recovery no longer reuses the installed VPN interface");
+requireContract(mobileNative.includes('.addRoute("0.0.0.0", 0)'), "Android full-device VPN no longer captures IPv4 default traffic");
+requireContract(mobileNative.includes('.addRoute("::", 0)'), "Android full-device VPN no longer captures IPv6 default traffic");
+requireContract(!mobileNative.includes("allowBypass()"), "Android VPN allows applications to bypass full-device protection");
 
 const coreHistory = read("vendor/aether/aether/src/path_history.rs");
 requireContract(coreHistory.includes("detected_network_key"), "custom Core lost underlay detection fallback");
+requireContract(coreHistory.includes("fn choose_network_key"), "custom Core no longer separates live detection from launch hints");
+requireContract(coreHistory.includes("detected\n        .or(configured)"), "stale launch-time network hints can override live route detection");
+requireContract(coreHistory.includes("live_detection_wins_over_stale_launch_hint"), "custom Core lost regression coverage for mid-process network changes");
 requireContract(coreHistory.includes("unknown-process:"), "unknown Core underlays can share persistent history again");
 const coreLastConn = read("vendor/aether/aether/src/lastconn.rs");
 requireContract(coreLastConn.includes("pub network_key: String"), "quick reconnect cache is no longer network-scoped");
@@ -128,6 +152,12 @@ requireContract(coreFragment.includes("PATTERNIHA_TCP_FIRST_WRITE: usize = 114")
 requireContract(coreFragment.includes("PATTERNIHA_TCP_MAX_SPLITS: usize = 11"), "compatibility mask lost the bounded eleven-write stage");
 requireContract(coreFragment.includes("append_tls_record(&mut out, buf, &[])"), "compatibility mask no longer preserves zero-length tlshello semantics");
 requireContract(coreFragment.includes("PatternPendingWrite"), "compatibility mask lost backpressure-safe transformed write state");
+
+const workflow = read(".github/workflows/build.yml");
+requireContract(workflow.includes("npm run verify:contracts"), "GitHub Actions does not enforce integration contracts");
+const arch = read("packaging/arch/PKGBUILD");
+requireContract(arch.includes("npm run verify:contracts"), "Arch packaging bypasses integration contracts");
+requireContract(arch.includes("'!lto'"), "Arch makepkg can reintroduce incompatible native BoringSSL LTO");
 
 requireContract(pkg.scripts?.["prepare:aether"] === "node scripts/prepare-custom-aether.mjs", "default desktop core preparation is not the pinned custom core");
 requireContract(pkg.scripts?.["prepare:android-native"] === "node scripts/prepare-android-native.mjs --custom", "default Android core preparation is not the pinned custom core");
