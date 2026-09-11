@@ -80,6 +80,39 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         self.assertIn("reportSafetyFailure", runtime)
         self.assertIn("traffic remains blocked to prevent an IP leak", runtime)
 
+    def test_automatic_recovery_preserves_full_device_kill_switch(self) -> None:
+        automatic = self.read("src/lib/autoConnect.ts")
+        desktop_engine = self.read("src-tauri/src/engine/mod.rs")
+        mobile_rust = self.read("src-tauri/src/android.rs")
+        mobile_bridge = self.read("src-tauri/plugins/aether-vpn/src/lib.rs")
+        mobile_service = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
+        )
+
+        self.assertIn('invoke("disconnect_for_recovery")', automatic)
+        self.assertNotIn('isAndroid ? "disconnect"', automatic)
+
+        self.assertIn("had_active_tunnel", desktop_engine)
+        self.assertIn("suspend_attempt_for_recovery", desktop_engine)
+        self.assertIn("disconnect_for_recovery", desktop_engine)
+
+        self.assertIn("async fn disconnect_for_recovery", mobile_rust)
+        self.assertIn("stop_for_recovery()", mobile_rust)
+        self.assertIn('run_mobile_plugin("stopForRecovery"', mobile_bridge)
+        self.assertIn("fun stopForRecovery", mobile_service)
+        self.assertIn("ACTION_RECOVER", mobile_service)
+        self.assertIn("detachCoreResources()", mobile_service)
+        self.assertIn("recoveryHold", mobile_service)
+        self.assertIn("attachedTunnelResources()", mobile_service)
+        self.assertIn(
+            "Reusing protected Android VPN interface during transport recovery",
+            mobile_service,
+        )
+        self.assertIn(
+            "Traffic is blocked until the next secure route is ready",
+            mobile_service,
+        )
+
     def test_direct_routing_warns_about_original_ip_exposure(self) -> None:
         routing = self.read("src/components/RoutingSettings.tsx")
         self.assertIn("Direct rules intentionally bypass Aether", routing)
