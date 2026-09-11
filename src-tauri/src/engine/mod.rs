@@ -226,10 +226,15 @@ impl EngineRuntime {
     ) -> Result<(), RuntimeError> {
         let adapter = self.adapter(engine_id)?;
         let generation = self.connection_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let had_active_tunnel = self.system_tunnel.is_active();
         let tunnel_epoch = self.system_tunnel.begin_attempt(&app);
 
         if let Err(error) = adapter.connect(app.clone(), profile) {
-            self.system_tunnel.cancel_attempt(&app);
+            if had_active_tunnel {
+                self.system_tunnel.suspend_attempt_for_recovery(&app);
+            } else {
+                self.system_tunnel.cancel_attempt(&app);
+            }
             return Err(error);
         }
         *self
