@@ -118,7 +118,8 @@ internal object AndroidVpnRuntime {
         val application = context.applicationContext
         appContext.compareAndSet(null, application)
         if (lastFailure.get() == null) {
-            loadPersistedFailure(application)?.let(lastFailure::compareAndSetNull)
+            val persisted = loadPersistedFailure(application)
+            if (persisted != null) lastFailure.compareAndSet(null, persisted)
         }
         if (crashHandlerInstalled.compareAndSet(false, true)) {
             val previous = Thread.getDefaultUncaughtExceptionHandler()
@@ -137,10 +138,6 @@ internal object AndroidVpnRuntime {
                 }
             }
         }
-    }
-
-    private fun AtomicReference<FinalFailureSummary?>.compareAndSetNull(value: FinalFailureSummary) {
-        compareAndSet(null, value)
     }
 
     private fun loadPersistedFailure(context: Context): FinalFailureSummary? {
@@ -426,7 +423,7 @@ internal object AndroidVpnRuntime {
                 countryCode = null,
                 latencyMs = null,
                 sampledAtMs = System.currentTimeMillis(),
-                egressProbeComplete = true,
+                egressProbe_complete = true,
             )
         }
     }
