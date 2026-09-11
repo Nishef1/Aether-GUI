@@ -1,6 +1,8 @@
 package com.cluvexstudio.aethergui.vpn
 
 import android.app.Activity
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.ContentValues
 import android.content.Context
 import android.net.ConnectivityManager
@@ -125,7 +127,49 @@ internal object AndroidDiagnosticsExporter {
                     }
                 } ?: JSONObject.NULL,
             )
+            put("historical_process_exit", historicalProcessExit(activity))
         }
+    }
+
+    private fun historicalProcessExit(activity: Activity): Any {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return JSONObject.NULL
+        val activityManager =
+            activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val exit = runCatching {
+            activityManager
+                .getHistoricalProcessExitReasons(activity.packageName, 0, 5)
+                .firstOrNull()
+        }.getOrNull() ?: return JSONObject.NULL
+
+        return JSONObject().apply {
+            put("timestamp", exit.timestamp)
+            put("reason", exit.reason)
+            put("reason_label", exitReasonLabel(exit.reason))
+            put("status", exit.status)
+            put("importance", exit.importance)
+            put("pss_kb", exit.pss)
+            put("rss_kb", exit.rss)
+            put("description", exit.description ?: JSONObject.NULL)
+            put("process_name", exit.processName ?: JSONObject.NULL)
+        }
+    }
+
+    private fun exitReasonLabel(reason: Int): String = when (reason) {
+        ApplicationExitInfo.REASON_UNKNOWN -> "unknown"
+        ApplicationExitInfo.REASON_EXIT_SELF -> "exit-self"
+        ApplicationExitInfo.REASON_SIGNALED -> "signaled"
+        ApplicationExitInfo.REASON_LOW_MEMORY -> "low-memory"
+        ApplicationExitInfo.REASON_CRASH -> "java-crash"
+        ApplicationExitInfo.REASON_CRASH_NATIVE -> "native-crash"
+        ApplicationExitInfo.REASON_ANR -> "anr"
+        ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "initialization-failure"
+        ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "permission-change"
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "excessive-resource-usage"
+        ApplicationExitInfo.REASON_USER_REQUESTED -> "user-requested"
+        ApplicationExitInfo.REASON_USER_STOPPED -> "user-stopped"
+        ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "dependency-died"
+        ApplicationExitInfo.REASON_OTHER -> "other"
+        else -> "reason-$reason"
     }
 
     private fun networkJson(activity: Activity): JSONObject {
@@ -204,7 +248,8 @@ internal object AndroidDiagnosticsExporter {
 
         This bundle was created locally on the device after an explicit user action.
         It contains a bounded runtime/core/service log tail, current VPN status,
-        telemetry, the most recent recorded runtime failure, and Android network
+        telemetry, the most recent recorded runtime failure, recent Android process
+        exit metadata (including native-crash reason on Android 11+), and network
         capability metadata for the visible VPN and underlay networks.
 
         Aether does not intentionally include Zero Trust credentials, access codes,
