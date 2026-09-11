@@ -423,7 +423,7 @@ internal object AndroidVpnRuntime {
                 countryCode = null,
                 latencyMs = null,
                 sampledAtMs = System.currentTimeMillis(),
-                egressProbe_complete = true,
+                egressProbeComplete = true,
             )
         }
     }
