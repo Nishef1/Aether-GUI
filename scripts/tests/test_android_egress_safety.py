@@ -140,6 +140,9 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         self.assertIn('"runtime.log"', exporter)
         self.assertIn("connectivity.allNetworks", exporter)
         self.assertIn("lastFailureSnapshot", exporter)
+        self.assertIn("getHistoricalProcessExitReasons", exporter)
+        self.assertIn("ApplicationExitInfo.REASON_CRASH_NATIVE", exporter)
+        self.assertIn('"historical_process_exit"', exporter)
         for secret in (
             "AETHER_ACCESS_TOKEN",
             "AETHER_ACCESS_CLIENT_SECRET",
