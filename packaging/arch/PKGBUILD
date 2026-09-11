@@ -40,6 +40,11 @@ pkgver() {
 
 prepare() {
   cd "$srcdir/Aether-GUI"
+  # makepkg's VCS source clone does not initialize git submodules. Resolve the
+  # gitlink recorded by this exact Aether-GUI commit before verifying/building
+  # the pinned custom core so the package cannot silently use a different core.
+  git submodule sync --recursive
+  git submodule update --init --recursive
   node scripts/ci/sync-product-version.mjs
   npm ci --no-audit --no-fund
   npm run verify:runtimes
