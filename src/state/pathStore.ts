@@ -24,6 +24,7 @@ const LEGACY_STORAGE_KEY = "aether.path-intelligence.v1";
 const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoint=(.+)$/;
 const TRANSPORTS = new Set<PathTransport>(["h2", "h3", "wg", "gool", "unknown"]);
 const HEALTH_STATES = new Set<PathHealth>(["healthy", "suspect", "failed"]);
+const NETWORK_SCOPE_POLL_MS = 15_000;
 
 let activeStorageKey: string | null = null;
 let activeNetworkKey: string | null = null;
@@ -36,6 +37,11 @@ interface PathStore {
 
 interface AttemptPathSelection extends RuntimePathSelection {
   attemptId: number;
+}
+
+interface NetworkInformationLike extends EventTarget {
+  addEventListener(type: "change", listener: EventListenerOrEventListenerObject): void;
+  removeEventListener(type: "change", listener: EventListenerOrEventListenerObject): void;
 }
 
 export type PathAcceptanceFailure = "upload-limited" | "identity-leak" | "dataplane-failed";
@@ -232,10 +238,33 @@ export function initPathIntelligence(): () => void {
   let lastProbeFailureCount = 0;
   let lastProbeFailureSampleAt = 0;
   let errorStateRecorded = false;
+  let networkChangedAtMs = 0;
   let disposed = false;
   let unlistenPath: (() => void) | null = null;
+  let networkPoll: ReturnType<typeof setInterval> | null = null;
 
-  void refreshPathNetworkContext();
+  const resetSessionEvidence = () => {
+    selectedPath = null;
+    lastProbeFailureCount = 0;
+    lastProbeFailureSampleAt = 0;
+    lastSuccessSession = null;
+    errorStateRecorded = false;
+  };
+
+  const refreshNetworkScope = async () => {
+    const previousKey = activeNetworkKey;
+    await refreshPathNetworkContext();
+    if (disposed) return;
+    if (previousKey != null && previousKey !== activeNetworkKey) {
+      resetSessionEvidence();
+      // Ignore telemetry sampled before the network transition. Otherwise a
+      // healthy probe from Wi-Fi could become evidence for cellular (or vice
+      // versa) before the next native probe/traffic sample arrives.
+      networkChangedAtMs = Date.now();
+    }
+  };
+
+  void refreshNetworkScope();
 
   const selectionForAttempt = (attemptId: number): RuntimePathSelection | null => {
     if (selectedPath?.attemptId === attemptId) {
@@ -251,9 +280,13 @@ export function initPathIntelligence(): () => void {
     return connection.runtimePathAttemptId === attemptId;
   };
 
+  const telemetryFreshForNetwork = (snapshot: RuntimeTelemetry): boolean =>
+    networkChangedAtMs === 0 || (snapshot.sampled_at_ms ?? 0) >= networkChangedAtMs;
+
   const maybeRecordSuccess = () => {
     const connection = useConnectionStore.getState();
     const telemetry = useTelemetryStore.getState().snapshot;
+    if (!telemetryFreshForNetwork(telemetry)) return;
     if (!telemetryProvesHealthy(telemetry)) return;
     if (!androidPathMetadataReady(connection.attemptId)) return;
 
@@ -288,6 +321,7 @@ export function initPathIntelligence(): () => void {
     const telemetry = useTelemetryStore.getState().snapshot;
     const sessionKey = stableSessionKey(connection.status, connection.attemptId);
     if (
+      !telemetryFreshForNetwork(telemetry) ||
       sessionKey == null ||
       sessionKey !== lastSuccessSession ||
       !telemetryProvesHealthy(telemetry) ||
@@ -314,6 +348,7 @@ export function initPathIntelligence(): () => void {
   const maybeRecordProbeFailure = () => {
     const connection = useConnectionStore.getState();
     const telemetry = useTelemetryStore.getState().snapshot;
+    if (!telemetryFreshForNetwork(telemetry)) return;
     const probeFailures = telemetry.probe_failures ?? 0;
     const sampleAt = telemetry.sampled_at_ms ?? 0;
     const nativeCounterAdvanced = probeFailures > lastProbeFailureCount;
@@ -374,12 +409,8 @@ export function initPathIntelligence(): () => void {
 
   const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
     if (state.attemptId !== previous.attemptId) {
-      selectedPath = null;
-      lastProbeFailureCount = 0;
-      lastProbeFailureSampleAt = 0;
-      lastSuccessSession = null;
-      errorStateRecorded = false;
-      void refreshPathNetworkContext();
+      resetSessionEvidence();
+      void refreshNetworkScope();
     }
 
     if (
@@ -418,6 +449,29 @@ export function initPathIntelligence(): () => void {
     }
   });
 
+  const handleNetworkHint = () => {
+    void refreshNetworkScope();
+  };
+  const handleVisibility = () => {
+    if (document.visibilityState === "visible") void refreshNetworkScope();
+  };
+  const networkInformation = (
+    navigator as Navigator & { connection?: NetworkInformationLike }
+  ).connection;
+  networkInformation?.addEventListener("change", handleNetworkHint);
+  window.addEventListener("online", handleNetworkHint);
+  document.addEventListener("visibilitychange", handleVisibility);
+
+  networkPoll = setInterval(() => {
+    const connection = useConnectionStore.getState();
+    if (
+      document.visibilityState === "visible" &&
+      stableSessionKey(connection.status, connection.attemptId) != null
+    ) {
+      void refreshNetworkScope();
+    }
+  }, NETWORK_SCOPE_POLL_MS);
+
   maybeRecordSuccess();
   maybeRefreshQuality();
   maybeRecordProbeFailure();
@@ -429,5 +483,9 @@ export function initPathIntelligence(): () => void {
     unlistenPath?.();
     unsubscribeConnection();
     unsubscribeTelemetry();
+    if (networkPoll !== null) clearInterval(networkPoll);
+    networkInformation?.removeEventListener("change", handleNetworkHint);
+    window.removeEventListener("online", handleNetworkHint);
+    document.removeEventListener("visibilitychange", handleVisibility);
   };
 }
