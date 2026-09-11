@@ -34,6 +34,12 @@ data class FinalNativeLogEntry(
     val line: String,
 )
 
+data class FinalFailureSummary(
+    val timestamp: Long,
+    val source: String,
+    val message: String,
+)
+
 data class FinalRuntimeTelemetry(
     val receivedBytes: Long = 0L,
     val sentBytes: Long = 0L,
@@ -72,17 +78,20 @@ data class FinalRuntimeTelemetry(
  *
  * Diagnostics are opt-in and memory-only. A separate tiny control queue stays
  * available while diagnostics are off so the WebView can receive interaction
- * and path-selection metadata without enabling verbose core logging.
+ * and path-selection metadata without enabling verbose core logging. A bounded
+ * internal tail is always retained in memory so a user can export a useful
+ * troubleshooting bundle without running adb or enabling verbose logging first.
  */
 internal object AndroidVpnRuntime {
     private const val MAX_VISIBLE_LOG_LINES = 400
     private const val MAX_CONTROL_LOG_LINES = 24
-    private const val MAX_INTERNAL_TAIL_LINES = 32
+    private const val MAX_INTERNAL_TAIL_LINES = 160
     private const val MAX_PARTIAL_CHARS = 16 * 1024
 
     private val status = AtomicReference(idleSnapshot())
     private val activeTunBridge = AtomicReference<HevTun2Socks?>(null)
     private val telemetry = AtomicReference(FinalRuntimeTelemetry())
+    private val lastFailure = AtomicReference<FinalFailureSummary?>(null)
     private val loggingEnabled = AtomicBoolean(false)
     private val capacityProbeClaimed = AtomicBoolean(false)
     private val logSequence = AtomicLong(0L)
@@ -112,13 +121,33 @@ internal object AndroidVpnRuntime {
 
     fun idleSnapshot() = FinalServiceSnapshot("Idle")
 
+    fun recordFailure(source: String, message: String) {
+        val safeSource = source.trim().take(64).ifEmpty { "runtime" }
+        val safeMessage = message.trim().take(4_096).ifEmpty { "Unknown runtime failure" }
+        lastFailure.set(
+            FinalFailureSummary(
+                timestamp = System.currentTimeMillis(),
+                source = safeSource,
+                message = safeMessage,
+            ),
+        )
+        appendInternal("[failure:$safeSource] $safeMessage")
+    }
+
+    fun lastFailureSnapshot(): FinalFailureSummary? = lastFailure.get()
+
+    fun diagnosticLogLines(limit: Int = MAX_INTERNAL_TAIL_LINES): List<String> =
+        synchronized(internalTail) {
+            if (limit <= 0) emptyList() else internalTail.toList().takeLast(limit)
+        }
+
     /**
      * Safety faults never silently downgrade to a direct/proxy-only path.
      * The VPN descriptor remains installed until service cleanup/reconnect, so
      * other apps are blackholed rather than leaked if the native TUN dies.
      */
     fun reportSafetyFailure(message: String) {
-        appendInternal("[safety] $message")
+        recordFailure("safety", message)
         val current = status.get()
         updateSnapshot(
             FinalServiceSnapshot(
@@ -217,9 +246,7 @@ internal object AndroidVpnRuntime {
         }
     }
 
-    fun recentLogTail(limit: Int): String = synchronized(internalTail) {
-        if (limit <= 0) "" else internalTail.toList().takeLast(limit).joinToString(" | ")
-    }
+    fun recentLogTail(limit: Int): String = diagnosticLogLines(limit).joinToString(" | ")
 
     fun attachProcessInput(writer: BufferedWriter) {
         processInput.set(writer)
