@@ -213,6 +213,12 @@ impl<R: Runtime> AetherVpn<R> {
         self.0.run_mobile_plugin("stop", ()).map_err(Into::into)
     }
 
+    pub fn stop_for_recovery(&self) -> Result<VpnStatus> {
+        self.0
+            .run_mobile_plugin("stopForRecovery", ())
+            .map_err(Into::into)
+    }
+
     pub fn status(&self) -> Result<VpnStatus> {
         self.0.run_mobile_plugin("status", ()).map_err(Into::into)
     }
