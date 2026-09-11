@@ -28,10 +28,7 @@ pub fn disconnect(app: AppHandle, state: State<AppState>) -> Result<(), RuntimeE
 }
 
 #[tauri::command]
-pub fn disconnect_for_recovery(
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<(), RuntimeError> {
+pub fn disconnect_for_recovery(app: AppHandle, state: State<AppState>) -> Result<(), RuntimeError> {
     state.runtime.disconnect_for_recovery(&app)
 }
 

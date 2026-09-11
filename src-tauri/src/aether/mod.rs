@@ -60,7 +60,11 @@ fn resolve_binary(app: &AppHandle) -> Result<PathBuf, AetherError> {
         .path()
         .resource_dir()
         .map_err(|error| AetherError::Internal(error.to_string()))?;
-    let name = if cfg!(windows) { "aether.exe" } else { "aether" };
+    let name = if cfg!(windows) {
+        "aether.exe"
+    } else {
+        "aether"
+    };
     let path = dir.join("binaries").join(name);
     if !path.exists() {
         return Err(AetherError::BinaryMissing(path.display().to_string()));

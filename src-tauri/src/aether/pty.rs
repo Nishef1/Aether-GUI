@@ -281,10 +281,7 @@ fn read_loop(
         let partial = strip_terminal_sequences(&line_buf);
         let access_code_prompt = partial.contains("Enter the code:");
         if access_code_prompt && !code_prompt_visible {
-            forward_log(
-                &log_tx,
-                "[gui] Zero Trust access code required".into(),
-            );
+            forward_log(&log_tx, "[gui] Zero Trust access code required".into());
         }
         code_prompt_visible = access_code_prompt;
         if looks_like_choice_prompt(&partial)
@@ -473,11 +470,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            selected_path_marker(
-                "[+] using cloudflare edge 162.159.192.1:443",
-                &profile
-            )
-            .as_deref(),
+            selected_path_marker("[+] using cloudflare edge 162.159.192.1:443", &profile)
+                .as_deref(),
             Some("[gui] path selected transport=h2 endpoint=162.159.192.1:443")
         );
     }
@@ -489,11 +483,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            selected_path_marker(
-                "[+] using cloudflare edge 162.159.192.1:2408",
-                &profile
-            )
-            .as_deref(),
+            selected_path_marker("[+] using cloudflare edge 162.159.192.1:2408", &profile)
+                .as_deref(),
             Some("[gui] path selected transport=wg endpoint=162.159.192.1:2408")
         );
     }

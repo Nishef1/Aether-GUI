@@ -161,10 +161,7 @@ fn add_traffic_sample(app: &AppHandle, raw: Option<TrafficStats>, tunnel_require
                 .snapshot
                 .received_bytes
                 .saturating_add(delta.received_bytes);
-            state.snapshot.sent_bytes = state
-                .snapshot
-                .sent_bytes
-                .saturating_add(delta.sent_bytes);
+            state.snapshot.sent_bytes = state.snapshot.sent_bytes.saturating_add(delta.sent_bytes);
         }
 
         state.snapshot.tunnel_validation = validation_for(&state);
@@ -368,7 +365,11 @@ fn probe_egress(socks_addr: &str) -> Result<EgressProbe, String> {
 }
 
 fn null_device() -> &'static str {
-    if cfg!(windows) { "NUL" } else { "/dev/null" }
+    if cfg!(windows) {
+        "NUL"
+    } else {
+        "/dev/null"
+    }
 }
 
 fn base_capacity_command(socks_addr: &str) -> Command {
@@ -410,9 +411,15 @@ fn probe_download_capacity(socks_addr: &str) -> Result<u64, String> {
         .output()
         .map_err(|error| format!("failed to launch bounded download probe: {error}"))?;
     if !output.status.success() {
-        return Err(format!("bounded download probe exited with {}", output.status));
+        return Err(format!(
+            "bounded download probe exited with {}",
+            output.status
+        ));
     }
-    parse_speed_kbps(&String::from_utf8_lossy(&output.stdout), CAPACITY_DOWN_BYTES)
+    parse_speed_kbps(
+        &String::from_utf8_lossy(&output.stdout),
+        CAPACITY_DOWN_BYTES,
+    )
 }
 
 fn probe_upload_capacity(socks_addr: &str) -> Result<u64, String> {
@@ -445,7 +452,10 @@ fn probe_upload_capacity(socks_addr: &str) -> Result<u64, String> {
         .wait_with_output()
         .map_err(|error| format!("bounded upload probe failed to finish: {error}"))?;
     if !output.status.success() {
-        return Err(format!("bounded upload probe exited with {}", output.status));
+        return Err(format!(
+            "bounded upload probe exited with {}",
+            output.status
+        ));
     }
     parse_speed_kbps(
         &String::from_utf8_lossy(&output.stdout),
@@ -470,9 +480,7 @@ fn parse_speed_kbps(output: &str, transferred_bytes: u64) -> Result<u64, String>
 }
 
 fn classify_upload_limited(download_kbps: u64, upload_kbps: u64) -> bool {
-    download_kbps >= 512
-        && upload_kbps < 128
-        && upload_kbps.saturating_mul(8) < download_kbps
+    download_kbps >= 512 && upload_kbps < 128 && upload_kbps.saturating_mul(8) < download_kbps
 }
 
 fn parse_trace(output: &str) -> Result<EgressProbe, String> {
@@ -535,7 +543,10 @@ mod tests {
 
     #[test]
     fn parses_capacity_speed_as_kilobits() {
-        assert_eq!(parse_speed_kbps("__aether_speed=125000\n", 65_536).unwrap(), 1000);
+        assert_eq!(
+            parse_speed_kbps("__aether_speed=125000\n", 65_536).unwrap(),
+            1000
+        );
     }
 
     #[test]

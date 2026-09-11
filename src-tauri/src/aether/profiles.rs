@@ -355,7 +355,12 @@ impl ConnectionProfile {
             args.push("--bind".into());
             args.push(self.bind_address.clone());
         }
-        if self.http_proxy.trim().parse::<std::net::SocketAddr>().is_ok() {
+        if self
+            .http_proxy
+            .trim()
+            .parse::<std::net::SocketAddr>()
+            .is_ok()
+        {
             push_non_empty(&mut args, "--http-proxy", &self.http_proxy);
         }
 

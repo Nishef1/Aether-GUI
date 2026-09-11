@@ -65,9 +65,7 @@ fn changed_identity(left: Option<IpAddr>, right: Option<IpAddr>) -> Option<bool>
 }
 
 fn classify_upload_limited(download_kbps: u64, upload_kbps: u64) -> bool {
-    download_kbps >= 384
-        && upload_kbps < 96
-        && upload_kbps.saturating_mul(8) < download_kbps
+    download_kbps >= 384 && upload_kbps < 96 && upload_kbps.saturating_mul(8) < download_kbps
 }
 
 fn assess(
@@ -200,7 +198,11 @@ fn proxy_public_ip(socks_addr: &str, url: &str, ipv6: bool) -> Option<IpAddr> {
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn null_device() -> &'static str {
-    if cfg!(windows) { "NUL" } else { "/dev/null" }
+    if cfg!(windows) {
+        "NUL"
+    } else {
+        "/dev/null"
+    }
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -278,9 +280,7 @@ fn quick_upload_kbps(socks_addr: &str) -> Option<u64> {
 
     let mut child = command.spawn().ok()?;
     let mut stdin = child.stdin.take()?;
-    stdin
-        .write_all(&vec![0u8; QUICK_UPLOAD_BYTES])
-        .ok()?;
+    stdin.write_all(&vec![0u8; QUICK_UPLOAD_BYTES]).ok()?;
     drop(stdin);
     let output = child.wait_with_output().ok()?;
     if !output.status.success() {
@@ -307,10 +307,7 @@ pub fn capture_underlay_baseline(network_key: Option<&str>) {
                 .or_else(|| direct_public_ip("https://checkip.amazonaws.com/", false))
         });
         let ipv6 = scope.spawn(|| direct_public_ip("https://api6.ipify.org/", true));
-        (
-            ipv4.join().ok().flatten(),
-            ipv6.join().ok().flatten(),
-        )
+        (ipv4.join().ok().flatten(), ipv6.join().ok().flatten())
     });
 
     if let Ok(mut state) = underlay_state().lock() {
@@ -331,16 +328,10 @@ pub fn probe_connection_acceptance(socks_addr: &str) -> ConnectionAcceptanceRepo
     let (public_ipv4, public_ipv6) = std::thread::scope(|scope| {
         let ipv4 = scope.spawn(|| proxy_public_ip(socks_addr, "https://api4.ipify.org/", false));
         let ipv6 = scope.spawn(|| proxy_public_ip(socks_addr, "https://api6.ipify.org/", true));
-        (
-            ipv4.join().ok().flatten(),
-            ipv6.join().ok().flatten(),
-        )
+        (ipv4.join().ok().flatten(), ipv6.join().ok().flatten())
     });
 
-    let baseline = underlay_state()
-        .lock()
-        .ok()
-        .and_then(|state| state.clone());
+    let baseline = underlay_state().lock().ok().and_then(|state| state.clone());
 
     let download_kbps = quick_download_kbps(socks_addr);
     let upload_kbps = download_kbps.and_then(|_| quick_upload_kbps(socks_addr));

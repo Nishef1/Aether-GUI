@@ -5,10 +5,9 @@ const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
 fn stable_hash(input: &str) -> u64 {
-    input
-        .as_bytes()
-        .iter()
-        .fold(FNV_OFFSET, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME))
+    input.as_bytes().iter().fold(FNV_OFFSET, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+    })
 }
 
 fn routed_local_ip(target: &str, bind: &str) -> Option<String> {
@@ -58,7 +57,10 @@ fn platform_route_material() -> Vec<String> {
 
 #[cfg(target_os = "macos")]
 fn platform_route_material() -> Vec<String> {
-    let Ok(output) = Command::new("route").args(["-n", "get", "default"]).output() else {
+    let Ok(output) = Command::new("route")
+        .args(["-n", "get", "default"])
+        .output()
+    else {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&output.stdout);
@@ -107,7 +109,10 @@ pub fn current_network_key() -> Option<String> {
         return None;
     }
 
-    Some(format!("route-v1:{:016x}", stable_hash(&material.join("|"))))
+    Some(format!(
+        "route-v1:{:016x}",
+        stable_hash(&material.join("|"))
+    ))
 }
 
 /// Keep the child Core's persisted path history scoped to the same underlay
@@ -130,7 +135,10 @@ mod tests {
     fn fingerprint_is_stable_and_does_not_expose_route_material() {
         let material = "v4:wlan0:0101A8C0|src4=192.168.1.7";
         let fingerprint = format!("route-v1:{:016x}", stable_hash(material));
-        assert_eq!(fingerprint, format!("route-v1:{:016x}", stable_hash(material)));
+        assert_eq!(
+            fingerprint,
+            format!("route-v1:{:016x}", stable_hash(material))
+        );
         assert!(!fingerprint.contains("192.168"));
         assert!(!fingerprint.contains("wlan0"));
     }
