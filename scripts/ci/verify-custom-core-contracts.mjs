@@ -54,6 +54,8 @@ for (const reason of [
 }
 requireContract(autoConnect.includes("probe_connection_acceptance"), "desktop Automatic policy no longer verifies post-connect acceptance");
 requireContract(autoConnect.includes("reprioritizeRemainingCandidates"), "Automatic policy lost failure-driven fallback ordering");
+requireContract(autoConnect.includes('invoke("disconnect_for_recovery")'), "Automatic fallback can release the full-device kill switch");
+requireContract(!autoConnect.includes('isAndroid ? "disconnect"'), "Android Automatic fallback regressed to a full disconnect");
 
 const telemetryStore = read("src/state/telemetryStore.ts");
 requireContract(telemetryStore.includes("profileForNativeInvoke(rerollProfile)"), "privacy reroll bypasses the shared native profile bridge");
@@ -85,16 +87,30 @@ requireContract(desktopAcceptance.includes("QUICK_UPLOAD_BYTES"), "desktop quick
 const commands = read("src-tauri/src/commands.rs");
 requireContract(commands.includes("capture_underlay_baseline"), "desktop does not capture underlay identity before Aether launch");
 requireContract(commands.includes("probe_connection_acceptance"), "desktop acceptance command is not exposed to the frontend");
+requireContract(commands.includes("disconnect_for_recovery"), "desktop recovery-only disconnect command is missing");
+requireContract(commands.includes("runtime.disconnect_for_recovery"), "desktop recovery command no longer preserves the system tunnel");
 
 const mobileBridge = read("src-tauri/plugins/aether-vpn/src/lib.rs");
 for (const field of ["capacity_probe_complete", "download_kbps", "upload_kbps", "upload_limited"]) {
   requireContract(mobileBridge.includes(field), `Android telemetry bridge lost ${field}`);
 }
+requireContract(mobileBridge.includes("stop_for_recovery"), "Android Rust plugin lost the recovery stop bridge");
+requireContract(mobileBridge.includes('run_mobile_plugin("stopForRecovery"'), "Android Rust plugin no longer calls the Kotlin recovery command");
+
 const mobileRuntime = read("src-tauri/src/android.rs");
 requireContract(mobileRuntime.includes("get_network_context"), "Android does not expose network context to Path Intelligence");
 for (const field of ["capacity_probe_complete", "download_kbps", "upload_kbps", "upload_limited"]) {
   requireContract(mobileRuntime.includes(`\"${field}\"`), `Android runtime no longer forwards ${field}`);
 }
+requireContract(mobileRuntime.includes("async fn disconnect_for_recovery"), "Android Tauri runtime lost recovery-only disconnect");
+requireContract(mobileRuntime.includes("stop_for_recovery()"), "Android Tauri recovery command bypasses the native recovery bridge");
+requireContract(mobileRuntime.includes("disconnect_for_recovery,"), "Android recovery command is not registered with Tauri");
+
+const mobileNative = read("src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt");
+requireContract(mobileNative.includes("fun stopForRecovery"), "Android Kotlin plugin lost the protected recovery command");
+requireContract(mobileNative.includes("ACTION_RECOVER"), "Android VPN service lost its recovery action");
+requireContract(mobileNative.includes("detachCoreResources()"), "Android recovery no longer separates transport cleanup from VPN cleanup");
+requireContract(mobileNative.includes("Reusing protected Android VPN interface during transport recovery"), "Android recovery no longer reuses the installed VPN interface");
 
 const coreHistory = read("vendor/aether/aether/src/path_history.rs");
 requireContract(coreHistory.includes("detected_network_key"), "custom Core lost underlay detection fallback");
