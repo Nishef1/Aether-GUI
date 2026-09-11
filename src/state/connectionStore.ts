@@ -240,19 +240,24 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connect: async () => {
     const profile = get().profile;
     clearBufferedLogs();
-    set((state) => ({
-      logs: [],
-      accessCodeRequired: false,
-      runtimePath: null,
-      runtimePathAttemptId: null,
-      runtimeCapacity: null,
-      runtimeCapacityAttemptId: null,
-      scanBudgetSecs: isAndroid ? ANDROID_SCAN_BUDGETS[profile.scan_mode] : null,
-      attemptId: state.attemptId + 1,
-    }));
+    let attemptId = 0;
+    set((state) => {
+      attemptId = state.attemptId + 1;
+      return {
+        logs: [],
+        accessCodeRequired: false,
+        runtimePath: null,
+        runtimePathAttemptId: null,
+        runtimeCapacity: null,
+        runtimeCapacityAttemptId: null,
+        scanBudgetSecs: isAndroid ? ANDROID_SCAN_BUDGETS[profile.scan_mode] : null,
+        attemptId,
+      };
+    });
     try {
       await invoke("connect", { profileOverride: profileForNativeInvoke(profile) });
     } catch (error) {
+      if (get().attemptId !== attemptId) return;
       const message = String(error);
       if (
         message.toLowerCase().includes("binary not found") ||
@@ -269,17 +274,32 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
 
   disconnect: async () => {
-    set({ accessCodeRequired: false });
+    let attemptId = 0;
+    set((state) => {
+      attemptId = state.attemptId + 1;
+      return {
+        attemptId,
+        accessCodeRequired: false,
+        runtimePath: null,
+        runtimePathAttemptId: null,
+        runtimeCapacity: null,
+        runtimeCapacityAttemptId: null,
+        scanBudgetSecs: null,
+        ...(state.status.state === "Idle" ? {} : { status: { state: "Disconnecting" } as const }),
+      };
+    });
     try {
       await invoke("disconnect");
     } catch (error) {
       // A stop IPC can fail after the native runtime has already transitioned.
       // Reconcile immediately instead of leaving the UI stuck in Disconnecting
-      // until the next mobile lifecycle poll.
+      // until the next mobile lifecycle poll. Never let a stale stop overwrite
+      // a newer connection attempt.
       try {
         const status = await invoke<ConnectionStatus>("get_status");
-        updateStatus(status);
+        if (get().attemptId === attemptId) updateStatus(status);
       } catch {
+        if (get().attemptId !== attemptId) return;
         set({
           status: {
             state: "Error",
@@ -473,16 +493,21 @@ export async function initConnectionListeners(): Promise<() => void> {
     }),
   ]);
 
+  const bootstrapAttemptId = useConnectionStore.getState().attemptId;
   try {
     const [status, profile] = await Promise.all([
       invoke<ConnectionStatus>("get_status"),
       invoke<Partial<ConnectionProfile>>("get_default_profile"),
     ]);
-    useConnectionStore.setState({
-      status,
-      profile: normalizedProfile(profile),
-      ...(terminalStateClearsInteraction(status) ? { accessCodeRequired: false } : {}),
-    });
+    useConnectionStore.setState((state) =>
+      state.attemptId === bootstrapAttemptId
+        ? {
+            status,
+            profile: normalizedProfile(profile),
+            ...(terminalStateClearsInteraction(status) ? { accessCodeRequired: false } : {}),
+          }
+        : { profile: state.profile },
+    );
   } catch (error) {
     console.error("Failed to load initial connection state:", error);
   }
@@ -501,9 +526,10 @@ export async function initConnectionListeners(): Promise<() => void> {
       pollTimer = null;
       if (disposed || document.visibilityState !== "visible") return;
 
+      const pollAttemptId = useConnectionStore.getState().attemptId;
       try {
         const status = await invoke<ConnectionStatus>("get_status");
-        updateStatus(status);
+        if (useConnectionStore.getState().attemptId === pollAttemptId) updateStatus(status);
       } catch {
         // The foreground service can be between lifecycle states.
       }
@@ -522,10 +548,15 @@ export async function initConnectionListeners(): Promise<() => void> {
           }>("get_android_logs", { afterId: lastNativeLogId });
           lastNativeLogId = Math.max(lastNativeLogId, batch.last_id);
 
-          for (const entry of batch.entries) updateControlStateFromLine(entry.line);
-          appendLogBatch(
-            batch.entries.map((entry) => ({ timestamp: entry.timestamp, line: entry.line })),
-          );
+          // If the attempt changed while the native log request was in flight,
+          // these entries belong to a previous lifecycle and must not seed path
+          // or capacity evidence for the new attempt.
+          if (useConnectionStore.getState().attemptId === pollAttemptId) {
+            for (const entry of batch.entries) updateControlStateFromLine(entry.line);
+            appendLogBatch(
+              batch.entries.map((entry) => ({ timestamp: entry.timestamp, line: entry.line })),
+            );
+          }
         } catch {
           // Control metadata and logging are supplementary and must not destabilize the VPN.
         }
