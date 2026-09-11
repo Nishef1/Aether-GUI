@@ -72,6 +72,10 @@ function stableSocksAddress(status: ConnectionStatus): string | null {
   }
 }
 
+function attemptIsCurrent(epoch: number, attemptId: number): boolean {
+  return epoch === automationEpoch && useConnectionStore.getState().attemptId === attemptId;
+}
+
 function binaryUnavailable(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
@@ -202,26 +206,35 @@ function reprioritizeRemainingCandidates(
   candidates.splice(startIndex, reordered.length, ...reordered);
 }
 
-async function reconcileStatus(): Promise<ConnectionStatus> {
+async function reconcileStatus(
+  epoch: number,
+  attemptId: number,
+): Promise<ConnectionStatus | null> {
   try {
     const status = await invoke<ConnectionStatus>("get_status");
+    if (!attemptIsCurrent(epoch, attemptId)) return null;
     useConnectionStore.setState({ status });
     return status;
   } catch {
+    if (!attemptIsCurrent(epoch, attemptId)) return null;
     return useConnectionStore.getState().status;
   }
 }
 
 async function waitForOutcome(
   epoch: number,
+  attemptId: number,
   budgetMs: number,
 ): Promise<"connected" | "failed" | "cancelled" | "timeout"> {
   let deadline = Date.now() + budgetMs;
-  while (epoch === automationEpoch) {
-    const status = await reconcileStatus();
+  while (attemptIsCurrent(epoch, attemptId)) {
+    const status = await reconcileStatus(epoch, attemptId);
+    if (status == null) return "cancelled";
     if (stable(status)) return "connected";
     if (status.state === "Error") return "failed";
 
+    // Interactive Zero Trust input is user-paced and must not burn through the
+    // transport scan budget while the runtime is waiting for a one-time code.
     if (status.state === "AwaitingAccessCode") {
       deadline += RECONCILE_MS;
     } else if (Date.now() >= deadline) {
@@ -234,18 +247,19 @@ async function waitForOutcome(
 
 async function verifyConnectedCandidate(
   epoch: number,
+  attemptId: number,
   candidate: AutomaticCandidate,
 ): Promise<AcceptanceDecision> {
-  if (epoch !== automationEpoch) {
+  if (!attemptIsCurrent(epoch, attemptId)) {
     return { accepted: false, cancelled: true, reason: "unknown", message: null };
   }
 
   if (isAndroid) {
     const deadline = Date.now() + ANDROID_ACCEPTANCE_GRACE_MS;
-    while (Date.now() < deadline && epoch === automationEpoch) {
+    while (Date.now() < deadline && attemptIsCurrent(epoch, attemptId)) {
       const connection = useConnectionStore.getState();
       if (
-        connection.runtimeCapacityAttemptId === connection.attemptId &&
+        connection.runtimeCapacityAttemptId === attemptId &&
         connection.runtimeCapacity != null
       ) {
         if (connection.runtimeCapacity.uploadLimited) {
@@ -260,7 +274,7 @@ async function verifyConnectedCandidate(
       }
       await sleep(250);
     }
-    return epoch === automationEpoch
+    return attemptIsCurrent(epoch, attemptId)
       ? { accepted: true, cancelled: false, reason: "unknown", message: null }
       : { accepted: false, cancelled: true, reason: "unknown", message: null };
   }
@@ -282,12 +296,12 @@ async function verifyConnectedCandidate(
       socksAddr,
     });
   } catch (error) {
-    return epoch === automationEpoch
+    return attemptIsCurrent(epoch, attemptId)
       ? { accepted: true, cancelled: false, reason: "unknown", message: String(error) }
       : { accepted: false, cancelled: true, reason: "unknown", message: null };
   }
 
-  if (epoch !== automationEpoch) {
+  if (!attemptIsCurrent(epoch, attemptId)) {
     return { accepted: false, cancelled: true, reason: "unknown", message: null };
   }
 
@@ -308,22 +322,28 @@ async function verifyConnectedCandidate(
     };
   }
 
+  // Public probe infrastructure is an additional guard. Unavailable neutral
+  // probes do not convert a transport that already passed native validation
+  // into a false negative.
   return { accepted: true, cancelled: false, reason: "unknown", message: report.reason };
 }
 
-async function stopCandidateForFallback(epoch: number): Promise<StopOutcome> {
+async function stopCandidateForFallback(epoch: number, attemptId: number): Promise<StopOutcome> {
   // Both desktop and Android expose the same recovery-only command. Each
   // native implementation stops the transport while preserving an already
   // active full-device route as a fail-closed kill switch.
   await invoke("disconnect_for_recovery").catch(() => undefined);
+  if (!attemptIsCurrent(epoch, attemptId)) return "cancelled";
+
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (epoch !== automationEpoch) return "cancelled";
-    const status = await reconcileStatus();
+    if (!attemptIsCurrent(epoch, attemptId)) return "cancelled";
+    const status = await reconcileStatus(epoch, attemptId);
+    if (status == null) return "cancelled";
     if (status.state === "Idle" || status.state === "Error") return "stopped";
     await sleep(200);
   }
-  return epoch === automationEpoch ? "timeout" : "cancelled";
+  return attemptIsCurrent(epoch, attemptId) ? "timeout" : "cancelled";
 }
 
 function prepareAttempt(
@@ -404,8 +424,9 @@ export async function connectWithAutomaticPolicy(
     }
 
     const budgetMs = automaticAttemptBudgetMs(base);
-    prepareAttempt(base, budgetMs, singleProfileLabel(base), 1, 1);
+    const attemptId = prepareAttempt(base, budgetMs, singleProfileLabel(base), 1, 1);
     const launchError = await invokeCandidate(base);
+    if (useConnectionStore.getState().attemptId !== attemptId) return;
     if (launchError != null) publishLaunchError(launchError, "launching");
     return;
   }
@@ -417,6 +438,8 @@ export async function connectWithAutomaticPolicy(
     sidecarError: null,
   });
 
+  // Historical ordering is only safe after the current underlay fingerprint is
+  // resolved. Unknown context intentionally falls back to baseline ordering.
   await refreshPathNetworkContext();
   if (epoch !== automationEpoch) return;
 
@@ -433,10 +456,18 @@ export async function connectWithAutomaticPolicy(
     if (epoch !== automationEpoch) return;
     const candidate = candidates[index];
     const budgetMs = automaticAttemptBudgetMs(candidate.profile);
-    prepareAttempt(candidate.profile, budgetMs, candidate.label, index + 1, candidates.length);
+    const attemptId = prepareAttempt(
+      candidate.profile,
+      budgetMs,
+      candidate.label,
+      index + 1,
+      candidates.length,
+    );
 
     let failureReason: AutomaticFailureReason;
     const launchError = await invokeCandidate(candidate.profile);
+    if (!attemptIsCurrent(epoch, attemptId)) return;
+
     if (launchError != null) {
       lastError = launchError;
       failureReason = classifyAutomaticFailure(launchError, candidate);
@@ -445,21 +476,22 @@ export async function connectWithAutomaticPolicy(
         return;
       }
     } else {
-      const outcome = await waitForOutcome(epoch, budgetMs);
+      const outcome = await waitForOutcome(epoch, attemptId, budgetMs);
       if (outcome === "connected") {
-        const acceptance = await verifyConnectedCandidate(epoch, candidate);
+        const acceptance = await verifyConnectedCandidate(epoch, attemptId, candidate);
         if (acceptance.cancelled) return;
         if (acceptance.accepted) {
-          if (epoch === automationEpoch) automationEpoch += 1;
+          if (attemptIsCurrent(epoch, attemptId)) automationEpoch += 1;
           return;
         }
         failureReason = acceptance.reason;
         lastError = acceptance.message ?? `${candidate.label} failed post-connect acceptance`;
         if (isPathAcceptanceFailure(failureReason)) {
-          recordPathAcceptanceFailure(useConnectionStore.getState().attemptId, failureReason);
+          recordPathAcceptanceFailure(attemptId, failureReason);
         }
       } else {
         if (outcome === "cancelled") return;
+        if (!attemptIsCurrent(epoch, attemptId)) return;
         const status = useConnectionStore.getState().status;
         lastError =
           status.state === "Error"
@@ -469,12 +501,13 @@ export async function connectWithAutomaticPolicy(
       }
     }
 
+    if (!attemptIsCurrent(epoch, attemptId)) return;
     reprioritizeRemainingCandidates(candidates, index + 1, failureReason, candidate.transport);
 
-    const stopOutcome = await stopCandidateForFallback(epoch);
+    const stopOutcome = await stopCandidateForFallback(epoch, attemptId);
     if (stopOutcome === "cancelled") return;
     if (stopOutcome === "timeout") {
-      if (epoch === automationEpoch) automationEpoch += 1;
+      if (attemptIsCurrent(epoch, attemptId)) automationEpoch += 1;
       useConnectionStore.setState({
         status: {
           state: "Error",
