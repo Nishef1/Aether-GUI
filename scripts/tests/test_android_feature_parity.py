@@ -142,7 +142,7 @@ class Aether19ParityTest(unittest.TestCase):
             "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
         )
         config = json.loads(self.read("src-tauri/tauri.android.conf.json"))
-        self.assertIn('android:stopWithTask="true"', manifest)
+        self.assertIn('android:stopWithTask="false"', manifest)
         self.assertIn(".setMtu(profile.mtu)", service)
         self.assertIn("mtu: $mtu", service)
         self.assertEqual(config["bundle"]["android"]["minSdkVersion"], 29)

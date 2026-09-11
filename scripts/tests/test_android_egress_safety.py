@@ -156,7 +156,7 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         self.assertIn("Thread.setDefaultUncaughtExceptionHandler", runtime)
         self.assertIn("getSharedPreferences(FAILURE_PREFS", runtime)
         self.assertIn("recordFailure(\"safety\"", runtime)
-        self.assertIn("AndroidVpnRuntime.initialize", initializer)
+        self.assertIn("AndroidVpnRuntime::initialize", initializer)
         self.assertIn("fun exportDiagnostics", mobile_service)
         self.assertIn('recordFailure("session"', mobile_service)
         self.assertIn('recordFailure("service-start"', mobile_service)
