@@ -13,15 +13,15 @@ const LABELS: Record<ScanMode, string> = {
 
 const DESCRIPTIONS: Record<ScanMode, string> = {
   turbo:
-    "Fastest interactive discovery. Use it to reach the first healthy route quickly; Automatic can still fall back if this pass misses.",
+    "Fastest first-healthy policy. Uses fail-fast startup/liveness timing, no artificial probe jitter, and moves Automatic to the next carrier sooner.",
   balanced:
-    "Gives discovery more time and coverage when Turbo cannot find a reliable route. Good second pass.",
+    "General-purpose policy with moderate failure tolerance and light probe smoothing. Gives discovery more coverage when Turbo misses.",
   thorough:
-    "Slower, broader discovery that searches the full supported IPv4 subnet space and a larger IPv6 sample.",
+    "Broader discovery with longer startup/liveness windows and a shorter failed-endpoint cooldown so deep scans can reconsider the candidate pool.",
   stealth:
-    "Lowest-concurrency probing to reduce the scan footprint. It is quieter, but no scan mode can guarantee invisibility to a censor.",
+    "Lowest-concurrency policy with stronger probe jitter and longer liveness/cooldown windows to reduce scan and reconnect churn. It cannot guarantee invisibility to a censor.",
   ironclad:
-    "Opens a real tunnel through each candidate and completes a real HTTP round trip before selecting it. Strong point-in-time validation, not a guarantee of future availability.",
+    "Validates candidates with real data-plane traffic and uses bounded, tolerant liveness timing. Strong point-in-time verification, not a guarantee of future availability.",
 };
 
 export function ScanModeToggle() {
