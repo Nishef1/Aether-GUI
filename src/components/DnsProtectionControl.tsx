@@ -53,12 +53,12 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
             <span className="text-[11px] font-semibold text-foreground">DNS protection</span>
             {mode === "adblock" && (
               <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary ring-1 ring-primary/20">
-                Ads blocked
+                Filtering on
               </span>
             )}
           </div>
           <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
-            DNS stays inside the VPN path. Ad blocking uses AdGuard DNS to block ads, trackers and known phishing domains.
+            With full-device VPN enabled, DNS follows the protected path. AdGuard DNS filters many ad, tracker and phishing domains at DNS level.
           </p>
         </div>
       </div>
@@ -71,7 +71,7 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
         aria-label="DNS protection mode"
       >
         <option value="default">Default — Cloudflare DNS</option>
-        <option value="adblock">Block ads & trackers — AdGuard DNS</option>
+        <option value="adblock">Filter ads & trackers — AdGuard DNS</option>
         <option value="custom">Custom DNS</option>
       </select>
 
@@ -87,7 +87,9 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
             spellCheck={false}
             className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus:ring-primary disabled:opacity-50"
           />
-          <span className="leading-4">Separate multiple IPv4/IPv6 resolvers with commas.</span>
+          <span className="leading-4">
+            Use IPv4/IPv6 resolver addresses separated by commas. App-level encrypted DNS can bypass DNS filtering.
+          </span>
         </label>
       )}
     </div>
