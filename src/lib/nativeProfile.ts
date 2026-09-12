@@ -54,7 +54,7 @@ function sanitizeEnums(profile: Partial<ConnectionProfile>): Partial<ConnectionP
   if (
     !oneOf(
       sanitized.wg_noize,
-      ["off", "light", "firewall", "balanced", "gfw", "aggressive"] as const),
+      ["off", "light", "firewall", "balanced", "gfw", "aggressive"] as const,
     )
   ) {
     delete sanitized.wg_noize;
@@ -142,6 +142,16 @@ function validIpv4(value: string): boolean {
   );
 }
 
+function validIpv6(value: string): boolean {
+  if (!value.includes(":")) return false;
+  try {
+    const parsed = new URL(`http://[${value}]/`);
+    return parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]");
+  } catch {
+    return false;
+  }
+}
+
 function parseDnsToken(raw: string): ParsedDnsToken | null {
   const token = raw.trim();
   if (!token) return null;
@@ -150,7 +160,7 @@ function parseDnsToken(raw: string): ParsedDnsToken | null {
     const end = token.indexOf("]");
     if (end <= 1) return null;
     const host = token.slice(1, end);
-    if (!host.includes(":")) return null;
+    if (!validIpv6(host)) return null;
     const suffix = token.slice(end + 1);
     const port = suffix === "" ? 53 : /^:\d+$/.test(suffix) ? Number(suffix.slice(1)) : NaN;
     if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
@@ -158,7 +168,9 @@ function parseDnsToken(raw: string): ParsedDnsToken | null {
   }
 
   const colonCount = [...token].filter((character) => character === ":").length;
-  if (colonCount >= 2) return { raw: token, family: "v6", port: 53 };
+  if (colonCount >= 2) {
+    return validIpv6(token) ? { raw: token, family: "v6", port: 53 } : null;
+  }
 
   const separator = token.lastIndexOf(":");
   const host = separator > 0 ? token.slice(0, separator) : token;
