@@ -218,11 +218,10 @@ function pushH2Candidate(
   profile: ConnectionProfile,
   mask: H2MaskMode,
   historical: boolean,
-  labelSuffix?: string,
 ): void {
   candidates.push({
     transport: "h2",
-    label: `${labelFor("h2")} · ${maskLabel(mask)}${labelSuffix ?? ""}`,
+    label: `${labelFor("h2")} · ${maskLabel(mask)}`,
     profile: {
       ...profile,
       masque_mask: mask,
@@ -260,12 +259,11 @@ export function buildAutomaticCandidates(
     const transport = order[index];
     const isBaseline = index === 0;
     const transportHistorical = !isBaseline && history.includes(transport);
-    // In Automatic mode an explicit v4/v6 selection is the preferred first
-    // attempt, not a reason to strand every fallback on a broken address
-    // family. Alternate transports use dual-stack without adding more scans.
-    const transportBase =
-      !isBaseline && base.ip_version !== "both" ? { ...base, ip_version: "both" as const } : base;
-    const profile = profileForTransport(transportBase, transport, isBaseline);
+
+    // An explicit IP-family choice is a hard runtime constraint. Automatic may
+    // switch carriers, endpoints and compatible H2 masks, but it never widens
+    // v4/v6 to dual-stack behind the user's back. "Both" is the opt-in for it.
+    const profile = profileForTransport(base, transport, isBaseline);
 
     if (transport !== "h2") {
       candidates.push({
@@ -287,25 +285,6 @@ export function buildAutomaticCandidates(
         variant.mask,
         transportHistorical || variant.historical,
       );
-    }
-  }
-
-  // One bounded final retry gives the baseline transport a chance on the other
-  // address family too. This closes the v4/v6 blind spot without doubling the
-  // entire candidate matrix (important for Thorough/Ironclad and battery life).
-  if (base.ip_version !== "both") {
-    const dualBase: ConnectionProfile = { ...base, ip_version: "both" };
-    const dualProfile = profileForTransport(dualBase, baseline, false);
-    if (baseline === "h2") {
-      const variant = h2MasksForAutomaticAttempt(base, paths, now, false)[0];
-      pushH2Candidate(candidates, dualProfile, variant.mask, variant.historical, " · dual-stack retry");
-    } else {
-      candidates.push({
-        transport: baseline,
-        label: `${labelFor(baseline)} · dual-stack retry`,
-        profile: dualProfile,
-        historical: false,
-      });
     }
   }
 
