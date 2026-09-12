@@ -361,6 +361,9 @@ class FinalAetherVpnService : VpnService() {
     private data class TunnelResources(
         val descriptor: ParcelFileDescriptor,
         val bridge: HevTun2Socks,
+        val dnsServers: List<String>,
+        val mtu: Int,
+        val socksAddress: String,
     )
 
     private data class RuntimeProfile(
@@ -422,6 +425,9 @@ class FinalAetherVpnService : VpnService() {
     private var coreWriter: BufferedWriter? = null
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tun2Socks: HevTun2Socks? = null
+    private var tunnelDnsServers: List<String> = emptyList()
+    private var tunnelMtu: Int? = null
+    private var tunnelSocksAddress: String? = null
     private lateinit var notifications: AndroidVpnNotifications
 
     override fun onCreate() {
@@ -467,10 +473,26 @@ class FinalAetherVpnService : VpnService() {
     }
 
     private fun startCore(intent: Intent) {
-        val token = sessionGate.begin()
         val wantsSystemTunnel =
             (intent.getStringExtra(EXTRA_CONNECTION_MODE) ?: "tunnel") != "proxy"
-        val reuseProtectedTunnel = recoveryHold && wantsSystemTunnel && hasAttachedTunnel()
+        val attachedProtectedTunnel = hasAttachedTunnel()
+        if (attachedProtectedTunnel && !recoveryHold) {
+            val message = "A protected Android TUN is already active; Disconnect explicitly before starting a replacement session"
+            AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Error", message))
+            notifications.start("Aether protected", "Disconnect before replacing the active VPN session")
+            recoveryHold = true
+            return
+        }
+        if (attachedProtectedTunnel && !wantsSystemTunnel) {
+            val message = "Cannot switch a retained fail-closed Android TUN to proxy mode without an explicit Disconnect"
+            AndroidVpnRuntime.updateSnapshot(FinalServiceSnapshot("Error", message))
+            notifications.start("Aether protected", "Disconnect before switching to proxy-only mode")
+            recoveryHold = true
+            return
+        }
+
+        val token = sessionGate.begin()
+        val reuseProtectedTunnel = recoveryHold && wantsSystemTunnel && attachedProtectedTunnel
         recoveryHold = false
         val previousCleanup = pendingCleanup
         val staleResources = if (reuseProtectedTunnel) detachCoreResources() else detachAllResources()
@@ -558,6 +580,20 @@ class FinalAetherVpnService : VpnService() {
 
         try {
             ensureActive(token)
+            val retained = attachedTunnelResources()
+            if (retained != null) {
+                val requestedDns = systemDnsServers(profile)
+                if (
+                    retained.dnsServers != requestedDns ||
+                    retained.mtu != profile.mtu ||
+                    retained.socksAddress != profile.bindAddress
+                ) {
+                    error(
+                        "Android TUN DNS/MTU/SOCKS settings changed during fail-closed recovery; Disconnect explicitly before applying those changes",
+                    )
+                }
+            }
+
             val executable = File(applicationInfo.nativeLibraryDir, "libaether_exec.so")
             if (!executable.isFile) error("Bundled ARM64 Aether core was not found")
 
@@ -655,9 +691,9 @@ class FinalAetherVpnService : VpnService() {
                     token,
                     FinalServiceSnapshot("StartingTunnel", socksAddr = profile.bindAddress),
                 )
-                val retained = attachedTunnelResources()
-                if (retained != null) {
-                    validateTunnelLiveness(token, retained.bridge)
+                val retainedTunnel = attachedTunnelResources()
+                if (retainedTunnel != null) {
+                    validateTunnelLiveness(token, retainedTunnel.bridge)
                     log("Reusing protected Android VPN interface during transport recovery")
                 } else {
                     tunnel = createSystemTunnel(profile)
@@ -864,6 +900,7 @@ class FinalAetherVpnService : VpnService() {
     private fun createSystemTunnel(profile: RuntimeProfile): TunnelResources {
         if (VpnService.prepare(this) != null) error("Android VPN permission was revoked")
         val (socksHost, socksPort) = splitHostPort(profile.bindAddress)
+        val dnsServers = systemDnsServers(profile)
         val builder = Builder()
             .setSession("Aether")
             .setMtu(profile.mtu)
@@ -871,9 +908,9 @@ class FinalAetherVpnService : VpnService() {
             .addAddress(TUN_IPV6_ADDRESS, 128)
             .addRoute("0.0.0.0", 0)
             .addRoute("::", 0)
-            .addDnsServer(profile.dnsServer)
             .setBlocking(false)
             .setMetered(false)
+        dnsServers.forEach { server -> builder.addDnsServer(server) }
         builder.addDisallowedApplication(packageName)
         val descriptor = builder.establish()
             ?: error("Android refused to establish the VPN interface")
@@ -885,7 +922,13 @@ class FinalAetherVpnService : VpnService() {
             )
             val bridge = HevTun2Socks()
             bridge.TProxyStartService(configFile.absolutePath, descriptor.fd)
-            return TunnelResources(descriptor, bridge)
+            return TunnelResources(
+                descriptor = descriptor,
+                bridge = bridge,
+                dnsServers = dnsServers,
+                mtu = profile.mtu,
+                socksAddress = profile.bindAddress,
+            )
         } catch (error: Throwable) {
             runCatching { descriptor.close() }
             throw error
@@ -1004,6 +1047,9 @@ class FinalAetherVpnService : VpnService() {
             else {
                 vpnInterface = tunnel.descriptor
                 tun2Socks = tunnel.bridge
+                tunnelDnsServers = tunnel.dnsServers
+                tunnelMtu = tunnel.mtu
+                tunnelSocksAddress = tunnel.socksAddress
                 AndroidVpnRuntime.setActiveTunBridge(tunnel.bridge)
                 true
             }
@@ -1016,7 +1062,11 @@ class FinalAetherVpnService : VpnService() {
     private fun attachedTunnelResources(): TunnelResources? = synchronized(resourceLock) {
         val descriptor = vpnInterface
         val bridge = tun2Socks
-        if (descriptor != null && bridge != null) TunnelResources(descriptor, bridge) else null
+        val mtu = tunnelMtu
+        val socksAddress = tunnelSocksAddress
+        if (descriptor != null && bridge != null && mtu != null && socksAddress != null) {
+            TunnelResources(descriptor, bridge, tunnelDnsServers, mtu, socksAddress)
+        } else null
     }
 
     private fun detachCoreResources(): RuntimeResources = synchronized(resourceLock) {
@@ -1033,6 +1083,9 @@ class FinalAetherVpnService : VpnService() {
         coreWriter = null
         vpnInterface = null
         tun2Socks = null
+        tunnelDnsServers = emptyList()
+        tunnelMtu = null
+        tunnelSocksAddress = null
         AndroidVpnRuntime.clearProcessInput()
         AndroidVpnRuntime.clearActiveTunBridge()
         resources
@@ -1203,6 +1256,39 @@ class FinalAetherVpnService : VpnService() {
             else -> "127.0.0.1"
         }
         return if (safeHost.contains(':')) "[$safeHost]:$port" else "$safeHost:$port"
+    }
+
+    private fun dnsHostForSystem(value: String): String? {
+        val token = value.trim()
+        if (token.isEmpty()) return null
+        val host = when {
+            token.startsWith("[") -> {
+                val end = token.indexOf(']')
+                if (end <= 1) return null
+                val suffix = token.substring(end + 1)
+                if (suffix.isNotEmpty() && suffix != ":53") return null
+                token.substring(1, end)
+            }
+            token.count { it == ':' } >= 2 -> token
+            token.contains(':') -> {
+                val separator = token.lastIndexOf(':')
+                if (token.substring(separator + 1) != "53") return null
+                token.substring(0, separator)
+            }
+            else -> token
+        }
+        return runCatching { InetAddress.getByName(host) }
+            .getOrNull()
+            ?.takeUnless { it.isAnyLocalAddress || it.isMulticastAddress }
+            ?.hostAddress
+    }
+
+    private fun systemDnsServers(profile: RuntimeProfile): List<String> {
+        val configured = profile.dns
+            .split(Regex("[\\s,;]+"))
+            .mapNotNull(::dnsHostForSystem)
+            .distinct()
+        return if (configured.isNotEmpty()) configured else listOf(profile.dnsServer)
     }
 
     private fun sanitizeDnsServer(value: String): String = runCatching {
