@@ -31,6 +31,10 @@ requireContract(
   !exitPreference.includes('role="radio"'),
   "connection-goal selector regressed to hand-rolled radio semantics",
 );
+requireContract(
+  exitPreference.includes("grid-cols-1") && exitPreference.includes("min-[360px]:grid-cols-2"),
+  "connection-goal cards can squeeze instead of stacking on narrow phones",
+);
 
 const quick = read("src/components/QuickConnectionCard.tsx");
 for (const marker of [
@@ -47,17 +51,63 @@ requireContract(
   quick.includes("H2/TCP, then falls back to WireGuard, H3/QUIC and finally WARP-in-WARP"),
   "Automatic fallback order is no longer explained in primary UI",
 );
+requireContract(
+  quick.includes("<NativeSelect") && quick.includes('aria-label="H2 ClientHello MASK"'),
+  "MASK/TLS controls regressed to unnormalized mobile selects",
+);
 
 const protocol = read("src/components/ProtocolSelect.tsx");
 requireContract(
   protocol.includes("bg-transparent text-foreground") && protocol.includes('aria-label="Connection protocol"'),
   "selected protocol lost its primary-value affordance or accessible name",
 );
+requireContract(
+  protocol.includes('position="popper"') && protocol.includes('align="start"'),
+  "protocol menu can regress to item-aligned mobile positioning",
+);
+
+const nativeSelect = read("src/components/ui/native-select.tsx");
+for (const marker of ["appearance-none", "min-w-0", "max-w-full", "ChevronDown"]) {
+  requireContract(nativeSelect.includes(marker), `normalized native select lost mobile invariant: ${marker}`);
+}
+
+const radixSelect = read("src/components/ui/select.tsx");
+for (const marker of [
+  'position = "popper"',
+  'align = "start"',
+  "--radix-select-trigger-width",
+  "collisionPadding={16}",
+  "max-w-[calc(100vw-2rem)]",
+]) {
+  requireContract(radixSelect.includes(marker), `Radix select lost mobile popover constraint: ${marker}`);
+}
+
+const scanMode = read("src/components/ScanModeToggle.tsx");
+requireContract(
+  scanMode.includes("grid-cols-5") && !scanMode.includes("min-w-[30%]"),
+  "five scan modes can wrap into uneven mobile rows",
+);
 
 const noize = read("src/components/NoizeProfileToggle.tsx");
 for (const marker of ["MASQUE baseline", "WireGuard / WiW fallback", 'protocol === "auto"']) {
   requireContract(noize.includes(marker), `Automatic obfuscation UI lost fallback control: ${marker}`);
 }
+requireContract(
+  noize.includes("grid-cols-3") && noize.includes("sm:grid-cols-6"),
+  "obfuscation options can regress to unpredictable flex wrapping",
+);
+
+const ipVersion = read("src/components/IpVersionToggle.tsx");
+requireContract(ipVersion.includes("grid-cols-3"), "IP version selector lost equal-width phone columns");
+
+const masqueTransport = read("src/components/MasqueTransportToggle.tsx");
+requireContract(
+  masqueTransport.includes("grid-cols-2"),
+  "MASQUE carrier selector lost equal-width phone columns",
+);
+
+const dns = read("src/components/DnsProtectionControl.tsx");
+requireContract(dns.includes("<NativeSelect"), "DNS mode regressed to an unnormalized native select");
 
 const coreAdvanced = read("src/components/CoreAdvancedSettings.tsx");
 requireContract(
@@ -67,6 +117,14 @@ requireContract(
 requireContract(
   coreAdvanced.includes("Unsafe diagnostic override") && coreAdvanced.includes("false-positive healthy connection"),
   "unsafe data-check override lost its explicit warning",
+);
+requireContract(
+  coreAdvanced.includes("grid-cols-1") && coreAdvanced.includes("sm:grid-cols-2"),
+  "expert numeric/text pairs can squeeze into two columns on narrow phones",
+);
+requireContract(
+  coreAdvanced.includes("<NativeSelect") && coreAdvanced.includes("Performance profile"),
+  "performance profile regressed to an unnormalized native select",
 );
 
 const tunnel = read("src/components/SystemTunnelToggle.tsx");
@@ -131,6 +189,14 @@ requireContract(
   css.includes(".platform-android textarea") && css.includes("font-size: 16px"),
   "Android multiline form text lost its readable mobile size",
 );
+for (const marker of ['@media (pointer: coarse)', '[data-slot="select-content"]', '[data-slot="select-item"]']) {
+  requireContract(css.includes(marker), `Radix portal controls lost coarse-pointer sizing: ${marker}`);
+}
+
+const html = read("index.html");
+for (const marker of ["viewport-fit=cover", "interactive-widget=resizes-content"]) {
+  requireContract(html.includes(marker), `mobile viewport contract drifted: ${marker}`);
+}
 
 const app = read("src/App.tsx");
 requireContract(app.includes("safeCleanup"), "async listener initialization can reject without cleanup");
