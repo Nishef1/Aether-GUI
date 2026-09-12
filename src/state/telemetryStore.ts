@@ -370,20 +370,51 @@ export async function initTelemetryListeners(): Promise<() => void> {
     }, delay);
   };
 
-  const syncVisibility = () => {
-    if (!isAndroid) return;
+  const restartSchedule = (refreshNow: boolean) => {
     cancelTimer();
-    if (document.visibilityState === "visible") {
-      void useTelemetryStore.getState().refresh().finally(schedule);
-    } else if (
-      shouldClearTelemetryOnDisconnect(useConnectionStore.getState().status.state === "Idle")
-    ) {
-      clearTelemetry();
-    }
+    if (!isAndroid || disposed) return;
+
+    const collect = canCollectTelemetry({
+      visible: document.visibilityState === "visible",
+      connected: isConnected(),
+    });
+    if (!collect) return;
+
+    if (refreshNow) void useTelemetryStore.getState().refresh();
+    schedule();
   };
 
+  const visibilityChanged = () => {
+    if (!isAndroid) return;
+    restartSchedule(document.visibilityState === "visible");
+  };
+
+  const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
+    const statusChanged = state.status.state !== previous.status.state;
+    const capacityChanged =
+      state.runtimeCapacityAttemptId !== previous.runtimeCapacityAttemptId ||
+      state.runtimeCapacity !== previous.runtimeCapacity;
+    if (!statusChanged && !capacityChanged) return;
+
+    if (statusChanged && isStableConnected()) {
+      evaluateExitPolicy(useTelemetryStore.getState().snapshot);
+    }
+
+    if (!isAndroid) return;
+
+    if (statusChanged && shouldClearTelemetryOnDisconnect(isConnected())) {
+      clearTelemetry();
+    }
+    if (capacityChanged && document.visibilityState === "visible" && isConnected()) {
+      void useTelemetryStore.getState().refresh();
+    }
+    if (statusChanged) {
+      restartSchedule(isConnected() && document.visibilityState === "visible");
+    }
+  });
+
   if (isAndroid) {
-    document.addEventListener("visibilitychange", syncVisibility);
+    document.addEventListener("visibilitychange", visibilityChanged);
     schedule();
   }
 
@@ -391,6 +422,7 @@ export async function initTelemetryListeners(): Promise<() => void> {
     disposed = true;
     cancelTimer();
     unlisten();
-    if (isAndroid) document.removeEventListener("visibilitychange", syncVisibility);
+    unsubscribeConnection();
+    if (isAndroid) document.removeEventListener("visibilitychange", visibilityChanged);
   };
 }
