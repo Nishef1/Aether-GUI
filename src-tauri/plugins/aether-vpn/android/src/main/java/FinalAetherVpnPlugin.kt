@@ -32,11 +32,11 @@ private const val POST_NOTIFICATION_PERMISSION_ALIAS = "postNotification"
 @InvokeArg
 class FinalVpnProfileArgs {
     var protocol: String = "auto"
-    var scanMode: String = "balanced"
+    var scanMode: String = "turbo"
     var ipVersion: String = "v4"
     var connectionMode: String = "tunnel"
-    var quickReconnect: Boolean = false
-    var masqueHttp2: Boolean = false
+    var quickReconnect: Boolean = true
+    var masqueHttp2: Boolean = true
     var masqueNoize: String = "firewall"
     var wgNoize: String = "balanced"
     var dnsServer: String = "1.1.1.1"
@@ -58,7 +58,7 @@ class FinalVpnProfileArgs {
     var fragment: Boolean = false
     var fragmentSize: String = "16-32"
     var fragmentDelay: String = "2-10"
-    var keepalive: Int = 5
+    var keepalive: Int = 25
     var noProfileRetry: Boolean = false
     var tlsGroups: String = ""
     var perfProfile: String = "auto"
@@ -490,8 +490,8 @@ class FinalAetherVpnService : VpnService() {
         )
 
         val profile = RuntimeProfile(
-            protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "masque",
-            scanMode = intent.getStringExtra(EXTRA_SCAN_MODE) ?: "balanced",
+            protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "auto",
+            scanMode = intent.getStringExtra(EXTRA_SCAN_MODE) ?: "turbo",
             ipVersion = intent.getStringExtra(EXTRA_IP_VERSION) ?: "v4",
             connectionMode = intent.getStringExtra(EXTRA_CONNECTION_MODE) ?: "tunnel",
             bindAddress = sanitizeBindAddress(
@@ -503,8 +503,8 @@ class FinalAetherVpnService : VpnService() {
                 intent.getStringExtra(EXTRA_DNS_SERVER) ?: DEFAULT_DNS_SERVER,
             ),
             dns = intent.getStringExtra(EXTRA_DNS).orEmpty(),
-            quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, false),
-            masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, false),
+            quickReconnect = intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, true),
+            masqueHttp2 = intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, true),
             masqueNoize = intent.getStringExtra(EXTRA_MASQUE_NOIZE) ?: "firewall",
             wgNoize = intent.getStringExtra(EXTRA_WG_NOIZE) ?: "balanced",
             mtu = AndroidTransportPolicy.sanitizeMtu(
@@ -523,7 +523,7 @@ class FinalAetherVpnService : VpnService() {
             fragment = intent.getBooleanExtra(EXTRA_FRAGMENT, false),
             fragmentSize = intent.getStringExtra(EXTRA_FRAGMENT_SIZE) ?: "16-32",
             fragmentDelay = intent.getStringExtra(EXTRA_FRAGMENT_DELAY) ?: "2-10",
-            keepalive = intent.getIntExtra(EXTRA_KEEPALIVE, 5).coerceIn(1, 120),
+            keepalive = intent.getIntExtra(EXTRA_KEEPALIVE, 25).coerceIn(1, 120),
             noProfileRetry = intent.getBooleanExtra(EXTRA_NO_PROFILE_RETRY, false),
             tlsGroups = intent.getStringExtra(EXTRA_TLS_GROUPS).orEmpty(),
             perfProfile = intent.getStringExtra(EXTRA_PERF_PROFILE) ?: "auto",
