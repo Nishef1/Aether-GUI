@@ -137,7 +137,8 @@ export function CoreAdvancedSettings() {
   const setField = useConnectionStore((state) => state.setProfileField);
   const locked = status.state !== "Idle" && status.state !== "Error";
   const masqueFamily = profile.protocol === "auto" || profile.protocol === "masque";
-  const wireGuardFamily = profile.protocol === "wireguard" || profile.protocol === "gool";
+  const wireGuardFamily =
+    profile.protocol === "auto" || profile.protocol === "wireguard" || profile.protocol === "gool";
   const gool = profile.protocol === "gool";
   const legacyH2Fragment =
     (profile.masque_mask ?? (profile.fragment ? "legacy" : "off")) === "legacy";
@@ -292,7 +293,7 @@ export function CoreAdvancedSettings() {
             />
             <BooleanField
               label="Disable WireGuard profile retry"
-              description="Stops Aether from trying alternate obfuscation profiles after a failed WireGuard scan."
+              description="Stops Aether from trying alternate obfuscation profiles after a failed WireGuard scan. In Automatic mode this affects the WireGuard fallback only."
               checked={profile.no_profile_retry}
               disabled={locked}
               onChange={(value) => set("no_profile_retry", value)}
