@@ -63,6 +63,20 @@ requireContract(
   "active VPN foreground notification lost its ongoing state",
 );
 
+// The Android Tauri surface must keep both tunnel-mode commands registered.
+// A function that still exists in Rust but drops out of generate_handler is a
+// silent IPC regression: the UI compiles, but changing the system tunnel stops
+// working at runtime.
+const androidRuntime = read("src-tauri/src/android.rs");
+for (const command of ["get_system_tunnel", "set_system_tunnel"]) {
+  const references = androidRuntime.match(new RegExp(`\\b${command}\\b`, "g"))?.length ?? 0;
+  requireContract(references >= 2, `${command} exists but is no longer registered in invoke_handler`);
+}
+requireContract(
+  androidRuntime.includes('if current.state != "Idle"'),
+  "Android tunnel mode can change while a retained fail-closed TUN may still be active",
+);
+
 console.log(
-  "[android-background-contracts] foreground VPN and screen-off dataplane liveness are aligned",
+  "[android-background-contracts] foreground VPN, tunnel IPC and screen-off dataplane liveness are aligned",
 );
