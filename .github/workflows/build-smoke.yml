@@ -1,0 +1,47 @@
+name: build-smoke
+
+on:
+  push:
+    branches:
+      - build-smoke-run5
+    paths:
+      - .github/workflows/build-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: linux-x86_64-smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+          components: rustfmt
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl file libayatana-appindicator3-dev libfuse2 librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
+      - run: npm ci --no-audit --no-fund
+      - run: npm run verify:contracts
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - run: npm run prepare:aether
+      - run: npm run prepare:sidecars
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Build Linux Tauri bundle
+        run: npm run tauri -- build --target x86_64-unknown-linux-gnu
