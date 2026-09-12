@@ -451,10 +451,12 @@ impl Default for ConnectionProfile {
     fn default() -> Self {
         Self {
             protocol: Protocol::Auto,
-            scan_mode: ScanMode::Balanced,
+            // Fresh installs use the reachability-first path. Persisted profiles
+            // keep their explicit scan mode through serde and are not migrated.
+            scan_mode: ScanMode::Turbo,
             ip_version: IpVersion::V4,
-            quick_reconnect: false,
-            masque_http2: false,
+            quick_reconnect: true,
+            masque_http2: true,
             masque_noize: NoizeProfile::Firewall,
             wg_noize: NoizeProfile::Balanced,
             bind_address: default_bind_address(),
@@ -540,7 +542,9 @@ mod tests {
         let profile = ConnectionProfile::default();
         let args = profile.as_args();
         assert_eq!(args.first().map(String::as_str), Some("--masque"));
-        assert!(args.iter().any(|arg| arg == "--no-quick-reconnect"));
+        assert!(args.iter().any(|arg| arg == "--turbo"));
+        assert!(args.iter().any(|arg| arg == "--quick-reconnect"));
+        assert!(args.iter().any(|arg| arg == "--h2"));
         assert!(profile.route_sniff);
         assert!(profile.auto_reprovision);
         assert_eq!(profile.masque_mask, MasqueMask::Off);
@@ -604,9 +608,12 @@ mod tests {
     }
 
     #[test]
-    fn old_profile_json_gets_new_defaults() {
+    fn old_profile_json_gets_new_optional_defaults_without_rewriting_explicit_choices() {
         let json = r#"{"protocol":"auto","scan_mode":"balanced","ip_version":"v4"}"#;
         let profile: ConnectionProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.scan_mode, ScanMode::Balanced);
+        assert!(!profile.quick_reconnect);
+        assert!(!profile.masque_http2);
         assert_eq!(profile.masque_mask, MasqueMask::Off);
         assert_eq!(profile.tls_profile, TlsProfile::Automatic);
         assert!(profile.route_sniff);
