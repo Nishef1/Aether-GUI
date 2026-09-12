@@ -15,13 +15,13 @@ const DESCRIPTIONS: Record<ScanMode, string> = {
   turbo:
     "Fastest first-healthy policy. Uses fail-fast startup/liveness timing, no artificial probe jitter, and moves Automatic to the next carrier sooner.",
   balanced:
-    "General-purpose policy with moderate failure tolerance and light probe smoothing. Gives discovery more coverage when Turbo misses.",
+    "General-purpose discovery with moderate failure tolerance and light probe smoothing. It compares more candidates when Turbo misses.",
   thorough:
-    "Broader discovery with longer startup/liveness windows and a shorter failed-endpoint cooldown so deep scans can reconsider the candidate pool.",
+    "Broader route discovery with longer startup/liveness windows and a shorter failed-endpoint cooldown so deep scans can reconsider the candidate pool.",
   stealth:
-    "Lowest-concurrency policy with stronger probe jitter and longer liveness/cooldown windows to reduce scan and reconnect churn. It cannot guarantee invisibility to a censor.",
+    "Quiet discovery only: lower concurrency, stronger pre-connect probe jitter, and less scan/reconnect churn. It reduces how noisy gateway discovery looks to the access network; it does not hide the final VPN exit, browser timezone, latency, or website-facing TCP flow.",
   ironclad:
-    "Validates candidates with real data-plane traffic and uses bounded, tolerant liveness timing. Strong point-in-time verification, not a guarantee of future availability.",
+    "Validates candidates with real data-plane traffic and uses bounded, tolerant liveness timing. Strong point-in-time verification, not a guarantee of future availability or website invisibility.",
 };
 
 export function ScanModeToggle() {
