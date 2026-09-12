@@ -10,7 +10,6 @@ import type {
   ConnectionStatus,
   LogLine,
   MasqueNoize,
-  ScanMode,
   WgNoize,
   ZeroTrustAuth,
 } from "@/types/connection";
@@ -31,22 +30,15 @@ const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoin
 const PATH_UNAVAILABLE_MARKER = "[gui] path unavailable";
 const CAPACITY_MARKER_RE =
   /^\[gui\] capacity download_kbps=(\d+) upload_kbps=(\d+) upload_limited=(0|1)$/;
-const ANDROID_SCAN_BUDGETS: Record<ScanMode, number> = {
-  turbo: 75,
-  balanced: 150,
-  thorough: 330,
-  stealth: 210,
-  ironclad: 240,
-};
 
 const logBuffer = new RingBuffer<LogLine>(MAX_LOG_LINE_LIMIT);
 
 const DEFAULT_PROFILE: ConnectionProfile = {
   protocol: "auto",
-  scan_mode: "balanced",
+  scan_mode: "turbo",
   ip_version: "v4",
-  quick_reconnect: false,
-  masque_http2: false,
+  quick_reconnect: true,
+  masque_http2: true,
   masque_noize: "firewall",
   wg_noize: "balanced",
   bind_address: "127.0.0.1:1819",
@@ -86,6 +78,28 @@ const DEFAULT_PROFILE: ConnectionProfile = {
   route_direct: "",
   routes_file: "",
 };
+
+function androidStartupBudgetSecs(profile: ConnectionProfile): number {
+  const family = profile.protocol;
+  const transportCost = (masque: number, wireguard: number, gool: number) => {
+    if (family === "gool") return gool;
+    if (family === "wireguard") return wireguard;
+    return masque;
+  };
+
+  switch (profile.scan_mode) {
+    case "turbo":
+      return transportCost(60, 70, 90);
+    case "balanced":
+      return transportCost(120, 135, 165);
+    case "thorough":
+      return transportCost(300, 330, 360);
+    case "stealth":
+      return transportCost(210, 240, 270);
+    case "ironclad":
+      return transportCost(240, 270, 300);
+  }
+}
 
 interface ConnectionState {
   status: ConnectionStatus;
@@ -250,7 +264,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         runtimePathAttemptId: null,
         runtimeCapacity: null,
         runtimeCapacityAttemptId: null,
-        scanBudgetSecs: isAndroid ? ANDROID_SCAN_BUDGETS[profile.scan_mode] : null,
+        scanBudgetSecs: isAndroid ? androidStartupBudgetSecs(profile) : null,
         attemptId,
       };
     });
@@ -333,7 +347,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       profile: { ...state.profile, mtu: Math.min(1500, Math.max(1280, Math.round(mtu))) },
     })),
   setProfileField: (field, value) =>
-    set((state) => ({ profile: { ...state.profile, [field]: value } })),
+    set((state) => ({ profile: { ...state.profile, [field]: value })),
   setZeroTrustTeam: (zero_trust_team) =>
     set((state) => ({ profile: { ...state.profile, zero_trust_team } })),
   setZeroTrustAuth: (zero_trust_auth) =>
