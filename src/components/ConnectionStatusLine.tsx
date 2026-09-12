@@ -307,7 +307,7 @@ export function ConnectionStatusLine() {
       </AnimatePresence>
       <AnimatePresence mode="wait">
         <motion.span
-          key={`${status.state}-${secondary}`}
+          key={`${status.state}-detail`}
           className={`block min-h-5 max-w-xs font-mono text-xs text-muted-foreground ${
             status.state === "Error"
               ? "line-clamp-3 whitespace-normal leading-relaxed"
