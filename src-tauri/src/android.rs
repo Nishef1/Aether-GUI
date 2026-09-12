@@ -318,9 +318,22 @@ fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
             return Err("Unknown HTTP/2 ClientHello mask".into());
         }
     }
-    if !profile.dns.trim().is_empty() && crate::dns_policy::parse_resolvers(&profile.dns).is_empty()
-    {
-        return Err("DNS must contain at least one IPv4/IPv6 resolver address".into());
+    if !profile.dns.trim().is_empty() {
+        let resolvers = crate::dns_policy::parse_resolvers(&profile.dns);
+        if resolvers.is_empty() {
+            return Err("DNS must contain at least one IPv4/IPv6 resolver address".into());
+        }
+        if resolvers.iter().any(|resolver| resolver.port() != 53) {
+            return Err("Android system DNS resolvers must use port 53".into());
+        }
+        let wrong_family = resolvers.iter().any(|resolver| match profile.ip_version.as_str() {
+            "v4" => resolver.ip().is_ipv6(),
+            "v6" => resolver.ip().is_ipv4(),
+            _ => false,
+        });
+        if wrong_family {
+            return Err("DNS resolver family must match the selected Android IP family".into());
+        }
     }
     if !profile.http_proxy.trim().is_empty() {
         let address = profile
@@ -620,8 +633,10 @@ fn set_system_tunnel(
         .aether_vpn()
         .status()
         .map_err(|error| error.to_string())?;
-    if current.state != "Idle" && current.state != "Error" {
-        return Err("System tunnel mode cannot change while connected".into());
+    if current.state != "Idle" {
+        return Err(
+            "System tunnel mode can change only after an explicit Disconnect".into(),
+        );
     }
     let mut settings = state
         .settings
