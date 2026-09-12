@@ -192,6 +192,13 @@ requireContract(
 for (const marker of ['@media (pointer: coarse)', '[data-slot="select-content"]', '[data-slot="select-item"]']) {
   requireContract(css.includes(marker), `Radix portal controls lost coarse-pointer sizing: ${marker}`);
 }
+requireContract(css.includes('@import "tw-animate-css";'), "animation CSS import disappeared");
+
+const packageJson = read("package.json");
+requireContract(
+  packageJson.includes('"tw-animate-css": "^1.4.0"'),
+  "CSS imports tw-animate-css but package.json no longer declares it",
+);
 
 const html = read("index.html");
 for (const marker of ["viewport-fit=cover", "interactive-widget=resizes-content"]) {
@@ -205,4 +212,4 @@ requireContract(
   "desktop tooltips regressed to immediate hover noise",
 );
 
-console.log("[ui-ux-contracts] accessibility and interaction invariants are aligned");
+console.log("[ui-ux-contracts] accessibility, interaction and imported UI dependencies are aligned");
