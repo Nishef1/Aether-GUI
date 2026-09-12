@@ -46,7 +46,7 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
     <div className="grid gap-2 rounded-2xl bg-black/15 p-3 ring-1 ring-white/8">
       <div className="flex items-start gap-2.5">
         <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
-          <ShieldCheck size={15} />
+          <ShieldCheck size={15} aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
@@ -58,7 +58,8 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
             )}
           </div>
           <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
-            With full-device VPN enabled, DNS follows the protected path. AdGuard DNS filters many ad, tracker and phishing domains at DNS level.
+            With full-device VPN enabled, DNS follows the protected path. AdGuard DNS filters many
+            ad, tracker and phishing domains at DNS level.
           </p>
         </div>
       </div>
@@ -67,7 +68,7 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
         value={mode}
         disabled={disabled}
         onChange={(event) => setMode(event.target.value as DnsMode)}
-        className="min-h-11 w-full rounded-xl bg-black/20 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none transition focus:ring-primary disabled:opacity-50"
+        className="min-h-12 w-full rounded-xl bg-black/20 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
         aria-label="DNS protection mode"
       >
         <option value="default">Default — Cloudflare DNS</option>
@@ -85,10 +86,13 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
             placeholder="1.1.1.1,1.0.0.1"
             autoComplete="off"
             spellCheck={false}
-            className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus:ring-primary disabled:opacity-50"
+            className="min-h-12 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            aria-describedby="custom-dns-help"
           />
-          <span className="leading-4">
-            Use IPv4/IPv6 resolver addresses separated by commas. App-level encrypted DNS can bypass DNS filtering.
+          <span id="custom-dns-help" className="leading-4">
+            Use IPv4/IPv6 resolver addresses separated by commas. Malformed entries are ignored; if
+            none are usable Aether falls back to its Cloudflare pair. App-level encrypted DNS can
+            bypass this filtering.
           </span>
         </label>
       )}
