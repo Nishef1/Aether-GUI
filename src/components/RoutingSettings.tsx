@@ -1,21 +1,15 @@
 import { useConnectionStore } from "@/state/connectionStore";
 
 const INPUT =
-  "min-h-12 w-full rounded-xl bg-black/20 px-3 text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50";
+  "min-h-12 w-full rounded-xl bg-black/20 px-3 text-sm text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50";
 const AREA =
-  "min-h-24 w-full resize-y rounded-xl bg-black/20 px-3 py-2.5 text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50";
+  "min-h-24 w-full resize-y rounded-xl bg-black/20 px-3 py-2.5 text-sm text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50";
 const PRESET =
-  "min-h-11 rounded-xl px-3 py-2 text-[11px] text-muted-foreground ring-1 ring-white/10 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50";
-
-const DNS_PRESETS = [
-  { label: "Default", value: "" },
-  { label: "Cloudflare", value: "1.1.1.1,1.0.0.1" },
-  { label: "Quad9", value: "9.9.9.9,149.112.112.112" },
-  { label: "Google", value: "8.8.8.8,8.8.4.4" },
-] as const;
+  "min-h-12 rounded-xl px-3 py-2 text-[11px] text-muted-foreground ring-1 ring-white/10 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50 aria-pressed:bg-primary/15 aria-pressed:text-primary aria-pressed:ring-primary/40";
 
 const IRAN_DIRECT = "domain:ir";
 const LAN_DIRECT = "private";
+const IRAN_AND_LAN_DIRECT = `${IRAN_DIRECT}\n${LAN_DIRECT}`;
 const COMMON_AD_BLOCK = [
   "domain:doubleclick.net",
   "domain:googlesyndication.com",
@@ -28,35 +22,55 @@ const COMMON_AD_BLOCK = [
   "domain:outbrain.com",
 ].join("\n");
 
-/** Aether 1.9 DNS and routing controls. Lists use the core's documented
- * comma/newline-separated rule format; domain sniffing keeps these useful
- * behind the desktop/Android TUN boundary. */
+type RoutingPreset = "iran" | "lan" | "ads" | "iran-ads" | "clear";
+
+/** Aether 1.9 route controls. DNS intentionally lives in the primary
+ * connection card so one profile field never has two competing UI owners. */
 export function RoutingSettings() {
   const profile = useConnectionStore((state) => state.profile);
   const status = useConnectionStore((state) => state.status);
-  const setDns = useConnectionStore((state) => state.setDns);
   const setRouteBlock = useConnectionStore((state) => state.setRouteBlock);
   const setRouteDirect = useConnectionStore((state) => state.setRouteDirect);
   const setRoutesFile = useConnectionStore((state) => state.setRoutesFile);
   const locked = status.state !== "Idle" && status.state !== "Error";
 
-  const applyRoutingPreset = (preset: "iran" | "lan" | "ads" | "iran-ads" | "clear") => {
+  const direct = profile.route_direct.trim();
+  const blocked = profile.route_block.trim();
+  const routesFile = profile.routes_file.trim();
+  const selectedPreset: RoutingPreset | null =
+    !direct && !blocked && !routesFile
+      ? "clear"
+      : direct === IRAN_DIRECT && !blocked && !routesFile
+        ? "iran"
+        : direct === LAN_DIRECT && !blocked && !routesFile
+          ? "lan"
+          : !direct && blocked === COMMON_AD_BLOCK && !routesFile
+            ? "ads"
+            : direct === IRAN_AND_LAN_DIRECT && blocked === COMMON_AD_BLOCK && !routesFile
+              ? "iran-ads"
+              : null;
+
+  const applyRoutingPreset = (preset: RoutingPreset) => {
     switch (preset) {
       case "iran":
         setRouteDirect(IRAN_DIRECT);
         setRouteBlock("");
+        setRoutesFile("");
         break;
       case "lan":
         setRouteDirect(LAN_DIRECT);
         setRouteBlock("");
+        setRoutesFile("");
         break;
       case "ads":
         setRouteDirect("");
         setRouteBlock(COMMON_AD_BLOCK);
+        setRoutesFile("");
         break;
       case "iran-ads":
-        setRouteDirect(`${IRAN_DIRECT}\n${LAN_DIRECT}`);
+        setRouteDirect(IRAN_AND_LAN_DIRECT);
         setRouteBlock(COMMON_AD_BLOCK);
+        setRoutesFile("");
         break;
       case "clear":
         setRouteDirect("");
@@ -69,85 +83,123 @@ export function RoutingSettings() {
   return (
     <div className="flex flex-col gap-4 rounded-2xl bg-black/10 p-3 ring-1 ring-white/10">
       <div className="flex flex-col gap-2">
-        <span className="text-[11px] font-medium text-muted-foreground">DNS preset</span>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {DNS_PRESETS.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              disabled={locked}
-              onClick={() => setDns(preset.value)}
-              aria-pressed={profile.dns === preset.value}
-              className={`${PRESET} aria-pressed:bg-primary/15 aria-pressed:text-primary aria-pressed:ring-primary/40`}
-            >
-              {preset.label}
-            </button>
-          ))}
+        <div>
+          <span className="text-[11px] font-medium text-foreground">Routing presets</span>
+          <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+            Presets replace the route lists below. Custom edits switch the selection to Custom.
+          </p>
         </div>
-        <input
-          type="text"
-          value={profile.dns}
-          disabled={locked}
-          onChange={(event) => setDns(event.target.value)}
-          placeholder="Tunnel DNS, e.g. 1.1.1.1,1.0.0.1"
-          className={INPUT}
-          aria-label="Tunnel DNS resolvers"
-        />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <span className="text-[11px] font-medium text-muted-foreground">Routing preset</span>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <button type="button" disabled={locked} onClick={() => applyRoutingPreset("iran")} className={PRESET}>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="group" aria-label="Routing presets">
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => applyRoutingPreset("iran")}
+            aria-pressed={selectedPreset === "iran"}
+            className={PRESET}
+          >
             Iran direct
           </button>
-          <button type="button" disabled={locked} onClick={() => applyRoutingPreset("lan")} className={PRESET}>
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => applyRoutingPreset("lan")}
+            aria-pressed={selectedPreset === "lan"}
+            className={PRESET}
+          >
             LAN direct
           </button>
-          <button type="button" disabled={locked} onClick={() => applyRoutingPreset("ads")} className={PRESET}>
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => applyRoutingPreset("ads")}
+            aria-pressed={selectedPreset === "ads"}
+            className={PRESET}
+          >
             Block ads
           </button>
-          <button type="button" disabled={locked} onClick={() => applyRoutingPreset("iran-ads")} className={PRESET}>
-            Iran + ads
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => applyRoutingPreset("iran-ads")}
+            aria-pressed={selectedPreset === "iran-ads"}
+            className={PRESET}
+          >
+            Iran + LAN + ads
           </button>
-          <button type="button" disabled={locked} onClick={() => applyRoutingPreset("clear")} className={PRESET}>
-            Clear
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => applyRoutingPreset("clear")}
+            aria-pressed={selectedPreset === "clear"}
+            className={PRESET}
+          >
+            Clear rules
           </button>
+          {selectedPreset == null && (
+            <span className="flex min-h-12 items-center justify-center rounded-xl bg-white/[0.025] px-3 text-[11px] text-muted-foreground ring-1 ring-white/8">
+              Custom
+            </span>
+          )}
         </div>
       </div>
 
-      <textarea
-        value={profile.route_block}
-        disabled={locked}
-        onChange={(event) => setRouteBlock(event.target.value)}
-        placeholder="Block: domains, CIDRs, ports…"
-        className={AREA}
-        aria-label="Blocked routes"
-      />
-      <textarea
-        value={profile.route_direct}
-        disabled={locked}
-        onChange={(event) => setRouteDirect(event.target.value)}
-        placeholder="Direct: banking, LAN, domestic sites…"
-        className={AREA}
-        aria-label="Direct routes"
-      />
-      <input
-        type="text"
-        value={profile.routes_file}
-        disabled={locked}
-        onChange={(event) => setRoutesFile(event.target.value)}
-        placeholder="Rules file path (optional)"
-        className={INPUT}
-        aria-label="Routing rules file path"
-      />
-      {(profile.route_direct.trim() || profile.routes_file.trim()) && (
-        <p className="rounded-xl bg-status-connecting/5 px-3 py-2 text-[10px] leading-4 text-status-connecting ring-1 ring-status-connecting/15">
-          Direct rules intentionally bypass Aether for matching destinations. Those destinations can see your original network IP; use direct routing only when that exposure is intentional.
+      <label className="grid gap-1.5">
+        <span className="text-[11px] font-medium text-foreground">Blocked destinations</span>
+        <textarea
+          value={profile.route_block}
+          disabled={locked}
+          onChange={(event) => setRouteBlock(event.target.value)}
+          placeholder="Domains, CIDRs or ports to block…"
+          className={AREA}
+          aria-label="Blocked routes"
+          spellCheck={false}
+        />
+      </label>
+
+      <label className="grid gap-1.5">
+        <span className="text-[11px] font-medium text-foreground">Direct bypass</span>
+        <textarea
+          value={profile.route_direct}
+          disabled={locked}
+          onChange={(event) => setRouteDirect(event.target.value)}
+          placeholder="Banking, LAN or domestic destinations…"
+          className={AREA}
+          aria-label="Direct routes"
+          aria-describedby="direct-routing-warning"
+          spellCheck={false}
+        />
+      </label>
+
+      <label className="grid gap-1.5">
+        <span className="text-[11px] font-medium text-foreground">Rules file</span>
+        <input
+          type="text"
+          value={profile.routes_file}
+          disabled={locked}
+          onChange={(event) => setRoutesFile(event.target.value)}
+          placeholder="Optional path to a rules file"
+          className={INPUT}
+          aria-label="Routing rules file path"
+          aria-describedby="direct-routing-warning"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+
+      {(direct || routesFile) && (
+        <p
+          id="direct-routing-warning"
+          className="rounded-xl bg-status-connecting/5 px-3 py-2 text-[10px] leading-4 text-status-connecting ring-1 ring-status-connecting/15"
+        >
+          Direct rules intentionally bypass Aether for matching destinations. Those destinations can
+          see your original network IP; use direct routing only when that exposure is intentional.
         </p>
       )}
       <p className="text-[10px] leading-4 text-muted-foreground">
-        Iran direct covers <code>.ir</code> domains only; add explicit CIDRs/domains for other domestic services. Supports domain, IP/CIDR, <code>port:443</code>, <code>private</code>, and Aether&apos;s <code>full:</code>/<code>keyword:</code>/<code>regexp:</code> rules. Block wins over direct.
+        Iran direct covers <code>.ir</code> domains only; add explicit CIDRs/domains for other
+        domestic services. Supports domain, IP/CIDR, <code>port:443</code>, <code>private</code>, and
+        Aether&apos;s <code>full:</code>/<code>keyword:</code>/<code>regexp:</code> rules. Block wins
+        over direct.
       </p>
     </div>
   );
