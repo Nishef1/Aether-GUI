@@ -28,14 +28,20 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         self.assertIn("reportSafetyFailure(message)", guard)
         self.assertIn("BASELINE_TTL_MS", guard)
 
-    def test_egress_and_capacity_probes_do_not_brand_aether(self) -> None:
+    def test_egress_and_underlay_probes_do_not_brand_aether(self) -> None:
         probe = self.read(
             "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressProbe.kt"
         )
-        self.assertNotIn("Aether-Android/", probe)
-        self.assertNotIn('append("User-Agent:', probe)
-        self.assertNotIn('writer.write("User-Agent:', probe)
+        guard = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressIdentityGuard.kt"
+        )
+        for source in (probe, guard):
+            self.assertNotIn("Aether-Android/", source)
+            self.assertNotIn('setRequestProperty("User-Agent"', source)
+            self.assertNotIn('append("User-Agent:', source)
+            self.assertNotIn('writer.write("User-Agent:', source)
         self.assertIn("No product-specific User-Agent", probe)
+        self.assertIn("Never attach a product-specific header", guard)
 
     def test_location_never_blocks_a_healthy_low_latency_tunnel(self) -> None:
         probe = self.read(
