@@ -11,13 +11,15 @@ import type { H2MaskMode, ScanMode, TlsProfileMode } from "@/types/connection";
 const SCAN_COPY: Record<ScanMode, string> = {
   turbo: "Fast pass: find the first healthy route quickly, then let Automatic fall back only if it has to.",
   balanced: "Broader discovery with more time per route when Turbo cannot find a reliable path.",
-  thorough: "Searches more candidates when normal discovery cannot find a usable route.",
-  stealth: "Reduces concurrent probing for networks that react to aggressive scans.",
-  ironclad: "Validates real traffic through each candidate before accepting a gateway.",
+  thorough: "Searches more candidates and gives slow paths longer when normal discovery cannot find a usable route.",
+  stealth:
+    "Quiet gateway discovery with fewer concurrent probes and more timing jitter. It does not hide the final VPN exit from websites.",
+  ironclad:
+    "Validates real traffic through each candidate before accepting it. This verifies the route now; it cannot guarantee future availability.",
 };
 
 const selectClass =
-  "min-h-11 w-full rounded-xl bg-black/20 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none transition focus:ring-primary disabled:opacity-50";
+  "min-h-12 w-full rounded-xl bg-black/20 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50";
 
 export function QuickConnectionCard() {
   const status = useConnectionStore((state) => state.status);
@@ -68,14 +70,19 @@ export function QuickConnectionCard() {
   };
 
   return (
-    <section className="w-full rounded-3xl bg-surface-1/80 p-4 ring-1 ring-white/10 backdrop-blur-sm">
+    <section
+      className="w-full rounded-3xl bg-surface-1/80 p-4 ring-1 ring-white/10 backdrop-blur-sm"
+      aria-labelledby="connection-profile-title"
+    >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
-            <Gauge size={17} />
+            <Gauge size={17} aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-foreground">Connection profile</h2>
+            <h2 id="connection-profile-title" className="text-sm font-semibold text-foreground">
+              Connection profile
+            </h2>
             <p className="text-[11px] leading-4 text-muted-foreground">
               Fast controls stay here; deep tuning remains under More settings.
             </p>
@@ -83,7 +90,7 @@ export function QuickConnectionCard() {
         </div>
         {locked && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/5 px-2 py-1 text-[10px] text-muted-foreground ring-1 ring-white/10">
-            <LockKeyhole size={10} /> Live
+            <LockKeyhole size={10} aria-hidden="true" /> Live
           </span>
         )}
       </div>
@@ -92,7 +99,7 @@ export function QuickConnectionCard() {
         type="button"
         disabled={locked}
         onClick={applyFastIranPreset}
-        className={`mb-3 flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl px-3 text-left ring-1 transition disabled:cursor-not-allowed disabled:opacity-50 ${
+        className={`mb-3 flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl px-3 text-left ring-1 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${
           fastIranActive
             ? "bg-primary/12 text-foreground ring-primary/35"
             : "bg-black/15 text-foreground ring-white/10 hover:bg-white/5"
@@ -101,7 +108,7 @@ export function QuickConnectionCard() {
         aria-label="Apply Iran fast gaming connection preset"
       >
         <span className="flex min-w-0 items-center gap-2.5">
-          <Gamepad2 size={16} className="shrink-0 text-primary" />
+          <Gamepad2 size={16} className="shrink-0 text-primary" aria-hidden="true" />
           <span className="min-w-0">
             <span className="block text-xs font-semibold">Fast / Gaming — Iran</span>
             <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
