@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Keeps the native VPN dataplane schedulable while the display is off.
@@ -21,7 +22,10 @@ import androidx.core.content.ContextCompat
  * from freezing that already-active native dataplane.
  */
 internal object AndroidScreenOffKeepAlive {
+    private const val STATE_RECHECK_MS = 15_000L
+
     private val lock = Any()
+    private val monitorGeneration = AtomicLong(0L)
 
     @Volatile
     private var initialized = false
@@ -32,9 +36,8 @@ internal object AndroidScreenOffKeepAlive {
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            // Do not trust a broadcast alone: exported/system delivery details
-            // vary across Android releases. The real interactive state is the
-            // source of truth, so spoofed broadcasts cannot hold the CPU awake.
+            // The actual PowerManager state remains the source of truth. The
+            // broadcast only asks us to re-evaluate immediately.
             refresh()
         }
     }
@@ -61,7 +64,7 @@ internal object AndroidScreenOffKeepAlive {
                 appContext,
                 screenReceiver,
                 filter,
-                ContextCompat.RECEIVER_EXPORTED,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
             )
             initialized = true
         }
@@ -81,6 +84,32 @@ internal object AndroidScreenOffKeepAlive {
         else -> false
     }
 
+    private fun startLifecycleMonitor(generation: Long) {
+        Thread {
+            while (monitorGeneration.get() == generation) {
+                try {
+                    Thread.sleep(STATE_RECHECK_MS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return@Thread
+                }
+
+                if (monitorGeneration.get() != generation) return@Thread
+                refresh()
+                if (monitorGeneration.get() != generation) return@Thread
+            }
+        }.apply {
+            name = "aether-screen-off-keepalive"
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun releaseLocked(current: PowerManager.WakeLock) {
+        monitorGeneration.incrementAndGet()
+        if (current.isHeld) runCatching { current.release() }
+    }
+
     private fun refresh() {
         if (!initialized) return
         synchronized(lock) {
@@ -90,9 +119,11 @@ internal object AndroidScreenOffKeepAlive {
             if (shouldHold && !current.isHeld) {
                 runCatching { current.acquire() }
                     .onSuccess {
+                        val generation = monitorGeneration.incrementAndGet()
                         AndroidVpnRuntime.appendServiceLine(
                             "Screen off while VPN is active; keeping native dataplane awake",
                         )
+                        startLifecycleMonitor(generation)
                     }
                     .onFailure { error ->
                         AndroidVpnRuntime.recordFailure(
@@ -101,7 +132,7 @@ internal object AndroidScreenOffKeepAlive {
                         )
                     }
             } else if (!shouldHold && current.isHeld) {
-                runCatching { current.release() }
+                releaseLocked(current)
             }
         }
     }
