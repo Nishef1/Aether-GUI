@@ -59,7 +59,7 @@ const DEFAULT_PROFILE: ConnectionProfile = {
   fragment: false,
   fragment_size: "16-32",
   fragment_delay: "2-10",
-  keepalive: 5,
+  keepalive: 25,
   no_profile_retry: false,
   tls_profile: "automatic",
   tls_groups: "",
