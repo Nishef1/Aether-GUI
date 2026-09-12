@@ -11,20 +11,54 @@ function requireContract(condition, message) {
 
 const nativeProfile = read("src/lib/nativeProfile.ts");
 for (const marker of [
-  'const ANDROID_IPV4_ONLY_BLOCK = "::/0"',
-  'const ANDROID_IPV6_ONLY_BLOCK = "0.0.0.0/0"',
-  "function enforceAndroidIpFamily",
+  'const IPV4_ONLY_BLOCK = "::/0"',
+  'const IPV6_ONLY_BLOCK = "0.0.0.0/0"',
+  "function enforceIpFamily",
   "route_block: appendRouteBlock(profile.route_block, guard)",
   "function stripRuntimeFamilyGuard",
+  "function enforceDnsFamily",
+  "Android system DNS resolvers must use port 53",
 ]) {
   requireContract(nativeProfile.includes(marker), `runtime family guard drifted: ${marker}`);
+}
+
+const automaticPolicy = read("src/lib/automaticPolicy.ts");
+requireContract(
+  automaticPolicy.includes("profileForTransport(base, transport, isBaseline)"),
+  "Automatic no longer preserves the user's IP family across transport fallbacks",
+);
+for (const forbidden of ['ip_version: "both" as const', "dual-stack retry"]) {
+  requireContract(
+    !automaticPolicy.includes(forbidden),
+    `Automatic silently widens a single-family selection: ${forbidden}`,
+  );
+}
+
+const dnsPolicy = read("src-tauri/src/dns_policy.rs");
+for (const marker of [
+  "DEFAULT_DNS_V6",
+  "effective_resolvers_for_ip_version",
+  "profile_ip_version",
+  'ip_version == "both"',
+]) {
+  requireContract(dnsPolicy.includes(marker), `DNS family policy drifted: ${marker}`);
+}
+
+const dnsUi = read("src/components/DnsProtectionControl.tsx");
+for (const marker of [
+  "2606:4700:4700::1111",
+  "2a10:50c0::ad1:ff",
+  "defaultCustomDns(ipVersion)",
+  "selected Internet IP family",
+]) {
+  requireContract(dnsUi.includes(marker), `DNS UI family semantics drifted: ${marker}`);
 }
 
 const ipToggle = read("src/components/IpVersionToggle.tsx");
 for (const marker of [
   'aria-label="Internet IP family"',
-  "IPv4 only. IPv6 internet traffic is blocked at runtime on Android",
-  "IPv6 only. IPv4 internet traffic is blocked at runtime on Android",
+  "IPv4 only. IPv6 internet traffic stays blocked across Automatic fallbacks and every transport.",
+  "IPv6 only. IPv4 internet traffic stays blocked across Automatic fallbacks and every transport.",
   "Dual stack. IPv4 and IPv6 internet traffic are both allowed",
 ]) {
   requireContract(ipToggle.includes(marker), `IP-family UI semantics drifted: ${marker}`);
@@ -40,4 +74,4 @@ requireContract(
   "custom Core no longer defines -6 as IPv6-only scan/connect",
 );
 
-console.log("[ip-family-policy] selected internet family is enforced at the Android runtime boundary");
+console.log("[ip-family-policy] selected internet family is strict across UI, Auto, DNS and runtime");
