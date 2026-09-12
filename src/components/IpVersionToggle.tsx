@@ -1,4 +1,5 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { adblockDnsFor, isAdblockDns } from "@/lib/dnsProfile";
 import { useConnectionStore } from "@/state/connectionStore";
 import type { IpVersion } from "@/types/connection";
 
@@ -17,8 +18,16 @@ const DESCRIPTIONS: Record<IpVersion, string> = {
 export function IpVersionToggle() {
   const status = useConnectionStore((s) => s.status);
   const ipVersion = useConnectionStore((s) => s.profile.ip_version);
+  const dns = useConnectionStore((s) => s.profile.dns);
   const setIpVersion = useConnectionStore((s) => s.setIpVersion);
+  const setField = useConnectionStore((s) => s.setProfileField);
   const locked = status.state !== "Idle" && status.state !== "Error";
+
+  const selectFamily = (next: IpVersion) => {
+    const preserveAdblock = isAdblockDns(dns);
+    setIpVersion(next);
+    if (preserveAdblock) setField("dns", adblockDnsFor(next));
+  };
 
   return (
     <div className="grid min-w-0 gap-1.5">
@@ -26,7 +35,7 @@ export function IpVersionToggle() {
         type="single"
         value={ipVersion}
         onValueChange={(v) => {
-          if (v) setIpVersion(v as IpVersion);
+          if (v) selectFamily(v as IpVersion);
         }}
         disabled={locked}
         aria-label="Internet IP family"
