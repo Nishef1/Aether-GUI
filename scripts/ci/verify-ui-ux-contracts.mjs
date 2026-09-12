@@ -71,7 +71,7 @@ requireContract(
 
 const tunnel = read("src/components/SystemTunnelToggle.tsx");
 for (const marker of [
-  "const ready = loaded && !error",
+  'const ready = loaded && selection === "native" && !error',
   "Android device tunnel unavailable",
   "Preparing Android device tunnel",
   "Device-wide",
