@@ -84,6 +84,23 @@ requireContract(
   "standard idle WireGuard keepalive default drifted from 25 seconds",
 );
 
+// Ironclad proves application traffic inside the selected tunnel. That check
+// must not announce the product name to the HTTP probe destination or add a
+// product-specific User-Agent that becomes an avoidable exit-side signature.
+const ironclad = read("vendor/aether/aether/src/tunnelping.rs");
+requireContract(
+  ironclad.includes("fn http_probe_request()"),
+  "Ironclad HTTP probe no longer has a reviewable minimal request builder",
+);
+requireContract(
+  !ironclad.toLowerCase().includes("aether-ironclad"),
+  "Ironclad HTTP probe exposes the Aether product name",
+);
+requireContract(
+  ironclad.includes('assert!(!request.to_ascii_lowercase().contains("user-agent:"))'),
+  "Ironclad probe regression test no longer forbids a branded User-Agent",
+);
+
 for (const [file, marker] of [
   ["src/state/connectionStore.ts", "keepalive: 25"],
   ["src-tauri/src/aether/profiles.rs", "25"],
