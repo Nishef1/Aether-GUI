@@ -10,8 +10,15 @@ function requireContract(condition, message) {
 }
 
 const dnsControl = read("src/components/DnsProtectionControl.tsx");
-requireContract(dnsControl.includes("94.140.14.14,94.140.15.15"), "AdGuard filtering DNS pair changed or disappeared");
-requireContract(dnsControl.includes('setField("dns"'), "DNS protection no longer writes the connection profile");
+for (const marker of [
+  "94.140.14.14,94.140.15.15",
+  "2a10:50c0::ad1:ff",
+  "2606:4700:4700::1111",
+  "defaultCustomDns(ipVersion)",
+  'setField("dns"',
+]) {
+  requireContract(dnsControl.includes(marker), `DNS control drifted: ${marker}`);
+}
 
 const quickCard = read("src/components/QuickConnectionCard.tsx");
 requireContract(quickCard.includes("DnsProtectionControl"), "DNS protection disappeared from quick connection controls");
@@ -23,17 +30,37 @@ for (const marker of ['scan_mode: "turbo"', "quick_reconnect: true", "masque_htt
 requireContract(frontendStore.includes("androidStartupBudgetSecs(profile)"), "Android UI watchdog drifted from transport-aware policy");
 
 const desktopDns = read("src-tauri/src/dns_policy.rs");
-for (const marker of ["parse_resolvers", "effective_resolvers", "profile_resolvers", "DEFAULT_DNS_V4"]) {
+for (const marker of [
+  "parse_resolvers",
+  "effective_resolvers_for_ip_version",
+  "profile_resolvers",
+  "DEFAULT_DNS_V4",
+  "DEFAULT_DNS_V6",
+  'ip_version == "both"',
+]) {
   requireContract(desktopDns.includes(marker), `shared DNS policy lost ${marker}`);
 }
-requireContract(desktopDns.includes("94.140.14.14,94.140.15.15"), "DNS policy regression test lost filtering resolver coverage");
+requireContract(desktopDns.includes("94.140.14.14,2a10:50c0::ad1:ff"), "DNS policy regression test lost dual-family filtering coverage");
 
 const engine = read("src-tauri/src/engine/mod.rs");
 requireContract(engine.includes("dns_policy::profile_resolvers"), "engine no longer captures DNS from the exact launch profile");
 requireContract(engine.includes("dns_servers: dns_servers.clone()"), "active resolver set no longer reaches TunnelContext");
+requireContract(
+  engine.includes("if let Err(error) = runtime.system_tunnel.refresh_active_context(context)"),
+  "desktop recovery can ignore stale TUN DNS/SOCKS settings",
+);
 
 const systemTunnel = read("src-tauri/src/system_tunnel/mod.rs");
-requireContract(systemTunnel.includes("pub dns_servers: Vec<SocketAddr>"), "system tunnel context lost DNS resolver identity");
+for (const marker of [
+  "pub dns_servers: Vec<SocketAddr>",
+  "pub fn refresh_active_context(&self, context: TunnelContext) -> Result<(), RuntimeError>",
+  "active.dns_servers != context.dns_servers",
+  "active.upstream_socks_addr != context.upstream_socks_addr",
+  "Disconnect explicitly before applying those changes",
+  "retained_tunnel_rejects_sock_or_dns_reconfiguration",
+]) {
+  requireContract(systemTunnel.includes(marker), `desktop fail-closed DNS contract drifted: ${marker}`);
+}
 
 const singboxConfig = read("src-tauri/src/system_tunnel/sing_box/config.rs");
 requireContract(singboxConfig.includes("dns_servers: &[SocketAddr]"), "sing-box config no longer consumes active resolvers");
@@ -54,13 +81,37 @@ for (const marker of ["scan_mode: ScanMode::Turbo", "quick_reconnect: true", "ma
 requireContract(desktopProfile.includes("old_profile_json_gets_new_optional_defaults_without_rewriting_explicit_choices"), "legacy profile regression coverage disappeared");
 
 const androidRuntime = read("src-tauri/src/android.rs");
-for (const marker of ['scan_mode: "turbo".into()', "quick_reconnect: true", "masque_http2: true"]) {
-  requireContract(androidRuntime.includes(marker), `fresh Android profile lost ${marker}`);
+for (const marker of [
+  'scan_mode: "turbo".into()',
+  "quick_reconnect: true",
+  "masque_http2: true",
+  "crate::dns_policy::parse_resolvers",
+  "crate::dns_policy::effective_resolvers_for_ip_version",
+  "fn normalize_runtime_dns",
+  "Android system DNS resolvers must use port 53",
+  "DNS resolver family must match the selected Android IP family",
+  'if current.state != "Idle"',
+]) {
+  requireContract(androidRuntime.includes(marker), `Android DNS/runtime contract drifted: ${marker}`);
 }
-requireContract(androidRuntime.includes("crate::dns_policy::parse_resolvers"), "Android DNS validation bypasses the shared parser");
-requireContract(androidRuntime.includes("crate::dns_policy::effective_resolvers"), "Android VpnService DNS can drift from Core resolver policy");
+
+const androidBridge = read(
+  "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt",
+);
+for (const marker of [
+  "val dnsServers: List<String>",
+  "private fun systemDnsServers(profile: RuntimeProfile): List<String>",
+  "dnsServers.forEach { server -> builder.addDnsServer(server) }",
+  "tunnelDnsServers = tunnel.dnsServers",
+  "retained.dnsServers != requestedDns",
+  "retained.mtu != profile.mtu",
+  "retained.socksAddress != profile.bindAddress",
+  "Disconnect explicitly before applying those changes",
+]) {
+  requireContract(androidBridge.includes(marker), `Android VpnService DNS parity drifted: ${marker}`);
+}
 
 const androidLib = read("src-tauri/src/lib.rs");
 requireContract(androidLib.includes("mod dns_policy;"), "Android build no longer includes shared DNS policy");
 
-console.log("[dns-contracts] DNS protection and Iran-first defaults are aligned");
+console.log("[dns-contracts] DNS family, TUN parity and fail-closed recovery invariants are aligned");
