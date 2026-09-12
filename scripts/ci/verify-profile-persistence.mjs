@@ -32,6 +32,7 @@ for (const marker of [
   "runtime_only: false",
   "persistSuccessfulAutomaticIntent(base)",
   "if (acceptance.accepted)",
+  "if (profile.runtime_only) return null",
   "last_successful_profile",
 ]) {
   requireContract(
@@ -44,6 +45,18 @@ requireContract(
     autoConnect.indexOf("if (acceptance.accepted)"),
   "Automatic intent can be persisted before the winning candidate passes acceptance",
 );
+
+const telemetryStore = read("src/state/telemetryStore.ts");
+for (const marker of [
+  "quick_reconnect: false",
+  "runtime_only: true",
+  "Privacy reroll changes runtime behavior only",
+]) {
+  requireContract(
+    telemetryStore.includes(marker),
+    `Privacy reroll can overwrite durable user settings: ${marker}`,
+  );
+}
 
 const desktopProfiles = read("src-tauri/src/aether/profiles.rs");
 for (const marker of [
@@ -87,5 +100,5 @@ for (const marker of [
 }
 
 console.log(
-  "[profile-persistence] successful user intent persists while Automatic candidates remain runtime-only",
+  "[profile-persistence] successful user intent persists while runtime candidates and privacy rerolls stay transient",
 );
