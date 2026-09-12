@@ -53,7 +53,7 @@ const ICONS: Record<Phase, typeof Power> = {
 
 const ARIA_LABEL: Record<Phase, string> = {
   idle: "Connect",
-  connecting: "Cancel connecting",
+  connecting: "Cancel connection attempt",
   connected: "Disconnect",
   error: "Retry connection",
 };
@@ -68,6 +68,8 @@ export function ConnectButton() {
   const Icon = ICONS[phase];
   const color = STATUS_COLOR[phase];
   const animationPlayState = focused ? ("running" as const) : ("paused" as const);
+  const disconnecting = status.state === "Disconnecting";
+  const ariaLabel = disconnecting ? "Disconnecting" : ARIA_LABEL[phase];
 
   const handleClick = () => {
     if (phase === "idle" || phase === "error") {
@@ -83,10 +85,11 @@ export function ConnectButton() {
   return (
     <motion.button
       type="button"
-      aria-label={ARIA_LABEL[phase]}
+      aria-label={ariaLabel}
+      aria-busy={phase === "connecting"}
       onClick={handleClick}
-      disabled={status.state === "Disconnecting"}
-      whileTap={{ scale: 0.965 }}
+      disabled={disconnecting}
+      whileTap={disconnecting ? undefined : { scale: 0.965 }}
       animate={phase === "error" ? "error" : "rest"}
       variants={SHAKE_VARIANTS}
       className={cn(
@@ -160,6 +163,7 @@ export function ConnectButton() {
             size={46}
             strokeWidth={2}
             style={{ animationPlayState }}
+            aria-hidden="true"
             className={cn(
               phase === "connecting" && !isAndroid && "animate-spin",
               phase === "connecting" && isAndroid && "android-connect-spin",
