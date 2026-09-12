@@ -68,7 +68,9 @@ internal object AndroidEgressIdentityGuard {
             connection.readTimeout = READ_TIMEOUT_MS
             connection.instanceFollowRedirects = false
             connection.requestMethod = "GET"
-            connection.setRequestProperty("User-Agent", "Aether-Android/3")
+            // This request intentionally runs on the underlay to establish the
+            // exact-IP safety baseline. Never attach a product-specific header:
+            // the provider only needs to return the public address.
             val status = connection.responseCode
             if (status !in 200..299) error("identity endpoint returned HTTP $status")
             val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
