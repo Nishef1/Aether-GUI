@@ -297,13 +297,29 @@ impl SystemTunnelRuntime {
     }
 
     /// Refresh metadata after the loopback transport reconnects without
-    /// restarting the OS-level TUN route.
-    pub fn refresh_active_context(&self, context: TunnelContext) {
-        if let Ok(mut stage) = self.stage.lock() {
-            if matches!(&*stage, TunnelStage::Active(_)) {
-                *stage = TunnelStage::Active(context);
-            }
+    /// restarting the OS-level TUN route. Settings baked into the running
+    /// sing-box process must remain identical; changing them in place would
+    /// make the UI/profile disagree with the fail-closed route still installed.
+    pub fn refresh_active_context(&self, context: TunnelContext) -> Result<(), RuntimeError> {
+        let mut stage = self
+            .stage
+            .lock()
+            .map_err(|_| RuntimeError::Internal("system tunnel state is unavailable".into()))?;
+        let TunnelStage::Active(active) = &*stage else {
+            return Ok(());
+        };
+
+        if active.upstream_socks_addr != context.upstream_socks_addr
+            || active.dns_servers != context.dns_servers
+        {
+            return Err(RuntimeError::SystemTunnel(
+                "System-tunnel SOCKS/DNS settings changed while the fail-closed TUN is retained; Disconnect explicitly before applying those changes"
+                    .into(),
+            ));
         }
+
+        *stage = TunnelStage::Active(context);
+        Ok(())
     }
 
     pub fn stop_for_transport_loss(&self, app: &AppHandle) {
@@ -414,6 +430,14 @@ impl SystemTunnelRuntime {
 mod tests {
     use super::*;
 
+    fn tunnel_context(socks: &str, dns: &[&str], connected_at_ms: u64) -> TunnelContext {
+        TunnelContext {
+            upstream_socks_addr: socks.into(),
+            connected_at_ms,
+            dns_servers: dns.iter().map(|value| value.parse().unwrap()).collect(),
+        }
+    }
+
     #[test]
     fn new_install_defaults_to_full_device_tunnel() {
         let runtime = SystemTunnelRuntime::default();
@@ -445,5 +469,31 @@ mod tests {
             SystemTunnelSelection::from_store("unexpected-value"),
             SystemTunnelSelection::Singbox
         );
+    }
+
+    #[test]
+    fn retained_tunnel_accepts_metadata_only_refresh() {
+        let runtime = SystemTunnelRuntime::default();
+        let initial = tunnel_context("127.0.0.1:1819", &["1.1.1.1:53"], 1);
+        *runtime.stage.lock().unwrap() = TunnelStage::Active(initial);
+
+        let refreshed = tunnel_context("127.0.0.1:1819", &["1.1.1.1:53"], 2);
+        assert!(runtime.refresh_active_context(refreshed).is_ok());
+        assert!(runtime.is_active());
+    }
+
+    #[test]
+    fn retained_tunnel_rejects_sock_or_dns_reconfiguration() {
+        let runtime = SystemTunnelRuntime::default();
+        let initial = tunnel_context("127.0.0.1:1819", &["1.1.1.1:53"], 1);
+        *runtime.stage.lock().unwrap() = TunnelStage::Active(initial);
+
+        let dns_change = tunnel_context("127.0.0.1:1819", &["9.9.9.9:53"], 2);
+        assert!(runtime.refresh_active_context(dns_change).is_err());
+        assert!(runtime.is_active());
+
+        let socks_change = tunnel_context("127.0.0.1:1820", &["1.1.1.1:53"], 2);
+        assert!(runtime.refresh_active_context(socks_change).is_err());
+        assert!(runtime.is_active());
     }
 }
