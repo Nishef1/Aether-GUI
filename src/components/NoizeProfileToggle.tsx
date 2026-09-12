@@ -45,7 +45,7 @@ function ProfileSelector({
   onChange: (profile: NoizeProfile) => void;
 }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="grid min-w-0 gap-1.5">
       {label && <span className="px-1 text-[10px] font-medium text-muted-foreground">{label}</span>}
       <ToggleGroup
         type="single"
@@ -55,7 +55,7 @@ function ProfileSelector({
         }}
         disabled={locked}
         aria-label={label ? `${label} obfuscation profile` : "Obfuscation profile"}
-        className="w-full flex-wrap gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
+        className="grid w-full grid-cols-3 gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10 sm:grid-cols-6"
       >
         {OPTIONS.map((profile) => (
           <Tooltip key={profile}>
@@ -64,9 +64,9 @@ function ProfileSelector({
                 value={profile}
                 size="sm"
                 aria-label={LABELS[profile]}
-                className="min-h-12 min-w-[30%] flex-1 rounded-xl px-1 text-[11px] text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:px-2 sm:text-xs"
+                className="min-h-12 w-full min-w-0 rounded-xl px-1 text-[10px] text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:px-1 sm:text-[11px]"
               >
-                {LABELS[profile]}
+                <span className="min-w-0 truncate">{LABELS[profile]}</span>
               </ToggleGroupItem>
             </TooltipTrigger>
             <TooltipContent className="max-w-72 leading-relaxed">
@@ -93,7 +93,7 @@ export function NoizeProfileToggle() {
 
   if (protocol === "auto") {
     return (
-      <div className="grid gap-3">
+      <div className="grid min-w-0 gap-3">
         <ProfileSelector
           label="MASQUE baseline"
           selected={masqueNoize}
