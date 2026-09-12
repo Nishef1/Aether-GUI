@@ -9,12 +9,23 @@ function requireContract(condition, message) {
   if (!condition) throw new Error(`[selection-state] ${message}`);
 }
 
-const selectedToggleMarkers = [
+const toggle = read("src/components/ui/toggle.tsx");
+for (const marker of [
+  'accent:',
   "data-[state=on]:bg-primary",
   "data-[state=on]:text-primary-foreground",
   "data-[state=on]:font-semibold",
   "data-[state=on]:ring-primary/80",
-];
+  "data-[state=on]:hover:bg-primary",
+]) {
+  requireContract(toggle.includes(marker), `shared orange toggle variant lost state styling: ${marker}`);
+}
+requireContract(
+  !toggle
+    .split("variants:")[0]
+    .includes("data-[state=on]:bg-muted"),
+  "base toggle styles can override component-selected orange backgrounds",
+);
 
 for (const file of [
   "src/components/ScanModeToggle.tsx",
@@ -23,9 +34,10 @@ for (const file of [
   "src/components/IpVersionToggle.tsx",
 ]) {
   const source = read(file);
-  for (const marker of selectedToggleMarkers) {
-    requireContract(source.includes(marker), `${file} lost selected-state affordance: ${marker}`);
-  }
+  requireContract(
+    source.includes('variant="accent"'),
+    `${file} is not wired to the shared orange selection variant`,
+  );
 }
 
 const exitPreference = read("src/components/ExitPreferenceControl.tsx");
