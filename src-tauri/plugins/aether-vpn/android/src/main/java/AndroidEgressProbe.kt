@@ -198,7 +198,8 @@ internal object AndroidEgressProbe {
             val request = buildString {
                 append("GET /__down?bytes=$CAPACITY_DOWN_BYTES HTTP/1.1\r\n")
                 append("Host: $CAPACITY_HOST\r\n")
-                append("User-Agent: Aether-Android/3\r\n")
+                // No product-specific User-Agent: this is a tunnel health/capacity
+                // measurement, not an application request that needs branding.
                 append("Accept: application/octet-stream\r\n")
                 append("Connection: close\r\n\r\n")
             }.toByteArray(Charsets.US_ASCII)
@@ -230,7 +231,6 @@ internal object AndroidEgressProbe {
             val head = buildString {
                 append("POST /__up HTTP/1.1\r\n")
                 append("Host: $CAPACITY_HOST\r\n")
-                append("User-Agent: Aether-Android/3\r\n")
                 append("Content-Type: application/octet-stream\r\n")
                 append("Content-Length: $CAPACITY_UP_BYTES\r\n")
                 append("Connection: close\r\n\r\n")
@@ -312,7 +312,6 @@ internal object AndroidEgressProbe {
             val writer = it.outputStream.bufferedWriter(Charsets.US_ASCII)
             writer.write("GET ${provider.path} HTTP/1.1\r\n")
             writer.write("Host: ${provider.hostHeader}\r\n")
-            writer.write("User-Agent: Aether-Android/3\r\n")
             writer.write("Accept: text/plain\r\n")
             writer.write("Connection: close\r\n\r\n")
             writer.flush()
