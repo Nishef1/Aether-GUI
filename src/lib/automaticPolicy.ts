@@ -177,6 +177,21 @@ function h2MasksForAutomaticAttempt(
   if (selected !== "off") return [{ mask: selected, historical: false }];
 
   const proven = provenHistoricalH2Mask(paths, now);
+
+  // Turbo is a first-healthy policy. Do not burn another full transport attempt
+  // on a speculative ClientHello mutation before trying a different carrier.
+  // A mask that has already proven itself on this underlay is the only automatic
+  // exception; otherwise compatibility masks stay a manual/Balanced rescue tool.
+  if (base.scan_mode === "turbo") {
+    if (baseline && proven != null) {
+      return [
+        { mask: "off", historical: false },
+        { mask: proven, historical: true },
+      ];
+    }
+    return [{ mask: proven ?? "off", historical: proven != null }];
+  }
+
   if (baseline) {
     return [
       { mask: "off", historical: false },
@@ -289,20 +304,49 @@ export function buildAutomaticCandidates(
   return candidates;
 }
 
+function transportForAttempt(profile: ConnectionProfile): AutomaticTransport {
+  switch (profile.protocol) {
+    case "masque":
+      return profile.masque_http2 ? "h2" : "h3";
+    case "wireguard":
+      return "wg";
+    case "gool":
+      return "gool";
+    case "auto":
+      return baselineTransport(profile);
+  }
+}
+
+function automaticScanBudgetSecs(profile: ConnectionProfile): number {
+  const transport = transportForAttempt(profile);
+
+  switch (profile.scan_mode) {
+    case "turbo":
+      // Fast/Gaming: enough time for a genuine data-plane result, then move on.
+      if (transport === "gool") return 60;
+      if (transport === "wg") return 40;
+      return 30;
+    case "balanced":
+      if (transport === "gool") return 135;
+      if (transport === "wg") return 105;
+      return 90;
+    case "thorough":
+      if (transport === "gool") return 330;
+      if (transport === "wg") return 300;
+      return 270;
+    case "stealth":
+      if (transport === "gool") return 240;
+      if (transport === "wg") return 210;
+      return 180;
+    case "ironclad":
+      if (transport === "gool") return 270;
+      if (transport === "wg") return 240;
+      return 210;
+  }
+}
+
 export function automaticAttemptBudgetMs(profile: ConnectionProfile): number {
-  const seconds = (() => {
-    switch (profile.scan_mode) {
-      case "turbo":
-        return 75;
-      case "balanced":
-        return 150;
-      case "thorough":
-        return 330;
-      case "stealth":
-        return 210;
-      case "ironclad":
-        return 240;
-    }
-  })();
-  return (seconds + 30) * 1000;
+  // Keep a fixed launch/stop grace outside the scan budget so slow process
+  // startup never gets confused with an unhealthy transport.
+  return (automaticScanBudgetSecs(profile) + 30) * 1000;
 }
