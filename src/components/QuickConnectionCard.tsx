@@ -1,4 +1,5 @@
 import { Gamepad2, Gauge, LockKeyhole } from "lucide-react";
+import { DnsProtectionControl } from "@/components/DnsProtectionControl";
 import { ExitPreferenceControl } from "@/components/ExitPreferenceControl";
 import { ProtocolSelect } from "@/components/ProtocolSelect";
 import { ScanModeToggle } from "@/components/ScanModeToggle";
@@ -130,6 +131,8 @@ export function QuickConnectionCard() {
             {SCAN_COPY[profile.scan_mode]}
           </p>
         </div>
+
+        <DnsProtectionControl disabled={locked} />
 
         {masqueFamily && (
           <>
