@@ -109,6 +109,26 @@ for (const [file, marker] of [
   requireContract(read(file).includes(marker), `${file} drifted from the core keepalive policy`);
 }
 
+// The Kotlin bridge has its own deserialization/Intent fallbacks. They must
+// match the reachability-first profile too, otherwise a partial restore can
+// silently regress to Balanced/H3/no-quick-reconnect/5s WireGuard keepalive.
+const androidBridge = read(
+  "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt",
+);
+for (const marker of [
+  'var scanMode: String = "turbo"',
+  "var quickReconnect: Boolean = true",
+  "var masqueHttp2: Boolean = true",
+  "var keepalive: Int = 25",
+  'intent.getStringExtra(EXTRA_PROTOCOL) ?: "auto"',
+  'intent.getStringExtra(EXTRA_SCAN_MODE) ?: "turbo"',
+  "intent.getBooleanExtra(EXTRA_QUICK_RECONNECT, true)",
+  "intent.getBooleanExtra(EXTRA_MASQUE_HTTP2, true)",
+  "intent.getIntExtra(EXTRA_KEEPALIVE, 25)",
+]) {
+  requireContract(androidBridge.includes(marker), `Android native fallback drifted: ${marker}`);
+}
+
 const threatModel = read("docs/PRIVACY_DETECTABILITY.md");
 for (const marker of [
   "DNS leaks and resolver mismatch",
