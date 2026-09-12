@@ -105,8 +105,11 @@ fn probe(
         family.curl_flag().into(),
     ];
     if let Some(socks_addr) = upstream_socks_addr {
+        // socks5h delegates hostname resolution to Aether. The direct system
+        // probe below resolves through sing-box's DNS hijack, so together they
+        // verify both resolver paths instead of accidentally sharing OS DNS.
         args.push("--proxy".into());
-        args.push(format!("socks5://{socks_addr}"));
+        args.push(format!("socks5h://{socks_addr}"));
     } else {
         args.push("--noproxy".into());
         args.push("*".into());
