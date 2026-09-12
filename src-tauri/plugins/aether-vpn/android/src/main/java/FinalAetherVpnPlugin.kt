@@ -1144,8 +1144,28 @@ class FinalAetherVpnService : VpnService() {
         return false
     }
 
+    private fun waitForNextEgressProbe(token: Long): Boolean {
+        var remaining = EGRESS_PROBE_INTERVAL_MS
+        while (remaining > 0 && sessionGate.isActive(token)) {
+            val sleep = minOf(remaining, 1_000L)
+            try {
+                Thread.sleep(sleep)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+            remaining -= sleep
+        }
+        return sessionGate.isActive(token)
+    }
+
     private fun startEgressProbeLoop(token: Long, bindAddress: String) {
         probeExecutor.execute {
+            // runSession already performed the mandatory initial end-to-end
+            // verification. Wait a full interval before the first refresh so
+            // startup does not hit identity/geo providers twice back-to-back.
+            if (!waitForNextEgressProbe(token)) return@execute
+
             while (sessionGate.isActive(token)) {
                 val result = runCatching { AndroidEgressProbe.probe(bindAddress) }
                 if (sessionGate.isActive(token)) {
@@ -1158,21 +1178,12 @@ class FinalAetherVpnService : VpnService() {
                             )
                         }
                         .onFailure {
-                            AndroidVpnRuntime.publishProbeFailure()
+                            // AndroidEgressProbe already invalidates stale
+                            // identity on its final end-to-end failure.
                             log("Egress probe failed; stale public identity cleared")
                         }
                 }
-                var remaining = EGRESS_PROBE_INTERVAL_MS
-                while (remaining > 0 && sessionGate.isActive(token)) {
-                    val sleep = minOf(remaining, 1_000L)
-                    try {
-                        Thread.sleep(sleep)
-                    } catch (_: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        return@execute
-                    }
-                    remaining -= sleep
-                }
+                if (!waitForNextEgressProbe(token)) return@execute
             }
         }
     }
