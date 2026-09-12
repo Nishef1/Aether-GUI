@@ -366,14 +366,26 @@ fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
     }
 }
 
+fn normalize_runtime_dns(profile: &mut MobileConnectionProfile) {
+    profile.dns = crate::dns_policy::effective_resolvers_for_ip_version(
+        &profile.dns,
+        &profile.ip_version,
+    )
+    .into_iter()
+    .map(|resolver| resolver.ip().to_string())
+    .collect::<Vec<_>>()
+    .join(",");
+}
+
 fn primary_dns(profile: &MobileConnectionProfile) -> String {
-    crate::dns_policy::effective_resolvers(&profile.dns)
+    crate::dns_policy::effective_resolvers_for_ip_version(&profile.dns, &profile.ip_version)
         .first()
         .map(|resolver| resolver.ip().to_string())
         .unwrap_or_else(|| "1.1.1.1".into())
 }
 
-fn vpn_profile(profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> VpnProfile {
+fn vpn_profile(mut profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> VpnProfile {
+    normalize_runtime_dns(&mut profile);
     let profile = profile.for_runtime();
     let dns_server = primary_dns(&profile);
     VpnProfile {
@@ -757,7 +769,6 @@ pub fn run_inner() {
             get_default_profile,
             set_default_profile,
             get_system_tunnel,
-            set_system_tunnel,
             set_android_logging,
             get_runtime_telemetry,
             get_network_context,
