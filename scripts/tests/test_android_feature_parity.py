@@ -147,6 +147,26 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("mtu: $mtu", service)
         self.assertEqual(config["bundle"]["android"]["minSdkVersion"], 29)
 
+    def test_android_vpn_builder_enforces_selected_ip_family(self) -> None:
+        service = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt"
+        )
+        policy = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidTransportPolicy.kt"
+        )
+        self.assertIn("val family = AndroidTransportPolicy.ipFamilyPolicy(profile.ipVersion)", service)
+        self.assertIn("if (family.ipv4) {", service)
+        self.assertIn('builder.addAddress(TUN_IPV4_ADDRESS, 32)', service)
+        self.assertIn('builder.addRoute("0.0.0.0", 0)', service)
+        self.assertIn("if (family.ipv6) {", service)
+        self.assertIn('builder.addAddress(TUN_IPV6_ADDRESS, 128)', service)
+        self.assertIn('builder.addRoute("::", 0)', service)
+        self.assertNotIn("allowFamily(", service)
+        self.assertIn("family.allows(InetAddress.getByName(server))", service)
+        self.assertIn("retained.ipVersion != profile.ipVersion", service)
+        self.assertIn('"v4" -> AndroidIpFamilyPolicy(ipv4 = true, ipv6 = false)', policy)
+        self.assertIn('"v6" -> AndroidIpFamilyPolicy(ipv4 = false, ipv6 = true)', policy)
+
     def test_mobile_first_shell_owns_safe_area_and_touch_geometry(self) -> None:
         app = self.read("src/App.tsx")
         css = self.read("src/index.css")
@@ -218,7 +238,9 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("publish_release:", workflow)
         self.assertIn("default: true", workflow)
         self.assertIn("android-arm64", workflow)
-        self.assertIn("macos-15-intel", workflow)
+        self.assertIn("macos-arm64", workflow)
+        self.assertNotIn("macos-15-intel", workflow)
+        self.assertNotIn("x86_64-apple-darwin", workflow)
         self.assertNotIn("tauri-action", workflow)
         self.assertIn("name: publish GitHub release", workflow)
         self.assertIn("inputs.publish_release", workflow)
