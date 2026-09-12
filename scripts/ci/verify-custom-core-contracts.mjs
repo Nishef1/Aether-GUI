@@ -155,7 +155,10 @@ requireContract(mobileDiagnosticsRuntime.includes("getSharedPreferences(FAILURE_
 requireContract(mobileDiagnosticsRuntime.includes('recordFailure("safety"'), "Android safety failures no longer reach diagnostics");
 
 const mobileDiagnosticsInitializer = read("src-tauri/plugins/aether-vpn/android/src/main/java/AetherDiagnosticsInitializer.kt");
-requireContract(mobileDiagnosticsInitializer.includes("AndroidVpnRuntime::initialize"), "Android crash diagnostics are not initialized at process startup");
+requireContract(
+  mobileDiagnosticsInitializer.includes("AndroidVpnRuntime.initialize(appContext)"),
+  "Android crash diagnostics are not initialized from the process-start provider",
+);
 requireContract(mobileDiagnosticsInitializer.includes("ContentProvider"), "Android early diagnostics initializer lost its process-start hook");
 
 const mobileDiagnosticsExporter = read("src-tauri/plugins/aether-vpn/android/src/main/java/AndroidDiagnosticsExporter.kt");
@@ -181,6 +184,8 @@ for (const secret of ["AETHER_ACCESS_TOKEN", "AETHER_ACCESS_CLIENT_SECRET", "AET
 const mobileManifest = read("src-tauri/plugins/aether-vpn/android/src/main/AndroidManifest.xml");
 requireContract(mobileManifest.includes("android.permission.ACCESS_NETWORK_STATE"), "Android diagnostics cannot inspect network capabilities");
 requireContract(mobileManifest.includes("AetherDiagnosticsInitializer"), "Android crash diagnostics initializer is not registered");
+requireContract(mobileManifest.includes('android:exported="false"'), "Android startup initializer must remain private");
+requireContract(mobileManifest.includes('android:initOrder="100"'), "Android startup initializer lost its early provider ordering");
 requireContract(!mobileManifest.includes("WRITE_EXTERNAL_STORAGE"), "Android diagnostics reintroduced broad legacy storage permission");
 requireContract(!mobileManifest.includes("MANAGE_EXTERNAL_STORAGE"), "Android diagnostics requests broad all-files access");
 
