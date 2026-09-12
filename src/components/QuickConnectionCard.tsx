@@ -6,7 +6,14 @@ import { ScanModeToggle } from "@/components/ScanModeToggle";
 import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
 import { useExitPolicyStore } from "@/state/exitPolicyStore";
 import { useConnectionStore } from "@/state/connectionStore";
-import type { H2MaskMode, ScanMode, TlsProfileMode } from "@/types/connection";
+import type { H2MaskMode, Protocol, ScanMode, TlsProfileMode } from "@/types/connection";
+
+const PROTOCOL_COPY: Record<Protocol, string> = {
+  auto: "Automatic starts with H2/TCP, then falls back to WireGuard, H3/QUIC and finally WARP-in-WARP when a carrier cannot pass real traffic.",
+  masque: "MASQUE only. H2/TCP is the restricted-network default; H3/QUIC is available when UDP works cleanly.",
+  wireguard: "WireGuard only. Fast on networks that allow its UDP path; Automatic is safer when reachability changes.",
+  gool: "WARP-in-WARP uses two nested WARP hops. It is the heaviest fallback and is not preferred ahead of healthy single-hop transports.",
+};
 
 const SCAN_COPY: Record<ScanMode, string> = {
   turbo: "Fast pass: find the first healthy route quickly, then let Automatic fall back only if it has to.",
@@ -129,6 +136,9 @@ export function QuickConnectionCard() {
           <div className="rounded-xl bg-black/15 px-1 ring-1 ring-white/8">
             <ProtocolSelect />
           </div>
+          <p className="px-1 text-[10px] leading-4 text-muted-foreground">
+            {PROTOCOL_COPY[profile.protocol]}
+          </p>
         </div>
 
         <div className="grid gap-1.5">
