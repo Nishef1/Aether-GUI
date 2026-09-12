@@ -60,7 +60,11 @@ fn default_resolvers(ip_version: &str) -> Vec<SocketAddr> {
         .collect();
 
     if ip_version == "both" {
-        resolvers.extend(DEFAULT_DNS_V6.iter().filter_map(|value| parse_resolver(value)));
+        resolvers.extend(
+            DEFAULT_DNS_V6
+                .iter()
+                .filter_map(|value| parse_resolver(value)),
+        );
     }
     resolvers
 }
