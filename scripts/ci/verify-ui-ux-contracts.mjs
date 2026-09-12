@@ -48,6 +48,12 @@ requireContract(
   "Automatic fallback order is no longer explained in primary UI",
 );
 
+const protocol = read("src/components/ProtocolSelect.tsx");
+requireContract(
+  protocol.includes("bg-transparent text-foreground") && protocol.includes('aria-label="Connection protocol"'),
+  "selected protocol lost its primary-value affordance or accessible name",
+);
+
 const noize = read("src/components/NoizeProfileToggle.tsx");
 for (const marker of ["MASQUE baseline", "WireGuard / WiW fallback", 'protocol === "auto"']) {
   requireContract(noize.includes(marker), `Automatic obfuscation UI lost fallback control: ${marker}`);
@@ -73,9 +79,30 @@ for (const marker of [
   requireContract(tunnel.includes(marker), `Android tunnel status UI drifted: ${marker}`);
 }
 
+const connectButton = read("src/components/ConnectButton.tsx");
+for (const marker of [
+  'const disconnecting = status.state === "Disconnecting"',
+  'disconnecting ? "Disconnecting" : ARIA_LABEL[phase]',
+  'aria-busy={phase === "connecting"}',
+]) {
+  requireContract(connectButton.includes(marker), `connect control state semantics drifted: ${marker}`);
+}
+
+const bindAddress = read("src/components/BindAddressField.tsx");
+requireContract(
+  bindAddress.includes("const toggleLan = (enabled: boolean) =>") &&
+    bindAddress.includes("const nextPort = validPort(portDraft, port)"),
+  "LAN toggle can overwrite a valid unblurred SOCKS port draft",
+);
+
 const statusLine = read("src/components/ConnectionStatusLine.tsx");
 for (const marker of ['role="progressbar"', 'aria-valuetext', 'className="sr-only"']) {
   requireContract(statusLine.includes(marker), `connection status lost accessible progress/status: ${marker}`);
+}
+
+const diagnostics = read("src/components/ConnectionDiagnostics.tsx");
+for (const marker of ["Warp-in-Warp", 'label: "Healthy"', 'label: "Degraded"', 'label: "Failed"']) {
+  requireContract(diagnostics.includes(marker), `live diagnostics presentation drifted: ${marker}`);
 }
 
 const routing = read("src/components/RoutingSettings.tsx");
