@@ -143,6 +143,23 @@ for (const marker of [
   requireContract(androidBridge.includes(marker), `Android native fallback drifted: ${marker}`);
 }
 
+// Startup already performs an end-to-end egress verification. Periodic identity
+// refreshes must wait a full five-minute interval instead of creating a second
+// back-to-back request burst that is both wasteful and an avoidable cadence.
+for (const marker of [
+  "private fun waitForNextEgressProbe(token: Long): Boolean",
+  "private const val EGRESS_PROBE_INTERVAL_MS = 300_000L",
+  "if (!waitForNextEgressProbe(token)) return@execute",
+  "AndroidEgressProbe already invalidates stale",
+]) {
+  requireContract(androidBridge.includes(marker), `Android egress probe cadence drifted: ${marker}`);
+}
+const desktopTelemetry = read("src-tauri/src/telemetry.rs");
+requireContract(
+  desktopTelemetry.includes("const PROBE_INTERVAL: Duration = Duration::from_secs(300)"),
+  "desktop egress identity refresh drifted from the five-minute cadence",
+);
+
 const threatModel = read("docs/PRIVACY_DETECTABILITY.md");
 for (const marker of [
   "DNS leaks and resolver mismatch",
@@ -164,4 +181,4 @@ requireContract(
   "product documentation lost the no-false-guarantee rule",
 );
 
-console.log("[detectability-contracts] transport and privacy-detectability invariants are aligned");
+console.log("[detectability-contracts] transport, egress cadence and privacy-detectability invariants are aligned");
