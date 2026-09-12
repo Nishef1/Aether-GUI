@@ -29,12 +29,12 @@ export function ProtocolSelect() {
     >
       <SelectTrigger
         size="sm"
-        className="min-h-12 w-full border-transparent bg-transparent text-foreground shadow-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
+        className="min-h-12 w-full min-w-0 border-transparent bg-transparent text-foreground shadow-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
         aria-label="Connection protocol"
       >
         <SelectValue />
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent position="popper" align="start" sideOffset={4}>
         {(Object.keys(LABELS) as Protocol[]).map((option) => (
           <SelectItem key={option} value={option} className="min-h-11">
             {LABELS[option]}
