@@ -1,5 +1,6 @@
 package com.cluvexstudio.aethergui.vpn
 
+import java.net.InetAddress
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,6 +16,29 @@ class AndroidTransportPolicyTest {
         assertFalse(AndroidTransportPolicy.isValidMtu(1501))
         assertEquals(1280, AndroidTransportPolicy.sanitizeMtu(900))
         assertEquals(1500, AndroidTransportPolicy.sanitizeMtu(9000))
+    }
+
+    @Test
+    fun ipFamilySelectionIsARealAllowList() {
+        val ipv4 = AndroidTransportPolicy.ipFamilyPolicy("v4")
+        assertTrue(ipv4.ipv4)
+        assertFalse(ipv4.ipv6)
+        assertTrue(ipv4.allows(InetAddress.getByName("1.1.1.1")))
+        assertFalse(ipv4.allows(InetAddress.getByName("2606:4700:4700::1111")))
+
+        val ipv6 = AndroidTransportPolicy.ipFamilyPolicy("v6")
+        assertFalse(ipv6.ipv4)
+        assertTrue(ipv6.ipv6)
+        assertFalse(ipv6.allows(InetAddress.getByName("1.1.1.1")))
+        assertTrue(ipv6.allows(InetAddress.getByName("2606:4700:4700::1111")))
+
+        val both = AndroidTransportPolicy.ipFamilyPolicy("both")
+        assertTrue(both.ipv4)
+        assertTrue(both.ipv6)
+        assertTrue(AndroidTransportPolicy.isValidIpVersion("v4"))
+        assertTrue(AndroidTransportPolicy.isValidIpVersion("v6"))
+        assertTrue(AndroidTransportPolicy.isValidIpVersion("both"))
+        assertFalse(AndroidTransportPolicy.isValidIpVersion("preferred"))
     }
 
     @Test
