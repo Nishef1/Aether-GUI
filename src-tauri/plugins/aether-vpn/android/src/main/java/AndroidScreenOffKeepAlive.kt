@@ -130,7 +130,7 @@ internal object AndroidScreenOffKeepAlive {
             if (screenOff) ensureScreenOffMonitor()
 
             val shouldHold = screenOff && vpnLifecycleNeedsCpu()
-            val current = wakeLock ?: return
+            val current = wakeLock ?: return@synchronized
 
             if (shouldHold && !current.isHeld) {
                 runCatching { current.acquire() }
