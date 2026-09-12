@@ -44,8 +44,15 @@ export function QuickConnectionCard() {
     profile.ip_version === "v4" &&
     profile.quick_reconnect &&
     profile.masque_http2 &&
+    profile.masque_noize === "firewall" &&
     h2Mask === "off" &&
+    !profile.fragment &&
     tlsProfile === "automatic" &&
+    profile.tls_groups.trim() === "" &&
+    profile.ech.trim() === "" &&
+    profile.peer.trim() === "" &&
+    profile.h2_peer.trim() === "" &&
+    !profile.no_data_check &&
     preference === "low-latency";
 
   const setH2Mask = (mode: H2MaskMode) => {
