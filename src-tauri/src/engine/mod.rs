@@ -285,7 +285,15 @@ impl EngineRuntime {
                         dns_servers: dns_servers.clone(),
                     };
                     if runtime.system_tunnel.is_active() {
-                        runtime.system_tunnel.refresh_active_context(context);
+                        if let Err(error) = runtime.system_tunnel.refresh_active_context(context) {
+                            runtime.finish_system_tunnel_failure(
+                                &app,
+                                &adapter,
+                                generation,
+                                error.to_string(),
+                            );
+                            return;
+                        }
                     } else {
                         match runtime
                             .system_tunnel
