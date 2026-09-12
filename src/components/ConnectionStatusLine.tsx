@@ -93,9 +93,21 @@ function countryName(code: string): string {
 }
 
 function ScanProgressBar({ percent, active }: { percent: number | null; active: boolean }) {
+  const accessibility =
+    percent == null
+      ? { "aria-valuetext": "Searching for a healthy route" }
+      : { "aria-valuenow": percent, "aria-valuetext": `${percent}% of the current search budget` };
+
   if (isAndroid) {
     return (
-      <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
+      <div
+        role="progressbar"
+        aria-label="Route discovery progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        {...accessibility}
+        className="h-1 w-40 overflow-hidden rounded-full bg-surface-2"
+      >
         {percent == null ? (
           <div
             className="android-scan-indeterminate h-full w-1/3 rounded-full bg-status-connecting"
@@ -112,7 +124,14 @@ function ScanProgressBar({ percent, active }: { percent: number | null; active: 
   }
 
   return (
-    <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
+    <div
+      role="progressbar"
+      aria-label="Route discovery progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      {...accessibility}
+      className="h-1 w-40 overflow-hidden rounded-full bg-surface-2"
+    >
       {percent == null ? (
         <motion.div
           className="h-full w-1/3 rounded-full bg-status-connecting"
@@ -272,11 +291,11 @@ export function ConnectionStatusLine() {
     (privacyExhausted || !countryCode);
 
   return (
-    <div
-      aria-live="polite"
-      aria-atomic="true"
-      className="flex min-h-[60px] flex-col items-center gap-2 text-center"
-    >
+    <div className="flex min-h-[60px] flex-col items-center gap-2 text-center">
+      <span className="sr-only" role={status.state === "Error" ? "alert" : "status"}>
+        {status.state === "Error" ? `${primary}. ${secondary}` : primary}
+      </span>
+
       <AnimatePresence mode="wait">
         <motion.span
           key={status.state}
@@ -401,7 +420,7 @@ export function ConnectionStatusLine() {
             <button
               type="button"
               onClick={retryPrivacyExit}
-              className="min-h-8 rounded-full bg-white/5 px-3 text-[10px] font-medium text-foreground ring-1 ring-white/10 transition-colors hover:bg-white/10"
+              className="min-h-11 rounded-full bg-white/5 px-4 text-[11px] font-medium text-foreground ring-1 ring-white/10 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               Try another exit
             </button>
