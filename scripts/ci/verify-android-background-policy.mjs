@@ -32,12 +32,15 @@ const keepAlive = read(
 );
 for (const marker of [
   "PowerManager.PARTIAL_WAKE_LOCK",
-  "!powerManager.isInteractive && vpnLifecycleNeedsCpu()",
+  "!powerManager.isInteractive",
+  "vpnLifecycleNeedsCpu()",
   '"Tunneling"',
   '"Connected"',
   "ContextCompat.RECEIVER_NOT_EXPORTED",
   "setReferenceCounted(false)",
   "STATE_RECHECK_MS",
+  "monitorRunning",
+  "ensureScreenOffMonitor()",
   "releaseLocked(current)",
 ]) {
   requireContract(keepAlive.includes(marker), `screen-off liveness policy drifted: ${marker}`);
