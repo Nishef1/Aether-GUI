@@ -54,6 +54,20 @@ requireContract(
   "Warp-in-Warp can drift to independent hard-coded keepalive cadences",
 );
 
+// A failed WiW pair must not be immediately selected again just because the
+// rescan happened to hit the same Cloudflare edges first. Cooldown is keyed by
+// IP and expanded across all WireGuard ports, then expires normally.
+const wgProber = read("vendor/aether/aether/src/wg_prober.rs");
+for (const marker of [
+  "WIW_LAST_SELECTION",
+  "WIW_COOLDOWNS",
+  'AETHER_WG_ENDPOINT_COOLDOWN_SECS',
+  "previous WARP-in-WARP hop set moved into",
+  "add_ip_exclusions",
+]) {
+  requireContract(wgProber.includes(marker), `WiW failed-hop cooldown regressed: ${marker}`);
+}
+
 const h2 = read("vendor/aether/aether/src/masque_h2.rs");
 requireContract(
   h2.includes("keepalive_due(&last_activity, keepalive_period)"),
