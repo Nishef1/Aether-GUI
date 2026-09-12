@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { ShieldCheck } from "lucide-react";
+import { RotateCcw, ShieldCheck } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
@@ -23,7 +23,7 @@ export function SystemTunnelToggle() {
       <div className="flex flex-col gap-2">
         <div className="flex min-h-14 items-center justify-between gap-3 rounded-2xl bg-status-connected/[0.055] px-3.5 py-3 ring-1 ring-status-connected/15">
           <div className="flex min-w-0 items-center gap-2.5">
-            <ShieldCheck className="size-4 shrink-0 text-status-connected" />
+            <ShieldCheck className="size-4 shrink-0 text-status-connected" aria-hidden="true" />
             <div className="min-w-0">
               <p className="text-xs font-medium text-foreground">Android device tunnel</p>
               <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
@@ -37,12 +37,15 @@ export function SystemTunnelToggle() {
         </div>
         {error && (
           <div className="flex items-center justify-between gap-3 rounded-xl bg-status-error/5 px-3 py-2 text-[11px] text-status-error ring-1 ring-status-error/15">
-            <span className="min-w-0">{error}</span>
+            <span className="min-w-0 break-words" role="alert">
+              {error}
+            </span>
             <button
               type="button"
-              className="min-h-12 shrink-0 rounded-lg px-3 text-foreground ring-1 ring-white/10"
+              className="inline-flex min-h-12 shrink-0 items-center gap-1.5 rounded-lg px-3 text-foreground ring-1 ring-white/10 outline-none hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-primary"
               onClick={() => void load()}
             >
+              <RotateCcw size={13} aria-hidden="true" />
               Retry
             </button>
           </div>
@@ -57,7 +60,9 @@ export function SystemTunnelToggle() {
         <div className="min-w-0">
           <p className="text-xs font-medium text-foreground">Protect the whole device</p>
           <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-            Routes apps through Aether using the bundled sing-box TUN. Elevation may be required.
+            {loaded
+              ? "Routes apps through Aether using the bundled sing-box TUN. Elevation may be required."
+              : "Loading the saved system-tunnel preference…"}
           </p>
         </div>
         <Switch
@@ -70,7 +75,21 @@ export function SystemTunnelToggle() {
           aria-label="Enable system-wide Aether tunnel"
         />
       </div>
-      {error && <span className="text-[11px] leading-4 text-status-error">{error}</span>}
+      {error && (
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-status-error/5 px-3 py-2 text-[11px] text-status-error ring-1 ring-status-error/15">
+          <span className="min-w-0 break-words" role="alert">
+            {error}
+          </span>
+          <button
+            type="button"
+            className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-foreground ring-1 ring-white/10 outline-none hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-primary"
+            onClick={() => void load()}
+          >
+            <RotateCcw size={13} aria-hidden="true" />
+            Retry
+          </button>
+        </div>
+      )}
     </div>
   );
 }
