@@ -205,8 +205,8 @@ impl SystemTunnelAdapter for SingBoxTunnel {
         }
 
         let binary = Self::resolve_binary(app)?;
-        let config =
-            config::generate(&context.upstream_socks_addr).map_err(RuntimeError::SystemTunnel)?;
+        let config = config::generate(&context.upstream_socks_addr, &context.dns_servers)
+            .map_err(RuntimeError::SystemTunnel)?;
         let config_file = Self::write_config(app, &config)?;
         process::check_config(&binary, &config_file)?;
         Self::emit_log(
