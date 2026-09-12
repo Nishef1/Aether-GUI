@@ -3,6 +3,7 @@
 mod aether;
 mod commands;
 mod connection_acceptance;
+mod dns_policy;
 mod engine;
 mod error;
 mod events;
