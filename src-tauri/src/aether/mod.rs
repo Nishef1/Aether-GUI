@@ -7,7 +7,7 @@ pub mod status;
 use crate::error::AetherError;
 use crate::events::{now_millis, LogEvent, LOG_EVENT, STATUS_EVENT};
 use crate::state::ConnectionState;
-use profiles::{ConnectionProfile, ScanMode};
+use profiles::ConnectionProfile;
 use pty::PtySession;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -24,9 +24,8 @@ pub struct AetherManager {
     /// Invalidates every monitor, retry and delayed launch from an older
     /// connection lineage when Disconnect or a new Connect is requested.
     generation: u64,
-    /// Retry count within the current connection lineage. Before the first
-    /// proven connection it is used only for the single Turbo -> Balanced
-    /// fallback. After Connected it counts transient recovery attempts.
+    /// Retry count after a previously proven connection drops. Initial route
+    /// discovery never silently changes scan modes; Automatic owns failover.
     retry_count: u32,
     /// Distinguishes an initial scan failure from a drop after a proven tunnel.
     connected_once: bool,
@@ -96,18 +95,6 @@ fn set_state_and_emit_if_current(
     }
     let _ = app.emit(STATUS_EVENT, &new_state);
     true
-}
-
-fn initial_fallback_profile(
-    profile: &ConnectionProfile,
-    retry_count: u32,
-) -> Option<ConnectionProfile> {
-    if retry_count != 0 || !matches!(profile.scan_mode, ScanMode::Turbo) {
-        return None;
-    }
-    let mut fallback = profile.clone();
-    fallback.scan_mode = ScanMode::Balanced;
-    Some(fallback)
 }
 
 pub fn start_connect(
@@ -216,7 +203,6 @@ enum RetryDecision {
         max_attempts: u32,
         profile: ConnectionProfile,
         backoff: Duration,
-        note: Option<String>,
     },
 }
 
@@ -238,25 +224,10 @@ fn handle_unexpected_failure(
         manager.session = None;
 
         if !manager.connected_once {
-            if let Some(fallback) = initial_fallback_profile(&profile, manager.retry_count) {
-                manager.retry_count = 1;
-                RetryDecision::Retry {
-                    attempt: 1,
-                    max_attempts: 1,
-                    profile: fallback,
-                    backoff: status::INITIAL_TURBO_FALLBACK_BACKOFF,
-                    note: Some(
-                        "[gui] Turbo scan did not connect; retrying once with Balanced scan".into(),
-                    ),
-                }
-            } else {
-                let message = if manager.retry_count > 0 {
-                    format!("{failure_message} (Balanced fallback also failed)")
-                } else {
-                    failure_message
-                };
-                RetryDecision::Fail(message)
-            }
+            // Scan modes are explicit policy. In particular, Turbo must fail
+            // fast so the frontend Automatic ladder can move to the next
+            // transport instead of being trapped in a hidden Balanced rescan.
+            RetryDecision::Fail(failure_message)
         } else {
             manager.retry_count += 1;
             let attempt = manager.retry_count;
@@ -271,7 +242,6 @@ fn handle_unexpected_failure(
                     max_attempts: status::MAX_POST_CONNECT_RETRIES,
                     profile,
                     backoff: status::POST_CONNECT_RETRY_BACKOFF[(attempt - 1) as usize],
-                    note: None,
                 }
             }
         }
@@ -295,17 +265,7 @@ fn handle_unexpected_failure(
             max_attempts,
             profile,
             backoff,
-            note,
         } => {
-            if let Some(line) = note {
-                let _ = app.emit(
-                    LOG_EVENT,
-                    &LogEvent {
-                        line,
-                        timestamp: now_millis(),
-                    },
-                );
-            }
             if !set_state_and_emit_if_current(
                 &app,
                 &manager,
@@ -567,21 +527,6 @@ pub fn shutdown_blocking(manager: &Arc<Mutex<AetherManager>>, data_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn turbo_has_exactly_one_balanced_initial_fallback() {
-        let mut profile = ConnectionProfile::default();
-        profile.scan_mode = ScanMode::Turbo;
-        let fallback = initial_fallback_profile(&profile, 0).expect("missing fallback");
-        assert_eq!(fallback.scan_mode, ScanMode::Balanced);
-        assert!(initial_fallback_profile(&profile, 1).is_none());
-    }
-
-    #[test]
-    fn non_turbo_initial_scans_do_not_loop() {
-        let profile = ConnectionProfile::default();
-        assert!(initial_fallback_profile(&profile, 0).is_none());
-    }
 
     #[test]
     fn generation_invalidates_stale_workers() {
