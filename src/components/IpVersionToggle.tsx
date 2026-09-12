@@ -22,7 +22,7 @@ export function IpVersionToggle() {
         if (v) setIpVersion(v as IpVersion);
       }}
       disabled={locked}
-      aria-label="IP version to scan"
+      aria-label="Internet IP family"
       className="grid w-full grid-cols-3 gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
     >
       {(Object.keys(LABELS) as IpVersion[]).map((v) => (
@@ -30,7 +30,7 @@ export function IpVersionToggle() {
           key={v}
           value={v}
           size="sm"
-          aria-label={LABELS[v]}
+          aria-label={`${LABELS[v]} internet family`}
           className="min-h-12 w-full min-w-0 rounded-xl text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary data-[state=on]:font-semibold data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:ring-1 data-[state=on]:ring-primary/80"
         >
           {LABELS[v]}
