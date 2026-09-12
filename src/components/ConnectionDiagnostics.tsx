@@ -1,9 +1,10 @@
 import { Activity, Gauge, Globe2, Network, ShieldCheck } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useAutomaticRuntimeStore } from "@/state/automaticRuntimeStore";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useSystemTunnelStore } from "@/state/systemTunnelStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
-import type { ConnectionProfile } from "@/types/connection";
+import type { ConnectionProfile, PathHealth } from "@/types/connection";
 
 function inferredTransport(profile: ConnectionProfile): string {
   switch (profile.protocol) {
@@ -15,6 +16,21 @@ function inferredTransport(profile: ConnectionProfile): string {
       return "Warp-in-Warp";
     case "auto":
       return "Pending";
+  }
+}
+
+function runtimeTransportLabel(transport: string | null, profile: ConnectionProfile): string {
+  switch (transport) {
+    case "h2":
+      return "H2";
+    case "h3":
+      return "H3";
+    case "wg":
+      return "WireGuard";
+    case "gool":
+      return "Warp-in-Warp";
+    default:
+      return inferredTransport(profile);
   }
 }
 
@@ -59,6 +75,28 @@ function capacityLabel(downloadKbps: number, uploadKbps: number): string {
   return `↓ ${format(downloadKbps)} · ↑ ${format(uploadKbps)}`;
 }
 
+function healthPresentation(health: PathHealth): { label: string; className: string } {
+  switch (health) {
+    case "healthy":
+      return {
+        label: "Healthy",
+        className: "bg-status-connected/8 text-status-connected ring-status-connected/20",
+      };
+    case "suspect":
+      return {
+        label: "Degraded",
+        className: "bg-status-connecting/8 text-status-connecting ring-status-connecting/20",
+      };
+    case "failed":
+      return {
+        label: "Failed",
+        className: "bg-status-error/8 text-status-error ring-status-error/20",
+      };
+    case "unknown":
+      return { label: "Unknown", className: "bg-black/15 text-muted-foreground ring-white/7" };
+  }
+}
+
 export function ConnectionDiagnostics() {
   const status = useConnectionStore((state) => state.status);
   const attemptId = useConnectionStore((state) => state.attemptId);
@@ -96,8 +134,9 @@ export function ConnectionDiagnostics() {
       ? { downloadKbps: telemetryDownload, uploadKbps: telemetryUpload }
       : null;
   const uploadLimited = runtimeAttemptCapacity?.uploadLimited ?? telemetryUploadLimited;
-  const transport = path?.transport ? path.transport.toUpperCase() : inferredTransport(profile);
+  const transport = runtimeTransportLabel(path?.transport ?? null, profile);
   const mask = maskLabel(profile);
+  const health = healthPresentation(pathHealth);
   const tunnel =
     status.state === "StartingTunnel" || status.state === "Tunneling"
       ? status.tunnel
@@ -111,10 +150,13 @@ export function ConnectionDiagnostics() {
     : null;
 
   return (
-    <section className="rounded-2xl bg-white/[0.025] px-3.5 py-3 ring-1 ring-white/8">
+    <section
+      className="rounded-2xl bg-white/[0.025] px-3.5 py-3 ring-1 ring-white/8"
+      aria-label="Live connection details"
+    >
       <div className="flex min-w-0 items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Activity size={14} className="shrink-0 text-primary" />
+          <Activity size={14} className="shrink-0 text-primary" aria-hidden="true" />
           <span className="truncate text-xs font-medium text-foreground">
             {activeAutomaticAttempt?.label ?? "Connection details"}
           </span>
@@ -128,34 +170,43 @@ export function ConnectionDiagnostics() {
 
       <div className="mt-2.5 flex flex-wrap gap-1.5 font-mono text-[10px] text-muted-foreground">
         <span className="inline-flex items-center gap-1 rounded-lg bg-black/15 px-2 py-1 ring-1 ring-white/7">
-          <Network size={10} /> {transport}
+          <Network size={10} aria-hidden="true" /> {transport}
         </span>
         <span className="inline-flex items-center gap-1 rounded-lg bg-black/15 px-2 py-1 ring-1 ring-white/7">
-          <Globe2 size={10} /> {runtimeIpLabel(path?.endpoint ?? null, profile)}
+          <Globe2 size={10} aria-hidden="true" /> {runtimeIpLabel(path?.endpoint ?? null, profile)}
         </span>
         {mask && (
           <span className="rounded-lg bg-black/15 px-2 py-1 ring-1 ring-white/7">{mask}</span>
         )}
         <span className="inline-flex items-center gap-1 rounded-lg bg-black/15 px-2 py-1 ring-1 ring-white/7">
-          <ShieldCheck size={10} /> {tunnel}
+          <ShieldCheck size={10} aria-hidden="true" /> {tunnel}
         </span>
         {path && (
           <span
+            dir="ltr"
             className="max-w-full truncate rounded-lg bg-black/15 px-2 py-1 ring-1 ring-white/7"
             title={path.endpoint}
+            aria-label={`Selected endpoint ${path.endpoint}`}
           >
             {path.endpoint}
           </span>
         )}
         {pathHealth !== "unknown" && (
-          <span className="rounded-lg bg-black/15 px-2 py-1 ring-1 ring-white/7">
-            {pathHealth}
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg px-2 py-1 ring-1",
+              health.className,
+            )}
+          >
+            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
+            {health.label}
             {qualityConfidence >= 40 ? ` · ${qualityScore}/100` : ""}
           </span>
         )}
         {capacity && (
           <span className="inline-flex items-center gap-1 rounded-lg bg-black/15 px-2 py-1 ring-1 ring-white/7">
-            <Gauge size={10} /> {capacityLabel(capacity.downloadKbps, capacity.uploadKbps)}
+            <Gauge size={10} aria-hidden="true" />
+            {capacityLabel(capacity.downloadKbps, capacity.uploadKbps)}
           </span>
         )}
         {uploadLimited && (
