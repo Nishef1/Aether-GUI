@@ -232,7 +232,8 @@ impl EngineRuntime {
         // engine's saved default. The system TUN then uses the same resolvers as
         // the Aether Core instead of silently hard-coding a different provider.
         let fallback_profile = adapter.default_profile(&app).ok();
-        let dns_servers = dns_policy::profile_resolvers(profile.as_ref(), fallback_profile.as_ref());
+        let dns_servers =
+            dns_policy::profile_resolvers(profile.as_ref(), fallback_profile.as_ref());
         let generation = self.connection_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let had_active_tunnel = self.system_tunnel.is_active();
         let tunnel_epoch = self.system_tunnel.begin_attempt(&app);
@@ -251,13 +252,7 @@ impl EngineRuntime {
             .map_err(|_| RuntimeError::Internal("active engine lock is poisoned".into()))? =
             adapter.id().into();
 
-        self.spawn_system_tunnel_supervisor(
-            app,
-            adapter,
-            generation,
-            tunnel_epoch,
-            dns_servers,
-        );
+        self.spawn_system_tunnel_supervisor(app, adapter, generation, tunnel_epoch, dns_servers);
         Ok(())
     }
 
