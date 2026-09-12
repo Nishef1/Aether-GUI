@@ -247,7 +247,7 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("mtu: DEFAULT_MTU", source)
         self.assertIn("validate_secs: 10", source)
         self.assertIn("reconnect_secs: 2", source)
-        self.assertIn("keepalive: 5", source)
+        self.assertIn("keepalive: 25", source)
 
     def test_numeric_settings_keep_an_editable_draft_until_commit(self) -> None:
         core = self.read("src/components/CoreAdvancedSettings.tsx")
