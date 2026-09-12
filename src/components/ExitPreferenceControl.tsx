@@ -50,9 +50,9 @@ export function ExitPreferenceControl({ disabled = false }: { disabled?: boolean
               />
               <span
                 className={cn(
-                  "block h-full min-h-12 min-w-0 rounded-xl px-3 py-2 text-left ring-1 outline-none transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary",
+                  "block h-full min-h-12 min-w-0 rounded-xl px-3 py-2 text-left ring-1 outline-none transition-[background-color,color,box-shadow] duration-100 peer-focus-visible:ring-2 peer-focus-visible:ring-primary",
                   selected
-                    ? "bg-primary/10 text-foreground ring-primary/35"
+                    ? "bg-primary text-primary-foreground ring-primary shadow-sm"
                     : "bg-black/15 text-muted-foreground ring-white/8 hover:bg-white/5",
                   disabled && "opacity-50",
                 )}
@@ -60,12 +60,17 @@ export function ExitPreferenceControl({ disabled = false }: { disabled?: boolean
                 <span className="flex min-w-0 items-center gap-2 text-xs font-semibold">
                   <Icon
                     size={14}
-                    className={selected ? "shrink-0 text-primary" : "shrink-0"}
+                    className={selected ? "shrink-0 text-primary-foreground" : "shrink-0"}
                     aria-hidden="true"
                   />
                   <span className="min-w-0 truncate">{option.label}</span>
                 </span>
-                <span className="mt-1 block text-[10px] leading-4 text-muted-foreground">
+                <span
+                  className={cn(
+                    "mt-1 block text-[10px] leading-4",
+                    selected ? "text-primary-foreground/75" : "text-muted-foreground",
+                  )}
+                >
                   {option.description}
                 </span>
               </span>
