@@ -31,6 +31,7 @@ export function MasqueTransportToggle() {
     <div className="grid min-w-0 gap-1.5">
       <ToggleGroup
         type="single"
+        variant="accent"
         value={selected}
         onValueChange={(v) => {
           if (v) setMasqueHttp2(v === "http2");
@@ -46,7 +47,7 @@ export function MasqueTransportToggle() {
                 value={transport}
                 size="sm"
                 aria-label={LABELS[transport]}
-                className="min-h-12 w-full min-w-0 rounded-xl text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary data-[state=on]:font-semibold data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:ring-1 data-[state=on]:ring-primary/80"
+                className="min-h-12 w-full min-w-0 rounded-xl text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary"
               >
                 {LABELS[transport]}
               </ToggleGroupItem>
