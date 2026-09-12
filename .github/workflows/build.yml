@@ -51,9 +51,6 @@ jobs:
           - name: macos-arm64
             os: macos-15
             target: aarch64-apple-darwin
-          - name: macos-x86_64
-            os: macos-15-intel
-            target: x86_64-apple-darwin
 
     steps:
       - uses: actions/checkout@v6
@@ -433,7 +430,7 @@ jobs:
           - Aether Core v1.9.0 (pinned custom build).
           - sing-box v1.14.0 for desktop system-wide TUN.
           - HEV v2.14.4 for the Android ARM64 VpnService data path.
-          - Windows, Linux, macOS Intel/Apple Silicon and signed Android ARM64 packages built from the same GUI commit and pinned Core source.
+          - Windows, Linux, macOS Apple Silicon and signed Android ARM64 packages built from the same GUI commit and pinned Core source.
           - Verified public-IP/exit-location telemetry, session traffic counters and connection timing.
           - Lower background telemetry/animation overhead and reduced-motion handling.
           - Fail-closed desktop/Android tunnel supervision and data-plane validation retained.
