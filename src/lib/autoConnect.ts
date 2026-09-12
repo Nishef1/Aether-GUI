@@ -390,6 +390,19 @@ async function invokeCandidate(profile: ConnectionProfile): Promise<string | nul
   }
 }
 
+async function persistAutomaticIntent(profile: ConnectionProfile): Promise<string | null> {
+  try {
+    // Persist the semantic user profile, not the native route guard/DNS
+    // projection and never a concrete transport candidate.
+    await invoke("set_default_profile", {
+      profile: { ...profile, runtime_only: false },
+    });
+    return null;
+  } catch (error) {
+    return String(error);
+  }
+}
+
 function publishLaunchError(message: string, phase: string): void {
   if (binaryUnavailable(message)) {
     useConnectionStore.setState({
@@ -437,6 +450,17 @@ export async function connectWithAutomaticPolicy(
     accessCodeRequired: false,
     sidecarError: null,
   });
+
+  const persistenceError = await persistAutomaticIntent(base);
+  if (epoch !== automationEpoch) return;
+  if (persistenceError != null) {
+    automationEpoch += 1;
+    publishLaunchError(
+      `Automatic profile could not be saved before route selection: ${persistenceError}`,
+      "profile-persistence",
+    );
+    return;
+  }
 
   // Historical ordering is only safe after the current underlay fingerprint is
   // resolved. Unknown context intentionally falls back to baseline ordering.
