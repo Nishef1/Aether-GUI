@@ -390,10 +390,11 @@ async function invokeCandidate(profile: ConnectionProfile): Promise<string | nul
   }
 }
 
-async function persistAutomaticIntent(profile: ConnectionProfile): Promise<string | null> {
+async function persistSuccessfulAutomaticIntent(profile: ConnectionProfile): Promise<string | null> {
   try {
-    // Persist the semantic user profile, not the native route guard/DNS
-    // projection and never a concrete transport candidate.
+    // Persist the semantic user profile only after a candidate has passed
+    // acceptance. This keeps desktop `last_successful_profile` truthful while
+    // still preventing the concrete candidate from replacing Automatic.
     await invoke("set_default_profile", {
       profile: { ...profile, runtime_only: false },
     });
@@ -451,17 +452,6 @@ export async function connectWithAutomaticPolicy(
     sidecarError: null,
   });
 
-  const persistenceError = await persistAutomaticIntent(base);
-  if (epoch !== automationEpoch) return;
-  if (persistenceError != null) {
-    automationEpoch += 1;
-    publishLaunchError(
-      `Automatic profile could not be saved before route selection: ${persistenceError}`,
-      "profile-persistence",
-    );
-    return;
-  }
-
   // Historical ordering is only safe after the current underlay fingerprint is
   // resolved. Unknown context intentionally falls back to baseline ordering.
   await refreshPathNetworkContext();
@@ -505,6 +495,13 @@ export async function connectWithAutomaticPolicy(
         const acceptance = await verifyConnectedCandidate(epoch, attemptId, candidate);
         if (acceptance.cancelled) return;
         if (acceptance.accepted) {
+          const persistenceError = await persistSuccessfulAutomaticIntent(base);
+          if (!attemptIsCurrent(epoch, attemptId)) return;
+          if (persistenceError != null) {
+            // The protected route is valid; a settings write failure must not
+            // tear it down. Surface the failure without lying about connectivity.
+            console.error("Failed to persist successful Automatic profile:", persistenceError);
+          }
           if (attemptIsCurrent(epoch, attemptId)) automationEpoch += 1;
           return;
         }
