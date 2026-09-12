@@ -38,23 +38,22 @@ export function ScanModeToggle() {
         if (v) setScanMode(v as ScanMode);
       }}
       disabled={locked}
-      className="w-full gap-0 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
+      aria-label="Route discovery mode"
+      className="w-full flex-wrap gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10 sm:flex-nowrap"
     >
       {(Object.keys(LABELS) as ScanMode[]).map((mode) => (
         <Tooltip key={mode}>
           <TooltipTrigger asChild>
-            <span className="flex-1">
-              <ToggleGroupItem
-                value={mode}
-                size="sm"
-                aria-label={LABELS[mode]}
-                className="min-h-12 w-full rounded-xl px-1 text-[11px] text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:px-2 sm:text-xs"
-              >
-                {LABELS[mode]}
-              </ToggleGroupItem>
-            </span>
+            <ToggleGroupItem
+              value={mode}
+              size="sm"
+              aria-label={`${LABELS[mode]} route discovery`}
+              className="min-h-12 min-w-[30%] flex-1 rounded-xl px-1 text-[11px] text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:min-w-0 sm:px-2 sm:text-xs"
+            >
+              {LABELS[mode]}
+            </ToggleGroupItem>
           </TooltipTrigger>
-          <TooltipContent>{DESCRIPTIONS[mode]}</TooltipContent>
+          <TooltipContent className="max-w-72 leading-relaxed">{DESCRIPTIONS[mode]}</TooltipContent>
         </Tooltip>
       ))}
     </ToggleGroup>
