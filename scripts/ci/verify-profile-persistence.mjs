@@ -30,17 +30,24 @@ const autoConnect = read("src/lib/autoConnect.ts");
 for (const marker of [
   'invoke("set_default_profile"',
   "runtime_only: false",
-  "persistAutomaticIntent(base)",
-  '"profile-persistence"',
+  "persistSuccessfulAutomaticIntent(base)",
+  "if (acceptance.accepted)",
+  "last_successful_profile",
 ]) {
   requireContract(
     autoConnect.includes(marker),
-    `Automatic base profile is not durably saved before candidate expansion: ${marker}`,
+    `successful Automatic intent persistence drifted: ${marker}`,
   );
 }
+requireContract(
+  autoConnect.indexOf("persistSuccessfulAutomaticIntent(base)") >
+    autoConnect.indexOf("if (acceptance.accepted)"),
+  "Automatic intent can be persisted before the winning candidate passes acceptance",
+);
 
 const desktopProfiles = read("src-tauri/src/aether/profiles.rs");
 for (const marker of [
+  'const STORE_KEY: &str = "last_successful_profile"',
   "pub runtime_only: bool",
   "if profile.runtime_only",
   "persisted.runtime_only = false",
@@ -67,6 +74,18 @@ for (const marker of [
   );
 }
 
+const nativeProfile = read("src/lib/nativeProfile.ts");
+for (const marker of [
+  "const sanitized = { ...profile }",
+  "const runtimeProfile = enforceDnsFamily(enforceIpFamily(profile))",
+  "return runtimeProfile",
+]) {
+  requireContract(
+    nativeProfile.includes(marker),
+    `native profile projection may drop the runtime-only marker: ${marker}`,
+  );
+}
+
 console.log(
-  "[profile-persistence] user intent stays persisted while Automatic candidates remain runtime-only",
+  "[profile-persistence] successful user intent persists while Automatic candidates remain runtime-only",
 );
