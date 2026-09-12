@@ -186,7 +186,7 @@ function AdvancedPanelContent() {
       <SectionCard
         icon={<Network size={17} />}
         title="Device & network"
-        description="System-wide routing, local listeners, DNS and route policy."
+        description="System-wide routing, local listeners and explicit route policy."
       >
         <Field label="Device tunnel">
           <SystemTunnelToggle />
@@ -229,14 +229,14 @@ function AdvancedPanelContent() {
                   event.currentTarget.blur();
                 }
               }}
-              className="min-h-11 w-full rounded-xl bg-black/20 px-3 text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+              className="min-h-11 w-full rounded-xl bg-black/20 px-3 text-sm text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
               aria-label="VPN MTU"
             />
           </Field>
         )}
         <Field
-          label="DNS & routing"
-          description="Direct/block lists remain effective behind the system tunnel because domain sniffing is enabled by default."
+          label="Routing rules"
+          description="Direct/block lists remain effective behind the system tunnel because domain sniffing is enabled by default. DNS is configured once in Quick connection above."
         >
           <RoutingSettings />
         </Field>
@@ -269,26 +269,27 @@ function AdvancedPanelContent() {
               <div>
                 <p className="text-xs font-medium text-foreground">Diagnostics bundle</p>
                 <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-                  Saves runtime status, network capabilities, the latest failure and a bounded log tail to Downloads/Aether.
+                  Saves runtime status, network capabilities, the latest failure and a bounded log
+                  tail to Downloads/Aether.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => void exportDiagnostics()}
                 disabled={diagnosticsState.status === "exporting"}
-                className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-foreground ring-1 ring-white/12 transition hover:bg-white/5 disabled:opacity-50"
+                className="inline-flex min-h-12 shrink-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-foreground ring-1 ring-white/12 transition hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
               >
                 <Download size={13} />
                 {diagnosticsState.status === "exporting" ? "Exporting…" : "Export ZIP"}
               </button>
             </div>
             {diagnosticsState.status === "done" && (
-              <p className="break-all text-[11px] text-status-connected">
+              <p className="break-all text-[11px] text-status-connected" role="status">
                 Saved to Downloads/Aether/{diagnosticsState.fileName}
               </p>
             )}
             {diagnosticsState.status === "error" && (
-              <p className="break-words text-[11px] text-destructive">
+              <p className="break-words text-[11px] text-destructive" role="alert">
                 Export failed: {diagnosticsState.message}
               </p>
             )}
@@ -315,13 +316,13 @@ function AdvancedPanelContent() {
               <span className="font-mono">
                 {logs.length} / {logLineLimit} lines
               </span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
                 <select
                   value={logLineLimit}
                   onChange={(event) =>
                     setLogLineLimit(Number(event.target.value) as LogLineLimit)
                   }
-                  className="min-h-10 rounded-lg bg-black/20 px-2 text-[11px] text-foreground ring-1 ring-white/10 outline-none focus:ring-primary"
+                  className="min-h-11 rounded-lg bg-black/20 px-2 text-[11px] text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   aria-label="Maximum log lines"
                 >
                   <option value={100}>100</option>
@@ -332,7 +333,7 @@ function AdvancedPanelContent() {
                   type="button"
                   onClick={() => void copyLogs()}
                   disabled={logs.length === 0}
-                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-3 text-foreground ring-1 ring-white/10 hover:bg-white/5 disabled:opacity-40"
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-foreground ring-1 ring-white/10 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40"
                   aria-label="Copy logs"
                 >
                   {copied ? <Check size={13} /> : <Copy size={13} />}
@@ -342,26 +343,37 @@ function AdvancedPanelContent() {
                   type="button"
                   onClick={clearLogs}
                   disabled={logs.length === 0}
-                  className="inline-flex size-10 items-center justify-center rounded-lg text-foreground ring-1 ring-white/10 hover:bg-white/5 disabled:opacity-40"
+                  className="inline-flex size-11 items-center justify-center rounded-lg text-foreground ring-1 ring-white/10 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40"
                   aria-label="Clear logs"
                 >
                   <Trash2 size={13} />
                 </button>
               </div>
+              <span className="sr-only" role="status" aria-live="polite">
+                {copied ? "Logs copied to clipboard" : ""}
+              </span>
             </div>
 
             <div
               ref={viewportRef}
+              role="log"
+              aria-label="Aether diagnostic logs"
+              aria-live="off"
+              tabIndex={0}
               onScroll={(event) => {
                 const element = event.currentTarget;
                 setAutoScroll(element.scrollHeight - element.scrollTop - element.clientHeight < 24);
               }}
-              className="max-h-72 overflow-y-auto rounded-xl bg-black/25 p-3 font-mono text-xs leading-5 text-muted-foreground ring-1 ring-white/10"
+              className="max-h-72 overflow-auto rounded-xl bg-black/25 p-3 font-mono text-xs leading-5 text-muted-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               {logs.length === 0 ? (
                 <p className="text-status-idle">No output yet.</p>
               ) : (
-                logs.map((log, index) => <p key={`${log.timestamp}-${index}`}>{log.line}</p>)
+                logs.map((log, index) => (
+                  <p key={`${log.timestamp}-${index}`} className="break-all whitespace-pre-wrap">
+                    {log.line}
+                  </p>
+                ))
               )}
             </div>
           </>
