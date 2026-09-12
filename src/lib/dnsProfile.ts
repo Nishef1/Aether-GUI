@@ -32,6 +32,16 @@ export function adblockDnsFor(ipVersion: IpVersion): string {
   return ADGUARD_DNS_V4;
 }
 
+/** Runtime persistence may materialize the otherwise-empty default DNS choice. */
+export function isDefaultDns(value: string): boolean {
+  if (value.trim() === "") return true;
+  return (
+    sameDnsSet(value, CLOUDFLARE_DNS_V4) ||
+    sameDnsSet(value, CLOUDFLARE_DNS_V6) ||
+    sameDnsSet(value, `${CLOUDFLARE_DNS_V4},${CLOUDFLARE_DNS_V6}`)
+  );
+}
+
 /**
  * Native runtime persistence can contain the family-specific projection of the
  * AdGuard preset rather than the original dual-family UI value. Treat every
