@@ -24,10 +24,13 @@ const LABELS: Record<NoizeProfile, string> = {
 const DESCRIPTIONS: Record<NoizeProfile, string> = {
   off: "No cover traffic. Useful on open networks or while troubleshooting.",
   light: "Low-overhead cover traffic with small randomized packets and minimal setup delay.",
-  firewall: "Conservative, independently tuned cover traffic for restrictive firewalls; the recommended MASQUE default.",
-  balanced: "Moderate packet-size and signature variation with practical overhead; the WireGuard default.",
+  firewall:
+    "Conservative, independently tuned cover traffic for restrictive firewalls; the recommended MASQUE default.",
+  balanced:
+    "Moderate packet-size and signature variation with practical overhead; the WireGuard default.",
   gfw: "A separate heavier timing and signature profile for networks with aggressive filtering or DPI. It does not guarantee evasion.",
-  aggressive: "Largest built-in cover-traffic budget and signature set. Use only when lighter profiles fail because setup time and battery cost are higher.",
+  aggressive:
+    "Largest built-in cover-traffic budget and signature set. Use only when lighter profiles fail because setup time and battery cost are higher.",
 };
 
 export function NoizeProfileToggle() {
@@ -42,34 +45,40 @@ export function NoizeProfileToggle() {
   const selected = isMasque ? masqueNoize : wgNoize;
 
   return (
-    <ToggleGroup
-      type="single"
-      value={selected}
-      onValueChange={(value) => {
-        if (!value) return;
-        if (isMasque) setMasqueNoize(value as NoizeProfile);
-        else setWgNoize(value as NoizeProfile);
-      }}
-      disabled={locked}
-      className="w-full flex-wrap gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
-    >
-      {OPTIONS.map((profile) => (
-        <Tooltip key={profile}>
-          <TooltipTrigger asChild>
-            <span className="min-w-[30%] flex-1">
+    <div className="grid gap-1.5">
+      <ToggleGroup
+        type="single"
+        value={selected}
+        onValueChange={(value) => {
+          if (!value) return;
+          if (isMasque) setMasqueNoize(value as NoizeProfile);
+          else setWgNoize(value as NoizeProfile);
+        }}
+        disabled={locked}
+        aria-label="Obfuscation profile"
+        className="w-full flex-wrap gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
+      >
+        {OPTIONS.map((profile) => (
+          <Tooltip key={profile}>
+            <TooltipTrigger asChild>
               <ToggleGroupItem
                 value={profile}
                 size="sm"
                 aria-label={LABELS[profile]}
-                className="min-h-12 w-full rounded-xl px-1 text-[11px] text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:px-2 sm:text-xs"
+                className="min-h-12 min-w-[30%] flex-1 rounded-xl px-1 text-[11px] text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:px-2 sm:text-xs"
               >
                 {LABELS[profile]}
               </ToggleGroupItem>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>{DESCRIPTIONS[profile]}</TooltipContent>
-        </Tooltip>
-      ))}
-    </ToggleGroup>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-72 leading-relaxed">
+              {DESCRIPTIONS[profile]}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </ToggleGroup>
+      <p className="px-1 text-[10px] leading-4 text-muted-foreground">
+        {DESCRIPTIONS[selected]}
+      </p>
+    </div>
   );
 }
