@@ -138,8 +138,16 @@
 }
 
 /* WebView pixels track Android dp closely at the CSS viewport level. Keep
-   phone controls at the 48dp touch-target floor; desktop remains denser. */
-.platform-android :where(button, input, select, [role="button"], [role="combobox"]) {
+   visible phone controls at the 48dp touch-target floor; visually hidden
+   native radios/checkboxes keep their accessibility geometry untouched. */
+.platform-android :where(
+  button,
+  input:not([type="radio"]):not([type="checkbox"]),
+  select,
+  textarea,
+  [role="button"],
+  [role="combobox"]
+) {
   min-height: 48px;
 }
 
@@ -153,8 +161,9 @@
   contain: paint;
 }
 
-.platform-android input,
-.platform-android select {
+.platform-android input:not([type="radio"]):not([type="checkbox"]),
+.platform-android select,
+.platform-android textarea {
   font-size: 16px;
 }
 
