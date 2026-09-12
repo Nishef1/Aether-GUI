@@ -1,16 +1,39 @@
 use serde::Serialize;
+use std::net::SocketAddr;
 
 pub const TUN_INTERFACE_NAME: &str = "aether-tun";
 pub const TUN_ADDRESS_V4: &str = "172.19.0.1/30";
 pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
 
-pub fn generate(upstream_socks_addr: &str) -> Result<String, String> {
+pub fn generate(upstream_socks_addr: &str, dns_servers: &[SocketAddr]) -> Result<String, String> {
     let socket = upstream_socks_addr
-        .parse::<std::net::SocketAddr>()
+        .parse::<SocketAddr>()
         .map_err(|error| format!("invalid upstream SOCKS address: {error}"))?;
     if !socket.ip().is_loopback() {
         return Err("system tunnel requires a loopback upstream SOCKS address".into());
     }
+
+    let fallback: SocketAddr = "1.1.1.1:53".parse().expect("static DNS address is valid");
+    let effective_dns = if dns_servers.is_empty() {
+        vec![fallback]
+    } else {
+        dns_servers.to_vec()
+    };
+    let dns = effective_dns
+        .iter()
+        .enumerate()
+        .map(|(index, server)| DnsServer {
+            type_: "tcp".into(),
+            tag: format!("dns-proxy-{index}"),
+            server: server.ip().to_string(),
+            server_port: server.port(),
+            detour: "proxy".into(),
+        })
+        .collect::<Vec<_>>();
+    let final_dns = dns
+        .first()
+        .map(|server| server.tag.clone())
+        .unwrap_or_else(|| "dns-proxy-0".into());
 
     let config = Config {
         log: LogConfig {
@@ -18,14 +41,8 @@ pub fn generate(upstream_socks_addr: &str) -> Result<String, String> {
             timestamp: true,
         },
         dns: DnsConfig {
-            servers: vec![DnsServer {
-                type_: "tcp",
-                tag: "dns-proxy",
-                server: "1.1.1.1",
-                server_port: 53,
-                detour: "proxy",
-            }],
-            final_: "dns-proxy",
+            servers: dns,
+            final_: final_dns,
         },
         inbounds: vec![TunInbound {
             type_: "tun",
@@ -62,7 +79,7 @@ pub fn generate(upstream_socks_addr: &str) -> Result<String, String> {
 #[derive(Serialize)]
 struct Config<'a> {
     log: LogConfig<'a>,
-    dns: DnsConfig<'a>,
+    dns: DnsConfig,
     inbounds: Vec<TunInbound<'a>>,
     outbounds: Vec<Outbound>,
     route: RouteConfig<'a>,
@@ -75,20 +92,20 @@ struct LogConfig<'a> {
 }
 
 #[derive(Serialize)]
-struct DnsConfig<'a> {
-    servers: Vec<DnsServer<'a>>,
+struct DnsConfig {
+    servers: Vec<DnsServer>,
     #[serde(rename = "final")]
-    final_: &'a str,
+    final_: String,
 }
 
 #[derive(Serialize)]
-struct DnsServer<'a> {
+struct DnsServer {
     #[serde(rename = "type")]
-    type_: &'a str,
-    tag: &'a str,
-    server: &'a str,
+    type_: String,
+    tag: String,
+    server: String,
     server_port: u16,
-    detour: &'a str,
+    detour: String,
 }
 
 #[derive(Serialize)]
@@ -182,10 +199,13 @@ impl<'a> RouteRule<'a> {
 mod tests {
     use super::*;
 
+    fn parse_config(dns: &[SocketAddr]) -> serde_json::Value {
+        serde_json::from_str(&generate("127.0.0.1:1819", dns).unwrap()).unwrap()
+    }
+
     #[test]
     fn config_routes_system_traffic_to_aether_and_bypasses_the_cores() {
-        let value: serde_json::Value =
-            serde_json::from_str(&generate("127.0.0.1:1819").unwrap()).unwrap();
+        let value = parse_config(&[]);
         assert_eq!(value["inbounds"][0]["type"], "tun");
         assert_eq!(value["inbounds"][0]["interface_name"], TUN_INTERFACE_NAME);
         assert_eq!(value["inbounds"][0]["auto_route"], true);
@@ -196,10 +216,31 @@ mod tests {
         assert_eq!(value["route"]["rules"][0]["outbound"], "direct");
         assert_eq!(value["route"]["rules"][1]["action"], "hijack-dns");
         assert_eq!(value["route"]["final"], "proxy");
+        assert_eq!(value["dns"]["servers"][0]["server"], "1.1.1.1");
+        assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
+    }
+
+    #[test]
+    fn selected_filtering_dns_is_used_inside_the_tunnel() {
+        let dns = [
+            "94.140.14.14:53".parse().unwrap(),
+            "94.140.15.15:53".parse().unwrap(),
+        ];
+        let value = parse_config(&dns);
+        assert_eq!(value["dns"]["servers"][0]["server"], "94.140.14.14");
+        assert_eq!(value["dns"]["servers"][1]["server"], "94.140.15.15");
+        assert_eq!(value["dns"]["final"], "dns-proxy-0");
+    }
+
+    #[test]
+    fn custom_dns_port_is_preserved() {
+        let dns = ["9.9.9.9:5353".parse().unwrap()];
+        let value = parse_config(&dns);
+        assert_eq!(value["dns"]["servers"][0]["server_port"], 5353);
     }
 
     #[test]
     fn rejects_non_loopback_upstream() {
-        assert!(generate("0.0.0.0:1819").is_err());
+        assert!(generate("0.0.0.0:1819", &[]).is_err());
     }
 }
