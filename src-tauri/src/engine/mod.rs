@@ -1,4 +1,5 @@
 use crate::aether::{self, profiles::ConnectionProfile, AetherManager};
+use crate::dns_policy;
 use crate::events::STATUS_EVENT;
 use crate::runtime_error::RuntimeError;
 use crate::state::ConnectionState;
@@ -8,6 +9,7 @@ use crate::system_tunnel::{
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -225,6 +227,12 @@ impl EngineRuntime {
         profile: Option<Value>,
     ) -> Result<(), RuntimeError> {
         let adapter = self.adapter(engine_id)?;
+        // Capture DNS from the exact launch profile before it is moved into the
+        // transport adapter. If no override was supplied, fall back to the
+        // engine's saved default. The system TUN then uses the same resolvers as
+        // the Aether Core instead of silently hard-coding a different provider.
+        let fallback_profile = adapter.default_profile(&app).ok();
+        let dns_servers = dns_policy::profile_resolvers(profile.as_ref(), fallback_profile.as_ref());
         let generation = self.connection_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let had_active_tunnel = self.system_tunnel.is_active();
         let tunnel_epoch = self.system_tunnel.begin_attempt(&app);
@@ -243,7 +251,13 @@ impl EngineRuntime {
             .map_err(|_| RuntimeError::Internal("active engine lock is poisoned".into()))? =
             adapter.id().into();
 
-        self.spawn_system_tunnel_supervisor(app, adapter, generation, tunnel_epoch);
+        self.spawn_system_tunnel_supervisor(
+            app,
+            adapter,
+            generation,
+            tunnel_epoch,
+            dns_servers,
+        );
         Ok(())
     }
 
@@ -253,6 +267,7 @@ impl EngineRuntime {
         adapter: Arc<dyn EngineAdapter>,
         generation: u64,
         tunnel_epoch: u64,
+        dns_servers: Vec<SocketAddr>,
     ) {
         let runtime = Arc::clone(self);
         std::thread::spawn(move || loop {
@@ -272,6 +287,7 @@ impl EngineRuntime {
                     let context = TunnelContext {
                         upstream_socks_addr: socks_addr,
                         connected_at_ms,
+                        dns_servers: dns_servers.clone(),
                     };
                     if runtime.system_tunnel.is_active() {
                         runtime.system_tunnel.refresh_active_context(context);
