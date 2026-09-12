@@ -104,7 +104,11 @@ function profileForTransport(
   transport: AutomaticTransport,
   preserveBaselineEndpoints: boolean,
 ): ConnectionProfile {
-  const profile = preserveBaselineEndpoints ? { ...base } : clearAutomaticEndpoints(base);
+  const selected = preserveBaselineEndpoints ? { ...base } : clearAutomaticEndpoints(base);
+  // Candidate mutations are execution details, not user settings. Native
+  // persistence must keep the user's Automatic profile even when a concrete
+  // H2/WG/H3/WiW candidate is the route that actually succeeds.
+  const profile: ConnectionProfile = { ...selected, runtime_only: true };
   switch (transport) {
     case "h3":
       return {
