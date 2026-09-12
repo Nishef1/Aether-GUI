@@ -45,13 +45,6 @@ export type PerfProfile = "auto" | "low" | "medium" | "high";
 export type PathHealth = "unknown" | "healthy" | "suspect" | "failed";
 export type TunnelValidation = "unknown" | "pending" | "healthy" | "suspect" | "failed";
 
-export interface SystemTunnelDescriptor {
-  id: string;
-  display_name: string;
-  requires_elevation: boolean;
-  capabilities: string[];
-}
-
 export interface ConnectionProfile {
   protocol: Protocol;
   scan_mode: ScanMode;
