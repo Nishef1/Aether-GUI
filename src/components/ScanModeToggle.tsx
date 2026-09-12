@@ -39,7 +39,7 @@ export function ScanModeToggle() {
       }}
       disabled={locked}
       aria-label="Route discovery mode"
-      className="w-full flex-wrap gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10 sm:flex-nowrap"
+      className="grid w-full grid-cols-5 gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
     >
       {(Object.keys(LABELS) as ScanMode[]).map((mode) => (
         <Tooltip key={mode}>
@@ -48,9 +48,9 @@ export function ScanModeToggle() {
               value={mode}
               size="sm"
               aria-label={`${LABELS[mode]} route discovery`}
-              className="min-h-12 min-w-[30%] flex-1 rounded-xl px-1 text-[11px] text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:min-w-0 sm:px-2 sm:text-xs"
+              className="min-h-12 w-full min-w-0 rounded-xl px-0.5 text-[10px] text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:px-2 sm:text-xs"
             >
-              {LABELS[mode]}
+              <span className="min-w-0 truncate">{LABELS[mode]}</span>
             </ToggleGroupItem>
           </TooltipTrigger>
           <TooltipContent className="max-w-72 leading-relaxed">{DESCRIPTIONS[mode]}</TooltipContent>
