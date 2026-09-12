@@ -51,10 +51,14 @@ for (const marker of [
   "quick_reconnect: false",
   "runtime_only: true",
   "Privacy reroll changes runtime behavior only",
+  "const restartSchedule = (refreshNow: boolean) =>",
+  "const unsubscribeConnection = useConnectionStore.subscribe",
+  "evaluateExitPolicy(useTelemetryStore.getState().snapshot)",
+  "unsubscribeConnection();",
 ]) {
   requireContract(
     telemetryStore.includes(marker),
-    `Privacy reroll can overwrite durable user settings: ${marker}`,
+    `Privacy/telemetry lifecycle contract drifted: ${marker}`,
   );
 }
 
@@ -100,5 +104,5 @@ for (const marker of [
 }
 
 console.log(
-  "[profile-persistence] successful user intent persists while runtime candidates and privacy rerolls stay transient",
+  "[profile-persistence] successful user intent persists while runtime candidates stay transient and telemetry lifecycle stays subscribed",
 );
