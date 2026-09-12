@@ -293,6 +293,9 @@ class FinalAetherVpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     private fun validateProfile(profile: FinalVpnProfileArgs): String? {
+        if (!AndroidTransportPolicy.isValidIpVersion(profile.ipVersion)) {
+            return "Unknown IP version selection"
+        }
         if (!AndroidTransportPolicy.isValidMtu(profile.mtu)) {
             return "MTU must be between ${AndroidTransportPolicy.MIN_MTU} and ${AndroidTransportPolicy.MAX_MTU}"
         }
@@ -364,6 +367,7 @@ class FinalAetherVpnService : VpnService() {
         val dnsServers: List<String>,
         val mtu: Int,
         val socksAddress: String,
+        val ipVersion: String,
     )
 
     private data class RuntimeProfile(
@@ -428,6 +432,7 @@ class FinalAetherVpnService : VpnService() {
     private var tunnelDnsServers: List<String> = emptyList()
     private var tunnelMtu: Int? = null
     private var tunnelSocksAddress: String? = null
+    private var tunnelIpVersion: String? = null
     private lateinit var notifications: AndroidVpnNotifications
 
     override fun onCreate() {
@@ -586,10 +591,11 @@ class FinalAetherVpnService : VpnService() {
                 if (
                     retained.dnsServers != requestedDns ||
                     retained.mtu != profile.mtu ||
-                    retained.socksAddress != profile.bindAddress
+                    retained.socksAddress != profile.bindAddress ||
+                    retained.ipVersion != profile.ipVersion
                 ) {
                     error(
-                        "Android TUN DNS/MTU/SOCKS settings changed during fail-closed recovery; Disconnect explicitly before applying those changes",
+                        "Android TUN DNS/MTU/SOCKS/IP-family settings changed during fail-closed recovery; Disconnect explicitly before applying those changes",
                     )
                 }
             }
@@ -716,7 +722,7 @@ class FinalAetherVpnService : VpnService() {
                     FinalServiceSnapshot(
                         state = "Tunneling",
                         socksAddr = profile.bindAddress,
-                        tunAddr = TUN_IPV4_ADDRESS,
+                        tunAddr = tunAddressFor(profile.ipVersion),
                         connectedAtMs = connectedAt,
                     ),
                 )
@@ -901,15 +907,24 @@ class FinalAetherVpnService : VpnService() {
         if (VpnService.prepare(this) != null) error("Android VPN permission was revoked")
         val (socksHost, socksPort) = splitHostPort(profile.bindAddress)
         val dnsServers = systemDnsServers(profile)
+        val family = AndroidTransportPolicy.ipFamilyPolicy(profile.ipVersion)
         val builder = Builder()
             .setSession("Aether")
             .setMtu(profile.mtu)
-            .addAddress(TUN_IPV4_ADDRESS, 32)
-            .addAddress(TUN_IPV6_ADDRESS, 128)
-            .addRoute("0.0.0.0", 0)
-            .addRoute("::", 0)
             .setBlocking(false)
             .setMetered(false)
+
+        // Android blocks an address family when the VPN does not add any
+        // address, route or DNS server for that family. Do not call allowFamily:
+        // IPv4-only must therefore omit every IPv6 primitive, and vice versa.
+        if (family.ipv4) {
+            builder.addAddress(TUN_IPV4_ADDRESS, 32)
+            builder.addRoute("0.0.0.0", 0)
+        }
+        if (family.ipv6) {
+            builder.addAddress(TUN_IPV6_ADDRESS, 128)
+            builder.addRoute("::", 0)
+        }
         dnsServers.forEach { server -> builder.addDnsServer(server) }
         builder.addDisallowedApplication(packageName)
         val descriptor = builder.establish()
@@ -928,6 +943,7 @@ class FinalAetherVpnService : VpnService() {
                 dnsServers = dnsServers,
                 mtu = profile.mtu,
                 socksAddress = profile.bindAddress,
+                ipVersion = profile.ipVersion,
             )
         } catch (error: Throwable) {
             runCatching { descriptor.close() }
@@ -1013,7 +1029,7 @@ class FinalAetherVpnService : VpnService() {
                         FinalServiceSnapshot(
                             state = "Error",
                             message = "Transport paused for protected recovery",
-                            tunAddr = TUN_IPV4_ADDRESS,
+                            tunAddr = attachedTunnelResources()?.let { tunAddressFor(it.ipVersion) },
                         ),
                     )
                     updateNotification(
@@ -1050,6 +1066,7 @@ class FinalAetherVpnService : VpnService() {
                 tunnelDnsServers = tunnel.dnsServers
                 tunnelMtu = tunnel.mtu
                 tunnelSocksAddress = tunnel.socksAddress
+                tunnelIpVersion = tunnel.ipVersion
                 AndroidVpnRuntime.setActiveTunBridge(tunnel.bridge)
                 true
             }
@@ -1064,8 +1081,19 @@ class FinalAetherVpnService : VpnService() {
         val bridge = tun2Socks
         val mtu = tunnelMtu
         val socksAddress = tunnelSocksAddress
-        if (descriptor != null && bridge != null && mtu != null && socksAddress != null) {
-            TunnelResources(descriptor, bridge, tunnelDnsServers, mtu, socksAddress)
+        val ipVersion = tunnelIpVersion
+        if (
+            descriptor != null && bridge != null && mtu != null &&
+            socksAddress != null && ipVersion != null
+        ) {
+            TunnelResources(
+                descriptor = descriptor,
+                bridge = bridge,
+                dnsServers = tunnelDnsServers,
+                mtu = mtu,
+                socksAddress = socksAddress,
+                ipVersion = ipVersion,
+            )
         } else null
     }
 
@@ -1086,6 +1114,7 @@ class FinalAetherVpnService : VpnService() {
         tunnelDnsServers = emptyList()
         tunnelMtu = null
         tunnelSocksAddress = null
+        tunnelIpVersion = null
         AndroidVpnRuntime.clearProcessInput()
         AndroidVpnRuntime.clearActiveTunBridge()
         resources
@@ -1284,11 +1313,26 @@ class FinalAetherVpnService : VpnService() {
     }
 
     private fun systemDnsServers(profile: RuntimeProfile): List<String> {
+        val family = AndroidTransportPolicy.ipFamilyPolicy(profile.ipVersion)
         val configured = profile.dns
             .split(Regex("[\\s,;]+"))
             .mapNotNull(::dnsHostForSystem)
+            .filter { server ->
+                runCatching { family.allows(InetAddress.getByName(server)) }.getOrDefault(false)
+            }
             .distinct()
-        return if (configured.isNotEmpty()) configured else listOf(profile.dnsServer)
+        if (configured.isNotEmpty()) return configured
+
+        val primary = dnsHostForSystem(profile.dnsServer)?.takeIf { server ->
+            runCatching { family.allows(InetAddress.getByName(server)) }.getOrDefault(false)
+        }
+        if (primary != null) return listOf(primary)
+
+        return if (family.ipv6 && !family.ipv4) {
+            listOf(DEFAULT_DNS_SERVER_V6)
+        } else {
+            listOf(DEFAULT_DNS_SERVER)
+        }
     }
 
     private fun sanitizeDnsServer(value: String): String = runCatching {
@@ -1296,6 +1340,9 @@ class FinalAetherVpnService : VpnService() {
         if (parsed.isAnyLocalAddress || parsed.isMulticastAddress) DEFAULT_DNS_SERVER
         else parsed.hostAddress ?: DEFAULT_DNS_SERVER
     }.getOrDefault(DEFAULT_DNS_SERVER)
+
+    private fun tunAddressFor(ipVersion: String): String =
+        if (ipVersion == "v6") TUN_IPV6_ADDRESS else TUN_IPV4_ADDRESS
 
     private fun yamlQuote(value: String): String = value.replace("'", "''")
 
@@ -1367,6 +1414,7 @@ class FinalAetherVpnService : VpnService() {
         private const val TUN_IPV6_ADDRESS = "fc00::1"
         private const val DEFAULT_SOCKS_ADDRESS = "127.0.0.1:1819"
         private const val DEFAULT_DNS_SERVER = "1.1.1.1"
+        private const val DEFAULT_DNS_SERVER_V6 = "2606:4700:4700::1111"
         private const val CLEANUP_WAIT_SECONDS = 4L
         private const val PROCESS_STOP_TIMEOUT_SECONDS = 2L
         private const val PROCESS_FORCE_TIMEOUT_SECONDS = 1L
