@@ -75,10 +75,12 @@ impl Default for MobileConnectionProfile {
     fn default() -> Self {
         Self {
             protocol: "auto".into(),
-            scan_mode: "balanced".into(),
+            // Fresh installs match the reachability-first desktop policy.
+            // Existing mobile-settings.json values are deserialized as-is.
+            scan_mode: "turbo".into(),
             ip_version: "v4".into(),
-            quick_reconnect: false,
-            masque_http2: false,
+            quick_reconnect: true,
+            masque_http2: true,
             masque_noize: "firewall".into(),
             wg_noize: "balanced".into(),
             bind_address: "127.0.0.1:1819".into(),
@@ -316,6 +318,10 @@ fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
             return Err("Unknown HTTP/2 ClientHello mask".into());
         }
     }
+    if !profile.dns.trim().is_empty() && crate::dns_policy::parse_resolvers(&profile.dns).is_empty()
+    {
+        return Err("DNS must contain at least one IPv4/IPv6 resolver address".into());
+    }
     if !profile.http_proxy.trim().is_empty() {
         let address = profile
             .http_proxy
@@ -348,13 +354,10 @@ fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
 }
 
 fn primary_dns(profile: &MobileConnectionProfile) -> String {
-    profile
-        .dns
-        .split([',', '\n'])
-        .map(str::trim)
-        .find(|value| !value.is_empty())
-        .unwrap_or("1.1.1.1")
-        .to_string()
+    crate::dns_policy::effective_resolvers(&profile.dns)
+        .first()
+        .map(|resolver| resolver.ip().to_string())
+        .unwrap_or_else(|| "1.1.1.1".into())
 }
 
 fn vpn_profile(profile: MobileConnectionProfile, tunnel: MobileSystemTunnel) -> VpnProfile {
