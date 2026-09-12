@@ -5,6 +5,7 @@ use crate::runtime_error::RuntimeError;
 use crate::state::ConnectionState;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -52,6 +53,7 @@ pub struct SystemTunnelDescriptor {
 pub struct TunnelContext {
     pub upstream_socks_addr: String,
     pub connected_at_ms: u64,
+    pub dns_servers: Vec<SocketAddr>,
 }
 
 /// Stable boundary for system-wide TUN implementations.
