@@ -103,7 +103,7 @@ internal object AndroidScreenOffKeepAlive {
                         Thread.sleep(STATE_RECHECK_MS)
                     } catch (_: InterruptedException) {
                         Thread.currentThread().interrupt()
-                        return@Thread
+                        break
                     }
                     refresh()
                 }
