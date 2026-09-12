@@ -91,8 +91,13 @@ for (const marker of [
 const bindAddress = read("src/components/BindAddressField.tsx");
 requireContract(
   bindAddress.includes("const toggleLan = (enabled: boolean) =>") &&
-    bindAddress.includes("const nextPort = validPort(portDraft, port)"),
+    bindAddress.includes("const nextPort = validPort(displayedPort, port)"),
   "LAN toggle can overwrite a valid unblurred SOCKS port draft",
+);
+requireContract(
+  bindAddress.includes("const displayedPort = portDraft ?? port") &&
+    !bindAddress.includes("useEffect("),
+  "SOCKS port draft regressed to derived state synchronized through an effect",
 );
 
 const statusLine = read("src/components/ConnectionStatusLine.tsx");
