@@ -1,9 +1,12 @@
 import { ShieldCheck } from "lucide-react";
 import { NativeSelect } from "@/components/ui/native-select";
 import { useConnectionStore } from "@/state/connectionStore";
+import type { IpVersion } from "@/types/connection";
 
-const ADBLOCK_DNS = "94.140.14.14,94.140.15.15";
-const DEFAULT_CUSTOM_DNS = "1.1.1.1,1.0.0.1";
+const CLOUDFLARE_DNS_V4 = "1.1.1.1,1.0.0.1";
+const CLOUDFLARE_DNS_V6 = "2606:4700:4700::1111,2606:4700:4700::1001";
+const ADBLOCK_DNS =
+  "94.140.14.14,94.140.15.15,2a10:50c0::ad1:ff,2a10:50c0::ad2:ff";
 
 type DnsMode = "default" | "adblock" | "custom";
 
@@ -24,8 +27,15 @@ function dnsMode(value: string): DnsMode {
     : "custom";
 }
 
+function defaultCustomDns(ipVersion: IpVersion): string {
+  if (ipVersion === "v6") return CLOUDFLARE_DNS_V6;
+  if (ipVersion === "both") return `${CLOUDFLARE_DNS_V4},${CLOUDFLARE_DNS_V6}`;
+  return CLOUDFLARE_DNS_V4;
+}
+
 export function DnsProtectionControl({ disabled = false }: { disabled?: boolean }) {
   const dns = useConnectionStore((state) => state.profile.dns);
+  const ipVersion = useConnectionStore((state) => state.profile.ip_version);
   const setField = useConnectionStore((state) => state.setProfileField);
   const mode = dnsMode(dns);
 
@@ -38,7 +48,7 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
         setField("dns", ADBLOCK_DNS);
         break;
       case "custom":
-        if (mode !== "custom") setField("dns", DEFAULT_CUSTOM_DNS);
+        if (mode !== "custom") setField("dns", defaultCustomDns(ipVersion));
         break;
     }
   };
@@ -59,8 +69,8 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
             )}
           </div>
           <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
-            With full-device VPN enabled, DNS follows the protected path. AdGuard DNS filters many
-            ad, tracker and phishing domains at DNS level.
+            DNS follows the protected path and the selected Internet IP family. AdGuard DNS filters
+            many ad, tracker and phishing domains at DNS level.
           </p>
         </div>
       </div>
@@ -83,16 +93,17 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
             value={dns}
             disabled={disabled}
             onChange={(event) => setField("dns", event.target.value)}
-            placeholder="1.1.1.1,1.0.0.1"
+            placeholder={defaultCustomDns(ipVersion)}
             autoComplete="off"
             spellCheck={false}
             className="min-h-12 min-w-0 max-w-full rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
             aria-describedby="custom-dns-help"
           />
           <span id="custom-dns-help" className="leading-4">
-            Use IPv4/IPv6 resolver addresses separated by commas. Malformed entries are ignored; if
-            none are usable Aether falls back to its Cloudflare pair. App-level encrypted DNS can
-            bypass this filtering.
+            Use resolver addresses separated by commas. At runtime Aether keeps resolvers matching
+            the selected IP family and uses the matching Cloudflare pair if none remain. Malformed
+            entries are ignored only when another usable resolver remains. App-level encrypted DNS
+            can bypass DNS-level filtering.
           </span>
         </label>
       )}
