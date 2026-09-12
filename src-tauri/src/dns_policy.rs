@@ -56,7 +56,10 @@ pub fn profile_dns(profile: Option<&Value>) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-pub fn profile_resolvers(profile: Option<&Value>, fallback_profile: Option<&Value>) -> Vec<SocketAddr> {
+pub fn profile_resolvers(
+    profile: Option<&Value>,
+    fallback_profile: Option<&Value>,
+) -> Vec<SocketAddr> {
     let configured = profile_dns(profile)
         .or_else(|| profile_dns(fallback_profile))
         .unwrap_or_default();
@@ -72,10 +75,7 @@ mod tests {
     fn empty_profile_uses_cloudflare_pair() {
         assert_eq!(
             effective_resolvers(""),
-            vec![
-                "1.1.1.1:53".parse().unwrap(),
-                "1.0.0.1:53".parse().unwrap(),
-            ]
+            vec!["1.1.1.1:53".parse().unwrap(), "1.0.0.1:53".parse().unwrap(),]
         );
     }
 
