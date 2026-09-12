@@ -44,11 +44,21 @@ for (const marker of [
   requireContract(dnsPolicy.includes(marker), `DNS family policy drifted: ${marker}`);
 }
 
-const dnsUi = read("src/components/DnsProtectionControl.tsx");
+const dnsPresets = read("src/lib/dnsProfile.ts");
 for (const marker of [
   "2606:4700:4700::1111",
   "2a10:50c0::ad1:ff",
-  "defaultCustomDns(ipVersion)",
+  "defaultDnsFor",
+  "adblockDnsFor",
+  "isAdblockDns",
+]) {
+  requireContract(dnsPresets.includes(marker), `DNS preset family semantics drifted: ${marker}`);
+}
+
+const dnsUi = read("src/components/DnsProtectionControl.tsx");
+for (const marker of [
+  "defaultDnsFor(ipVersion)",
+  "adblockDnsFor(ipVersion)",
   "selected Internet IP family",
 ]) {
   requireContract(dnsUi.includes(marker), `DNS UI family semantics drifted: ${marker}`);
@@ -60,8 +70,19 @@ for (const marker of [
   "IPv4 only. IPv6 internet traffic stays blocked across Automatic fallbacks and every transport.",
   "IPv6 only. IPv4 internet traffic stays blocked across Automatic fallbacks and every transport.",
   "Dual stack. IPv4 and IPv6 internet traffic are both allowed",
+  "isAdblockDns(dns)",
+  "adblockDnsFor(next)",
 ]) {
   requireContract(ipToggle.includes(marker), `IP-family UI semantics drifted: ${marker}`);
+}
+
+const androidRuntime = read("src-tauri/src/android.rs");
+for (const marker of [
+  "fn normalize_runtime_dns",
+  "effective_resolvers_for_ip_version(&profile.dns, &profile.ip_version)",
+  "DNS resolver family must match the selected Android IP family",
+]) {
+  requireContract(androidRuntime.includes(marker), `Android runtime family semantics drifted: ${marker}`);
 }
 
 const coreCli = read("vendor/aether/aether/src/cli.rs");
