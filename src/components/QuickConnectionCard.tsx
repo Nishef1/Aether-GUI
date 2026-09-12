@@ -4,6 +4,7 @@ import { ExitPreferenceControl } from "@/components/ExitPreferenceControl";
 import { ProtocolSelect } from "@/components/ProtocolSelect";
 import { ScanModeToggle } from "@/components/ScanModeToggle";
 import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
+import { NativeSelect } from "@/components/ui/native-select";
 import { useExitPolicyStore } from "@/state/exitPolicyStore";
 import { useConnectionStore } from "@/state/connectionStore";
 import type { H2MaskMode, Protocol, ScanMode, TlsProfileMode } from "@/types/connection";
@@ -24,9 +25,6 @@ const SCAN_COPY: Record<ScanMode, string> = {
   ironclad:
     "Validates real traffic through each candidate before accepting it. This verifies the route now; it cannot guarantee future availability.",
 };
-
-const selectClass =
-  "min-h-12 w-full rounded-xl bg-black/20 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50";
 
 export function QuickConnectionCard() {
   const status = useConnectionStore((state) => state.status);
@@ -85,10 +83,10 @@ export function QuickConnectionCard() {
 
   return (
     <section
-      className="w-full rounded-3xl bg-surface-1/80 p-4 ring-1 ring-white/10 backdrop-blur-sm"
+      className="w-full min-w-0 rounded-3xl bg-surface-1/80 p-4 ring-1 ring-white/10 backdrop-blur-sm"
       aria-labelledby="connection-profile-title"
     >
-      <div className="mb-3 flex items-start justify-between gap-3">
+      <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
             <Gauge size={17} aria-hidden="true" />
@@ -113,7 +111,7 @@ export function QuickConnectionCard() {
         type="button"
         disabled={locked}
         onClick={applyFastIranPreset}
-        className={`mb-3 flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl px-3 text-left ring-1 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${
+        className={`mb-3 flex min-h-12 w-full min-w-0 items-center justify-between gap-3 rounded-2xl px-3 text-left ring-1 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${
           fastIranActive
             ? "bg-primary/12 text-foreground ring-primary/35"
             : "bg-black/15 text-foreground ring-white/10 hover:bg-white/5"
@@ -135,12 +133,12 @@ export function QuickConnectionCard() {
         </span>
       </button>
 
-      <div className="grid gap-3">
+      <div className="grid min-w-0 gap-3">
         <ExitPreferenceControl disabled={locked} />
 
-        <div className="grid gap-1.5">
+        <div className="grid min-w-0 gap-1.5">
           <span className="text-[11px] font-medium text-muted-foreground">Protocol</span>
-          <div className="rounded-xl bg-black/15 px-1 ring-1 ring-white/8">
+          <div className="min-w-0 rounded-xl bg-black/15 px-1 ring-1 ring-white/8">
             <ProtocolSelect />
           </div>
           <p className="px-1 text-[10px] leading-4 text-muted-foreground">
@@ -148,7 +146,7 @@ export function QuickConnectionCard() {
           </p>
         </div>
 
-        <div className="grid gap-1.5">
+        <div className="grid min-w-0 gap-1.5">
           <span className="text-[11px] font-medium text-muted-foreground">Route discovery</span>
           <ScanModeToggle />
           <p className="px-1 text-[10px] leading-4 text-muted-foreground">
@@ -160,44 +158,42 @@ export function QuickConnectionCard() {
 
         {masqueFamily && (
           <>
-            <div className="grid gap-1.5">
+            <div className="grid min-w-0 gap-1.5">
               <span className="text-[11px] font-medium text-muted-foreground">MASQUE carrier</span>
               <MasqueTransportToggle />
             </div>
 
-            <div className="grid gap-1.5">
-              <div className="flex items-end justify-between gap-2 px-1">
+            <div className="grid min-w-0 gap-1.5">
+              <div className="flex min-w-0 items-end justify-between gap-2 px-1">
                 <span className="text-[11px] font-medium text-muted-foreground">MASK & TLS</span>
-                <span className="text-[10px] text-muted-foreground">
+                <span className="min-w-0 truncate text-[10px] text-muted-foreground">
                   Manual compatibility controls
                 </span>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <label className="grid gap-1 text-[10px] text-muted-foreground">
+              <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+                <label className="grid min-w-0 gap-1 text-[10px] text-muted-foreground">
                   <span>H2 ClientHello MASK</span>
-                  <select
+                  <NativeSelect
                     value={h2Mask}
                     disabled={locked || !profile.masque_http2}
                     onChange={(event) => setH2Mask(event.target.value as H2MaskMode)}
-                    className={selectClass}
                     aria-label="H2 ClientHello MASK"
                   >
                     <option value="off">Off — baseline first</option>
                     <option value="clienthello">ClientHello split</option>
                     <option value="patterniha">Patterniha MASK (experimental)</option>
                     <option value="legacy">Legacy random fragment</option>
-                  </select>
+                  </NativeSelect>
                 </label>
 
-                <label className="grid gap-1 text-[10px] text-muted-foreground">
+                <label className="grid min-w-0 gap-1 text-[10px] text-muted-foreground">
                   <span>TLS profile</span>
-                  <select
+                  <NativeSelect
                     value={tlsProfile}
                     disabled={locked}
                     onChange={(event) =>
                       setField("tls_profile", event.target.value as TlsProfileMode)
                     }
-                    className={selectClass}
                     aria-label="TLS profile"
                   >
                     <option value="automatic">Automatic</option>
@@ -205,7 +201,7 @@ export function QuickConnectionCard() {
                     <option value="compatibility">Compatibility</option>
                     <option value="native-minimal">Native-Minimal</option>
                     <option value="experimental">Experimental</option>
-                  </select>
+                  </NativeSelect>
                 </label>
               </div>
               <p className="px-1 text-[10px] leading-4 text-muted-foreground">
