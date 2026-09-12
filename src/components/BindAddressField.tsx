@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useConnectionStore } from "@/state/connectionStore";
 import { Switch } from "@/components/ui/switch";
 import { isAndroid } from "@/lib/platform";
@@ -28,30 +28,30 @@ export function BindAddressField() {
   const { host, port } = splitAddr(bind);
   const effectiveHost = isAndroid ? LOOPBACK : host;
   const lan = !isAndroid && host === ANY;
-  const [portDraft, setPortDraft] = useState(port);
-
-  useEffect(() => {
-    setPortDraft(port);
-  }, [port]);
+  // A null draft means the input follows the canonical store value directly.
+  // While editing, the local draft prevents unrelated store updates from
+  // clobbering what the user is typing without needing a syncing effect.
+  const [portDraft, setPortDraft] = useState<string | null>(null);
+  const displayedPort = portDraft ?? port;
 
   const rebuild = (nextHost: string, nextPort: string) =>
     setBindAddress(`${isAndroid ? LOOPBACK : nextHost}:${nextPort}`);
 
   const commitPort = () => {
-    const next = validPort(portDraft, port);
-    setPortDraft(next);
+    const next = validPort(displayedPort, port);
+    setPortDraft(null);
     if (next !== port) rebuild(effectiveHost, next);
   };
 
   const toggleLan = (enabled: boolean) => {
-    const nextPort = validPort(portDraft, port);
-    setPortDraft(nextPort);
+    const nextPort = validPort(displayedPort, port);
+    setPortDraft(null);
     rebuild(enabled ? ANY : LOOPBACK, nextPort);
   };
 
-  const draftNumber = Number(portDraft);
+  const draftNumber = Number(displayedPort);
   const invalidDraft =
-    portDraft.length > 0 &&
+    displayedPort.length > 0 &&
     (!Number.isInteger(draftNumber) || draftNumber < 1 || draftNumber > 65535);
 
   return (
@@ -61,15 +61,17 @@ export function BindAddressField() {
         <input
           type="text"
           inputMode="numeric"
-          value={portDraft}
+          value={displayedPort}
           disabled={locked}
-          onChange={(event) => setPortDraft(event.target.value.replace(/\D/g, "").slice(0, 5))}
+          onChange={(event) =>
+            setPortDraft(event.target.value.replace(/\D/g, "").slice(0, 5))
+          }
           onBlur={commitPort}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.currentTarget.blur();
             } else if (event.key === "Escape") {
-              setPortDraft(port);
+              setPortDraft(null);
               event.currentTarget.blur();
             }
           }}
