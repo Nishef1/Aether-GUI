@@ -33,6 +33,65 @@ requireContract(
   "Stealth UI again implies website invisibility",
 );
 
+// Live transport liveness must stay activity-aware. Periodic application-level
+// probes/junk create avoidable traffic cadence, extra battery cost, and another
+// signal for flow classifiers. Initial dataplane verification remains intact.
+const wg = read("vendor/aether/aether/src/wireguard.rs");
+requireContract(
+  wg.includes("wg_health_probe_after(stale_timeout)"),
+  "WireGuard health probing is no longer gated by an idle threshold",
+);
+requireContract(
+  wg.includes("if probe_in_flight"),
+  "WireGuard can issue repeated dataplane probes in one idle window",
+);
+requireContract(
+  wg.includes('AETHER_WG_KEEPALIVE_JUNK'),
+  "WireGuard keepalive junk is no longer explicit opt-in",
+);
+requireContract(
+  wg.includes("configured_keepalive(keepalive)"),
+  "Warp-in-Warp can drift to independent hard-coded keepalive cadences",
+);
+
+const h2 = read("vendor/aether/aether/src/masque_h2.rs");
+requireContract(
+  h2.includes("keepalive_due(&last_activity, keepalive_period)"),
+  "MASQUE H2 keepalive reverted to an unconditional periodic cadence",
+);
+requireContract(
+  h2.includes("mark_activity(&last_activity)"),
+  "MASQUE H2 no longer resets liveness from real traffic",
+);
+
+const h3 = read("vendor/aether/aether/src/quic.rs");
+requireContract(
+  h3.includes("last_activity.elapsed() >= keepalive_period"),
+  "MASQUE H3 keepalive reverted to an unconditional periodic cadence",
+);
+requireContract(
+  h3.includes('AETHER_MASQUE_H3_KEEPALIVE_SECS'),
+  "MASQUE H3 lost its bounded idle keepalive policy",
+);
+
+const adaptive = read("vendor/aether/aether/src/cli/adaptive.rs");
+requireContract(
+  adaptive.includes('set_default("AETHER_WG_KEEPALIVE", defaults.wg_keepalive_secs)'),
+  "scan policy no longer supplies a consistent WireGuard/WiW keepalive default",
+);
+requireContract(
+  adaptive.includes("wg_keepalive_secs: 25"),
+  "standard idle WireGuard keepalive default drifted from 25 seconds",
+);
+
+for (const [file, marker] of [
+  ["src/state/connectionStore.ts", "keepalive: 25"],
+  ["src-tauri/src/aether/profiles.rs", "25"],
+  ["src-tauri/src/android.rs", "keepalive: 25"],
+]) {
+  requireContract(read(file).includes(marker), `${file} drifted from the core keepalive policy`);
+}
+
 const threatModel = read("docs/PRIVACY_DETECTABILITY.md");
 for (const marker of [
   "DNS leaks and resolver mismatch",
