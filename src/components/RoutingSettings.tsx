@@ -24,6 +24,14 @@ const COMMON_AD_BLOCK = [
 
 type RoutingPreset = "iran" | "lan" | "ads" | "iran-ads" | "clear";
 
+const PRESET_LABELS: Record<RoutingPreset, string> = {
+  iran: "Iran direct",
+  lan: "LAN direct",
+  ads: "Block ads",
+  "iran-ads": "Iran + LAN + ads",
+  clear: "No routing overrides",
+};
+
 /** Aether 1.9 route controls. DNS intentionally lives in the primary
  * connection card so one profile field never has two competing UI owners. */
 export function RoutingSettings() {
@@ -49,6 +57,7 @@ export function RoutingSettings() {
             : direct === IRAN_AND_LAN_DIRECT && blocked === COMMON_AD_BLOCK && !routesFile
               ? "iran-ads"
               : null;
+  const hasDirectExposure = Boolean(direct || routesFile);
 
   const applyRoutingPreset = (preset: RoutingPreset) => {
     switch (preset) {
@@ -86,7 +95,7 @@ export function RoutingSettings() {
         <div>
           <span className="text-[11px] font-medium text-foreground">Routing presets</span>
           <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
-            Presets replace the route lists below. Custom edits switch the selection to Custom.
+            Presets replace the route lists below. Custom edits are kept as custom rules.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="group" aria-label="Routing presets">
@@ -135,12 +144,10 @@ export function RoutingSettings() {
           >
             Clear rules
           </button>
-          {selectedPreset == null && (
-            <span className="flex min-h-12 items-center justify-center rounded-xl bg-white/[0.025] px-3 text-[11px] text-muted-foreground ring-1 ring-white/8">
-              Custom
-            </span>
-          )}
         </div>
+        <p className="px-1 text-[10px] text-muted-foreground" aria-live="polite">
+          Current: {selectedPreset ? PRESET_LABELS[selectedPreset] : "Custom rules"}
+        </p>
       </div>
 
       <label className="grid gap-1.5">
@@ -165,7 +172,7 @@ export function RoutingSettings() {
           placeholder="Banking, LAN or domestic destinations…"
           className={AREA}
           aria-label="Direct routes"
-          aria-describedby="direct-routing-warning"
+          aria-describedby={hasDirectExposure ? "direct-routing-warning" : undefined}
           spellCheck={false}
         />
       </label>
@@ -180,13 +187,13 @@ export function RoutingSettings() {
           placeholder="Optional path to a rules file"
           className={INPUT}
           aria-label="Routing rules file path"
-          aria-describedby="direct-routing-warning"
+          aria-describedby={hasDirectExposure ? "direct-routing-warning" : undefined}
           autoComplete="off"
           spellCheck={false}
         />
       </label>
 
-      {(direct || routesFile) && (
+      {hasDirectExposure && (
         <p
           id="direct-routing-warning"
           className="rounded-xl bg-status-connecting/5 px-3 py-2 text-[10px] leading-4 text-status-connecting ring-1 ring-status-connecting/15"
