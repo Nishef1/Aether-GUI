@@ -18,11 +18,23 @@ class AndroidTransportPolicyTest {
     }
 
     @Test
-    fun startupBudgetsCoverEveryScanFamily() {
-        assertEquals(75_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "turbo"))
-        assertEquals(330_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "thorough"))
+    fun turboFailsOverBeforeDeeperModes() {
+        assertEquals(60_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "turbo"))
+        assertEquals(70_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "turbo"))
+        assertEquals(90_000L, AndroidTransportPolicy.startupTimeoutMs("gool", "turbo"))
+        assertTrue(
+            AndroidTransportPolicy.startupTimeoutMs("masque", "turbo") <
+                AndroidTransportPolicy.startupTimeoutMs("masque", "balanced"),
+        )
+    }
+
+    @Test
+    fun startupBudgetsCoverEveryScanFamilyAndTransportCost() {
+        assertEquals(120_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "balanced"))
+        assertEquals(135_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "balanced"))
+        assertEquals(165_000L, AndroidTransportPolicy.startupTimeoutMs("gool", "balanced"))
+        assertEquals(300_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "thorough"))
+        assertEquals(210_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "stealth"))
         assertEquals(240_000L, AndroidTransportPolicy.startupTimeoutMs("masque", "ironclad"))
-        assertEquals(150_000L, AndroidTransportPolicy.startupTimeoutMs("wireguard", "balanced"))
-        assertEquals(180_000L, AndroidTransportPolicy.startupTimeoutMs("gool", "balanced"))
     }
 }
