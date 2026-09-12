@@ -164,9 +164,16 @@ export function App() {
   const loadSystemTunnel = useSystemTunnelStore((state) => state.load);
 
   useEffect(() => {
-    const connectionCleanup = initConnectionListeners();
-    const telemetryCleanup = initTelemetryListeners();
+    const safeCleanup = (promise: Promise<() => void>, label: string) =>
+      promise.catch((error) => {
+        console.error(`${label} initialization failed:`, error);
+        return () => undefined;
+      });
+
+    const connectionCleanup = safeCleanup(initConnectionListeners(), "Connection listeners");
+    const telemetryCleanup = safeCleanup(initTelemetryListeners(), "Telemetry listeners");
     const pathCleanup = initPathIntelligence();
+
     return () => {
       pathCleanup();
       void connectionCleanup.then((unlisten) => unlisten());
@@ -181,7 +188,7 @@ export function App() {
   }, [loadSystemTunnel]);
 
   return (
-    <TooltipProvider>
+    <TooltipProvider delayDuration={350} skipDelayDuration={100}>
       <MotionConfig reducedMotion={isAndroid ? "always" : "user"}>
         <div
           className={`relative flex h-svh w-full flex-col overflow-hidden bg-background${isAndroid ? " platform-android" : " platform-desktop"}`}
