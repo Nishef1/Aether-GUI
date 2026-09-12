@@ -76,12 +76,12 @@ requireContract(
 
 const adaptive = read("vendor/aether/aether/src/cli/adaptive.rs");
 requireContract(
-  adaptive.includes('set_default("AETHER_WG_KEEPALIVE", defaults.wg_keepalive_secs)'),
-  "scan policy no longer supplies a consistent WireGuard/WiW keepalive default",
+  adaptive.includes("const DEFAULT_WG_KEEPALIVE_SECS: u16 = 25"),
+  "standard idle WireGuard keepalive default drifted from 25 seconds",
 );
 requireContract(
-  adaptive.includes("wg_keepalive_secs: 25"),
-  "standard idle WireGuard keepalive default drifted from 25 seconds",
+  adaptive.includes('set_default("AETHER_WG_KEEPALIVE", DEFAULT_WG_KEEPALIVE_SECS)'),
+  "standalone WireGuard/WiW can fall back to inconsistent keepalive cadences",
 );
 
 // Ironclad proves application traffic inside the selected tunnel. That check
