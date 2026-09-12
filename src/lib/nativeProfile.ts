@@ -2,8 +2,8 @@ import { isAndroid } from "@/lib/platform";
 import type { ConnectionProfile } from "@/types/connection";
 
 const TLS_GROUPS_BRIDGE_PREFIX = "@profile=";
-const ANDROID_IPV4_ONLY_BLOCK = "::/0";
-const ANDROID_IPV6_ONLY_BLOCK = "0.0.0.0/0";
+const IPV4_ONLY_BLOCK = "::/0";
+const IPV6_ONLY_BLOCK = "0.0.0.0/0";
 
 function oneOf<const T extends readonly string[]>(
   value: unknown,
@@ -89,6 +89,12 @@ function splitRouteRules(value: string): string[] {
     .filter(Boolean);
 }
 
+function familyGuard(ipVersion: ConnectionProfile["ip_version"] | undefined): string | null {
+  if (ipVersion === "v4") return IPV4_ONLY_BLOCK;
+  if (ipVersion === "v6") return IPV6_ONLY_BLOCK;
+  return null;
+}
+
 function appendRouteBlock(value: string, rule: string): string {
   const entries = splitRouteRules(value);
   if (entries.includes(rule)) return value;
@@ -98,45 +104,31 @@ function appendRouteBlock(value: string, rule: string): string {
 function stripRuntimeFamilyGuard(
   profile: Partial<ConnectionProfile>,
 ): Partial<ConnectionProfile> {
-  if (!isAndroid || typeof profile.route_block !== "string") return profile;
-
-  const guard =
-    profile.ip_version === "v4"
-      ? ANDROID_IPV4_ONLY_BLOCK
-      : profile.ip_version === "v6"
-        ? ANDROID_IPV6_ONLY_BLOCK
-        : null;
+  if (typeof profile.route_block !== "string") return profile;
+  const guard = familyGuard(profile.ip_version);
   if (guard == null) return profile;
 
   const entries = splitRouteRules(profile.route_block).filter((entry) => entry !== guard);
   return { ...profile, route_block: entries.join(",") };
 }
 
-function enforceAndroidIpFamily(profile: ConnectionProfile): ConnectionProfile {
-  if (!isAndroid) return profile;
-
-  const guard =
-    profile.ip_version === "v4"
-      ? ANDROID_IPV4_ONLY_BLOCK
-      : profile.ip_version === "v6"
-        ? ANDROID_IPV6_ONLY_BLOCK
-        : null;
+function enforceIpFamily(profile: ConnectionProfile): ConnectionProfile {
+  const guard = familyGuard(profile.ip_version);
   if (guard == null) return profile;
 
   return {
     ...profile,
-    // The Android VpnService owns a dual-stack TUN so it can remain fail-closed
-    // during transport recovery. Enforce the user's selected internet family
-    // inside Aether itself rather than letting the opposite family traverse the
-    // SOCKS/TUN bridge. Aether route-block is evaluated before route-direct.
+    // IPv4/IPv6 in the UI is a strict runtime constraint, not just a scanner
+    // preference. Route-block is evaluated before route-direct in Aether, so
+    // the opposite family remains fail-closed on Android and desktop alike.
     route_block: appendRouteBlock(profile.route_block, guard),
   };
 }
 
 /**
- * Converts the Android-only compact TLS bridge back into the public GUI model.
+ * Converts process-boundary compatibility fields back into the public GUI model.
  * Invalid persisted enum values are dropped so normalized defaults win instead
- * of allowing an untyped native string to poison the runtime policy state.
+ * of allowing an untyped native string to poison runtime policy state.
  */
 export function decodeNativeConnectionProfile(
   profile: Partial<ConnectionProfile>,
@@ -158,15 +150,13 @@ export function decodeNativeConnectionProfile(
 }
 
 /**
- * Produces the process-boundary profile used by every connection path.
- * Android keeps a dual-stack device TUN for fail-closed recovery, so single-
- * family selections add an internal route block for the opposite family.
- * Desktop has a first-class TLS-profile field. Android deliberately reuses the
- * existing tls_groups string so the Kotlin contract stays stable while the
- * custom Core decodes the profile before applying key-share groups.
+ * Produces the process-boundary profile used by every connection path. Strict
+ * single-family selections are enforced before transport-specific conversion.
+ * Android additionally reuses tls_groups as a compact TLS-profile bridge so the
+ * Kotlin IPC contract stays stable while the custom Core decodes it.
  */
 export function profileForNativeInvoke(profile: ConnectionProfile): ConnectionProfile {
-  const runtimeProfile = enforceAndroidIpFamily(profile);
+  const runtimeProfile = enforceIpFamily(profile);
   if (
     !isAndroid ||
     (runtimeProfile.protocol !== "masque" && runtimeProfile.protocol !== "auto")
