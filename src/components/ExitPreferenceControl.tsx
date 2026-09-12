@@ -37,7 +37,7 @@ export function ExitPreferenceControl({ disabled = false }: { disabled?: boolean
               disabled={disabled}
               onClick={() => setPreference(option.id)}
               className={cn(
-                "min-h-12 rounded-xl px-3 py-2 text-left transition-colors ring-1",
+                "min-h-12 rounded-xl px-3 py-2 text-left ring-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary",
                 selected
                   ? "bg-primary/10 text-foreground ring-primary/35"
                   : "bg-black/15 text-muted-foreground ring-white/8 hover:bg-white/5",
@@ -45,7 +45,11 @@ export function ExitPreferenceControl({ disabled = false }: { disabled?: boolean
               )}
             >
               <span className="flex items-center gap-2 text-xs font-semibold">
-                <Icon size={14} className={selected ? "text-primary" : undefined} />
+                <Icon
+                  size={14}
+                  className={selected ? "text-primary" : undefined}
+                  aria-hidden="true"
+                />
                 {option.label}
               </span>
               <span className="mt-1 block text-[10px] leading-4 text-muted-foreground">
