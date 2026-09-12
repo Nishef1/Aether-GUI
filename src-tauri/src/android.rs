@@ -769,6 +769,7 @@ pub fn run_inner() {
             get_default_profile,
             set_default_profile,
             get_system_tunnel,
+            set_system_tunnel,
             set_android_logging,
             get_runtime_telemetry,
             get_network_context,
