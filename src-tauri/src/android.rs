@@ -331,11 +331,13 @@ fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
         if resolvers.iter().any(|resolver| resolver.port() != 53) {
             return Err("Android system DNS resolvers must use port 53".into());
         }
-        let wrong_family = resolvers.iter().any(|resolver| match profile.ip_version.as_str() {
-            "v4" => resolver.ip().is_ipv6(),
-            "v6" => resolver.ip().is_ipv4(),
-            _ => false,
-        });
+        let wrong_family = resolvers
+            .iter()
+            .any(|resolver| match profile.ip_version.as_str() {
+                "v4" => resolver.ip().is_ipv6(),
+                "v6" => resolver.ip().is_ipv4(),
+                _ => false,
+            });
         if wrong_family {
             return Err("DNS resolver family must match the selected Android IP family".into());
         }
@@ -372,14 +374,12 @@ fn validate_profile(profile: &MobileConnectionProfile) -> Result<(), String> {
 }
 
 fn normalize_runtime_dns(profile: &mut MobileConnectionProfile) {
-    profile.dns = crate::dns_policy::effective_resolvers_for_ip_version(
-        &profile.dns,
-        &profile.ip_version,
-    )
-    .into_iter()
-    .map(|resolver| resolver.ip().to_string())
-    .collect::<Vec<_>>()
-    .join(",");
+    profile.dns =
+        crate::dns_policy::effective_resolvers_for_ip_version(&profile.dns, &profile.ip_version)
+            .into_iter()
+            .map(|resolver| resolver.ip().to_string())
+            .collect::<Vec<_>>()
+            .join(",");
 }
 
 fn primary_dns(profile: &MobileConnectionProfile) -> String {
@@ -654,9 +654,7 @@ fn set_system_tunnel(
         .status()
         .map_err(|error| error.to_string())?;
     if current.state != "Idle" {
-        return Err(
-            "System tunnel mode can change only after an explicit Disconnect".into(),
-        );
+        return Err("System tunnel mode can change only after an explicit Disconnect".into());
     }
     let mut settings = state
         .settings
