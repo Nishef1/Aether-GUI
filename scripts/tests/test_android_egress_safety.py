@@ -28,6 +28,15 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         self.assertIn("reportSafetyFailure(message)", guard)
         self.assertIn("BASELINE_TTL_MS", guard)
 
+    def test_egress_and_capacity_probes_do_not_brand_aether(self) -> None:
+        probe = self.read(
+            "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressProbe.kt"
+        )
+        self.assertNotIn("Aether-Android/", probe)
+        self.assertNotIn('append("User-Agent:', probe)
+        self.assertNotIn('writer.write("User-Agent:', probe)
+        self.assertIn("No product-specific User-Agent", probe)
+
     def test_location_never_blocks_a_healthy_low_latency_tunnel(self) -> None:
         probe = self.read(
             "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressProbe.kt"
@@ -41,8 +50,11 @@ class AndroidEgressSafetyTest(unittest.TestCase):
         self.assertIn("markExhausted", telemetry)
         self.assertIn("quick_reconnect: false", telemetry)
         self.assertIn("EXIT_RETRY_LIMIT = 2", policy)
-        self.assertIn("Keeps the first healthy route and ignores country. Best for gaming.", control)
-        self.assertIn("WARP cannot guarantee a specific country", control)
+        self.assertIn(
+            "Accepts the first healthy route. Exit country does not matter.",
+            control,
+        )
+        self.assertIn("cannot guarantee a specific country", control)
 
     def test_privacy_mode_uses_allowlist_and_manual_retry_after_budget(self) -> None:
         policy = self.read("src/lib/exitPolicy.ts")
