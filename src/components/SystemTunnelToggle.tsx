@@ -20,7 +20,7 @@ export function SystemTunnelToggle() {
   }, [load, loaded]);
 
   if (isAndroid) {
-    const ready = loaded && !error;
+    const ready = loaded && selection === "native" && !error;
     const Icon = error ? TriangleAlert : ready ? ShieldCheck : LoaderCircle;
     const title = error
       ? "Android device tunnel unavailable"
