@@ -4,14 +4,18 @@ import { useConnectionStore } from "@/state/connectionStore";
 
 type Transport = "http3" | "http2";
 
+const TRANSPORTS: Transport[] = ["http2", "http3"];
+
 const LABELS: Record<Transport, string> = {
-  http3: "HTTP/3",
-  http2: "HTTP/2",
+  http2: "H2 / TCP",
+  http3: "H3 / QUIC",
 };
 
 const DESCRIPTIONS: Record<Transport, string> = {
-  http3: "QUIC over UDP — fastest handshake, best on networks that don't interfere with UDP.",
-  http2: "TCP — looks like ordinary HTTPS. Use when UDP/QUIC is blocked or throttled by the network.",
+  http2:
+    "Recommended first choice on restricted networks: MASQUE over TCP/HTTPS, without depending on QUIC/UDP.",
+  http3:
+    "QUIC over UDP — usually the fastest carrier when UDP is clean, but easier to lose on UDP-hostile networks.",
 };
 
 export function MasqueTransportToggle() {
@@ -32,21 +36,21 @@ export function MasqueTransportToggle() {
       disabled={locked || notMasque}
       className="w-full gap-0 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
     >
-      {(Object.keys(LABELS) as Transport[]).map((t) => (
-        <Tooltip key={t}>
+      {TRANSPORTS.map((transport) => (
+        <Tooltip key={transport}>
           <TooltipTrigger asChild>
             <span className="flex-1">
               <ToggleGroupItem
-                value={t}
+                value={transport}
                 size="sm"
-                aria-label={LABELS[t]}
+                aria-label={LABELS[transport]}
                 className="min-h-12 w-full rounded-xl text-muted-foreground transition-colors duration-75 data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
               >
-                {LABELS[t]}
+                {LABELS[transport]}
               </ToggleGroupItem>
             </span>
           </TooltipTrigger>
-          <TooltipContent>{DESCRIPTIONS[t]}</TooltipContent>
+          <TooltipContent>{DESCRIPTIONS[transport]}</TooltipContent>
         </Tooltip>
       ))}
     </ToggleGroup>

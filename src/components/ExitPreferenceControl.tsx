@@ -5,9 +5,9 @@ import { useExitPolicyStore } from "@/state/exitPolicyStore";
 const OPTIONS = [
   {
     id: "low-latency" as const,
-    label: "Low latency",
+    label: "Gaming / Fast",
     icon: Gamepad2,
-    description: "Keeps the first healthy route and ignores country. Best for gaming.",
+    description: "Accepts the first healthy route. Exit country does not matter.",
   },
   {
     id: "privacy" as const,
@@ -23,8 +23,8 @@ export function ExitPreferenceControl({ disabled = false }: { disabled?: boolean
 
   return (
     <div className="grid gap-1.5">
-      <span className="text-[11px] font-medium text-muted-foreground">Exit policy</span>
-      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Exit policy">
+      <span className="text-[11px] font-medium text-muted-foreground">Connection goal</span>
+      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Connection goal">
         {OPTIONS.map((option) => {
           const Icon = option.icon;
           const selected = option.id === preference;
@@ -56,7 +56,9 @@ export function ExitPreferenceControl({ disabled = false }: { disabled?: boolean
         })}
       </div>
       <p className="px-1 text-[10px] leading-4 text-muted-foreground">
-        Privacy mode uses verified exit GeoIP and bounded route retries. WARP cannot guarantee a specific country.
+        Gaming / Fast is reachability-first and may keep an Iran exit if it is the first healthy,
+        low-latency route. Privacy spends extra time trying for a verified non-Iran exit; WARP
+        cannot guarantee a specific country.
       </p>
     </div>
   );
