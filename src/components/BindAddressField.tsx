@@ -13,6 +13,13 @@ function splitAddr(addr: string): { host: string; port: string } {
   return { host: addr.slice(0, last) || LOOPBACK, port: addr.slice(last + 1) || DEFAULT_PORT };
 }
 
+function validPort(value: string, fallback: string): string {
+  const parsed = Number(value);
+  return value && Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535
+    ? String(parsed)
+    : fallback;
+}
+
 export function BindAddressField() {
   const bind = useConnectionStore((s) => s.profile.bind_address);
   const setBindAddress = useConnectionStore((s) => s.setBindAddress);
@@ -27,19 +34,25 @@ export function BindAddressField() {
     setPortDraft(port);
   }, [port]);
 
-  const rebuild = (h: string, p: string) =>
-    setBindAddress(`${isAndroid ? LOOPBACK : h}:${p || DEFAULT_PORT}`);
+  const rebuild = (nextHost: string, nextPort: string) =>
+    setBindAddress(`${isAndroid ? LOOPBACK : nextHost}:${nextPort}`);
 
   const commitPort = () => {
-    const parsed = Number(portDraft);
-    if (!portDraft || !Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-      setPortDraft(port);
-      return;
-    }
-    const next = String(parsed);
+    const next = validPort(portDraft, port);
     setPortDraft(next);
     if (next !== port) rebuild(effectiveHost, next);
   };
+
+  const toggleLan = (enabled: boolean) => {
+    const nextPort = validPort(portDraft, port);
+    setPortDraft(nextPort);
+    rebuild(enabled ? ANY : LOOPBACK, nextPort);
+  };
+
+  const draftNumber = Number(portDraft);
+  const invalidDraft =
+    portDraft.length > 0 &&
+    (!Number.isInteger(draftNumber) || draftNumber < 1 || draftNumber > 65535);
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -62,10 +75,7 @@ export function BindAddressField() {
           }}
           className="min-h-12 w-full rounded-xl bg-black/20 px-3 text-center text-sm text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           aria-label="SOCKS5 port"
-          aria-invalid={
-            portDraft.length > 0 &&
-            (!Number.isInteger(Number(portDraft)) || Number(portDraft) < 1 || Number(portDraft) > 65535)
-          }
+          aria-invalid={invalidDraft}
         />
       </label>
 
@@ -95,7 +105,7 @@ export function BindAddressField() {
           </div>
           <Switch
             checked={lan}
-            onCheckedChange={(on) => rebuild(on ? ANY : LOOPBACK, port)}
+            onCheckedChange={toggleLan}
             disabled={locked}
             aria-label="Allow connections from the LAN"
           />
