@@ -220,7 +220,13 @@ async function rerollPrivacyExit(epoch: number): Promise<void> {
     if (policy.automationEpoch !== epoch || policy.preference !== "privacy") return;
 
     const connection = useConnectionStore.getState();
-    const rerollProfile = { ...connection.profile, quick_reconnect: false };
+    const rerollProfile = {
+      ...connection.profile,
+      quick_reconnect: false,
+      // Privacy reroll changes runtime behavior only. It must not rewrite the
+      // user's saved Automatic/quick-reconnect preferences after it succeeds.
+      runtime_only: true,
+    };
     connection.clearLogs();
     clearTelemetry();
 
@@ -364,51 +370,20 @@ export async function initTelemetryListeners(): Promise<() => void> {
     }, delay);
   };
 
-  const restartSchedule = (refreshNow: boolean) => {
+  const syncVisibility = () => {
+    if (!isAndroid) return;
     cancelTimer();
-    if (!isAndroid || disposed) return;
-
-    const collect = canCollectTelemetry({
-      visible: document.visibilityState === "visible",
-      connected: isConnected(),
-    });
-    if (!collect) return;
-
-    if (refreshNow) void useTelemetryStore.getState().refresh();
-    schedule();
-  };
-
-  const visibilityChanged = () => {
-    if (!isAndroid) return;
-    restartSchedule(document.visibilityState === "visible");
-  };
-
-  const unsubscribeConnection = useConnectionStore.subscribe((state, previous) => {
-    const statusChanged = state.status.state !== previous.status.state;
-    const capacityChanged =
-      state.runtimeCapacityAttemptId !== previous.runtimeCapacityAttemptId ||
-      state.runtimeCapacity !== previous.runtimeCapacity;
-    if (!statusChanged && !capacityChanged) return;
-
-    if (statusChanged && isStableConnected()) {
-      evaluateExitPolicy(useTelemetryStore.getState().snapshot);
-    }
-
-    if (!isAndroid) return;
-
-    if (statusChanged && shouldClearTelemetryOnDisconnect(isConnected())) {
+    if (document.visibilityState === "visible") {
+      void useTelemetryStore.getState().refresh().finally(schedule);
+    } else if (
+      shouldClearTelemetryOnDisconnect(useConnectionStore.getState().status.state === "Idle")
+    ) {
       clearTelemetry();
     }
-    if (capacityChanged && document.visibilityState === "visible" && isConnected()) {
-      void useTelemetryStore.getState().refresh();
-    }
-    if (statusChanged) {
-      restartSchedule(isConnected() && document.visibilityState === "visible");
-    }
-  });
+  };
 
   if (isAndroid) {
-    document.addEventListener("visibilitychange", visibilityChanged);
+    document.addEventListener("visibilitychange", syncVisibility);
     schedule();
   }
 
@@ -416,7 +391,6 @@ export async function initTelemetryListeners(): Promise<() => void> {
     disposed = true;
     cancelTimer();
     unlisten();
-    unsubscribeConnection();
-    if (isAndroid) document.removeEventListener("visibilitychange", visibilityChanged);
+    if (isAndroid) document.removeEventListener("visibilitychange", syncVisibility);
   };
 }
