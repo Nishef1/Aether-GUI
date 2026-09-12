@@ -28,7 +28,7 @@ export function MasqueTransportToggle() {
   const selected: Transport = masqueHttp2 ? "http2" : "http3";
 
   return (
-    <div className="grid gap-1.5">
+    <div className="grid min-w-0 gap-1.5">
       <ToggleGroup
         type="single"
         value={selected}
@@ -37,7 +37,7 @@ export function MasqueTransportToggle() {
         }}
         disabled={locked || notMasque}
         aria-label="MASQUE carrier"
-        className="w-full gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
+        className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
       >
         {TRANSPORTS.map((transport) => (
           <Tooltip key={transport}>
@@ -46,7 +46,7 @@ export function MasqueTransportToggle() {
                 value={transport}
                 size="sm"
                 aria-label={LABELS[transport]}
-                className="min-h-12 flex-1 rounded-xl text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
+                className="min-h-12 w-full min-w-0 rounded-xl text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
               >
                 {LABELS[transport]}
               </ToggleGroupItem>
