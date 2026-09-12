@@ -288,7 +288,7 @@ const fn default_reconnect_secs() -> u16 {
 }
 
 const fn default_keepalive() -> u16 {
-    5
+    25
 }
 
 const fn default_route_sniff_ms() -> u16 {
@@ -545,6 +545,7 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--turbo"));
         assert!(args.iter().any(|arg| arg == "--quick-reconnect"));
         assert!(args.iter().any(|arg| arg == "--h2"));
+        assert_eq!(profile.keepalive, 25);
         assert!(profile.route_sniff);
         assert!(profile.auto_reprovision);
         assert_eq!(profile.masque_mask, MasqueMask::Off);
@@ -614,6 +615,7 @@ mod tests {
         assert_eq!(profile.scan_mode, ScanMode::Balanced);
         assert!(!profile.quick_reconnect);
         assert!(!profile.masque_http2);
+        assert_eq!(profile.keepalive, 25);
         assert_eq!(profile.masque_mask, MasqueMask::Off);
         assert_eq!(profile.tls_profile, TlsProfile::Automatic);
         assert!(profile.route_sniff);
