@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useConnectionStore } from "@/state/connectionStore";
 import { Switch } from "@/components/ui/switch";
 import { isAndroid } from "@/lib/platform";
@@ -20,28 +21,53 @@ export function BindAddressField() {
   const { host, port } = splitAddr(bind);
   const effectiveHost = isAndroid ? LOOPBACK : host;
   const lan = !isAndroid && host === ANY;
+  const [portDraft, setPortDraft] = useState(port);
+
+  useEffect(() => {
+    setPortDraft(port);
+  }, [port]);
 
   const rebuild = (h: string, p: string) =>
     setBindAddress(`${isAndroid ? LOOPBACK : h}:${p || DEFAULT_PORT}`);
 
+  const commitPort = () => {
+    const parsed = Number(portDraft);
+    if (!portDraft || !Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+      setPortDraft(port);
+      return;
+    }
+    const next = String(parsed);
+    setPortDraft(next);
+    if (next !== port) rebuild(effectiveHost, next);
+  };
+
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <input
-        type="text"
-        inputMode="numeric"
-        value={port}
-        disabled={locked}
-        onChange={(e) => {
-          const v = e.target.value.replace(/\D/g, "").slice(0, 5);
-          rebuild(effectiveHost, v);
-        }}
-        onBlur={() => {
-          const n = Number(port);
-          if (!port || n < 1 || n > 65535) rebuild(effectiveHost, DEFAULT_PORT);
-        }}
-        className="min-h-12 w-full rounded-xl bg-black/20 px-3 text-center text-sm text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50 sm:w-24"
-        aria-label="SOCKS5 port"
-      />
+      <label className="grid gap-1 sm:w-24">
+        <span className="text-[10px] text-muted-foreground sm:sr-only">SOCKS5 port</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={portDraft}
+          disabled={locked}
+          onChange={(event) => setPortDraft(event.target.value.replace(/\D/g, "").slice(0, 5))}
+          onBlur={commitPort}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              setPortDraft(port);
+              event.currentTarget.blur();
+            }
+          }}
+          className="min-h-12 w-full rounded-xl bg-black/20 px-3 text-center text-sm text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+          aria-label="SOCKS5 port"
+          aria-invalid={
+            portDraft.length > 0 &&
+            (!Number.isInteger(Number(portDraft)) || Number(portDraft) < 1 || Number(portDraft) > 65535)
+          }
+        />
+      </label>
 
       {isAndroid ? (
         <div className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-white/[0.025] px-3 ring-1 ring-white/8 sm:flex-1">
@@ -54,12 +80,16 @@ export function BindAddressField() {
           <span className="shrink-0 font-mono text-[10px] text-muted-foreground">127.0.0.1</span>
         </div>
       ) : (
-        <div className="flex min-h-12 items-center justify-between gap-3 sm:justify-end">
+        <div className="flex min-h-12 items-center justify-between gap-3 sm:flex-1 sm:justify-end">
           <div>
             <span className="block text-xs text-foreground">Allow LAN connections</span>
-            {lan && (
+            {lan ? (
               <span className="mt-0.5 block text-[10px] leading-4 text-status-connecting">
-                Unauthenticated proxy will be reachable from your local network.
+                Unauthenticated proxy is reachable from your local network.
+              </span>
+            ) : (
+              <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
+                Loopback only; other devices cannot use this proxy.
               </span>
             )}
           </div>
