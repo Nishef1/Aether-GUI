@@ -33,29 +33,28 @@ const DESCRIPTIONS: Record<NoizeProfile, string> = {
     "Largest built-in cover-traffic budget and signature set. Use only when lighter profiles fail because setup time and battery cost are higher.",
 };
 
-export function NoizeProfileToggle() {
-  const status = useConnectionStore((state) => state.status);
-  const protocol = useConnectionStore((state) => state.profile.protocol);
-  const masqueNoize = useConnectionStore((state) => state.profile.masque_noize);
-  const wgNoize = useConnectionStore((state) => state.profile.wg_noize);
-  const setMasqueNoize = useConnectionStore((state) => state.setMasqueNoize);
-  const setWgNoize = useConnectionStore((state) => state.setWgNoize);
-  const locked = status.state !== "Idle" && status.state !== "Error";
-  const isMasque = protocol === "auto" || protocol === "masque";
-  const selected = isMasque ? masqueNoize : wgNoize;
-
+function ProfileSelector({
+  label,
+  selected,
+  locked,
+  onChange,
+}: {
+  label?: string;
+  selected: NoizeProfile;
+  locked: boolean;
+  onChange: (profile: NoizeProfile) => void;
+}) {
   return (
     <div className="grid gap-1.5">
+      {label && <span className="px-1 text-[10px] font-medium text-muted-foreground">{label}</span>}
       <ToggleGroup
         type="single"
         value={selected}
         onValueChange={(value) => {
-          if (!value) return;
-          if (isMasque) setMasqueNoize(value as NoizeProfile);
-          else setWgNoize(value as NoizeProfile);
+          if (value) onChange(value as NoizeProfile);
         }}
         disabled={locked}
-        aria-label="Obfuscation profile"
+        aria-label={label ? `${label} obfuscation profile` : "Obfuscation profile"}
         className="w-full flex-wrap gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
       >
         {OPTIONS.map((profile) => (
@@ -80,5 +79,43 @@ export function NoizeProfileToggle() {
         {DESCRIPTIONS[selected]}
       </p>
     </div>
+  );
+}
+
+export function NoizeProfileToggle() {
+  const status = useConnectionStore((state) => state.status);
+  const protocol = useConnectionStore((state) => state.profile.protocol);
+  const masqueNoize = useConnectionStore((state) => state.profile.masque_noize);
+  const wgNoize = useConnectionStore((state) => state.profile.wg_noize);
+  const setMasqueNoize = useConnectionStore((state) => state.setMasqueNoize);
+  const setWgNoize = useConnectionStore((state) => state.setWgNoize);
+  const locked = status.state !== "Idle" && status.state !== "Error";
+
+  if (protocol === "auto") {
+    return (
+      <div className="grid gap-3">
+        <ProfileSelector
+          label="MASQUE baseline"
+          selected={masqueNoize}
+          locked={locked}
+          onChange={setMasqueNoize}
+        />
+        <ProfileSelector
+          label="WireGuard / WiW fallback"
+          selected={wgNoize}
+          locked={locked}
+          onChange={setWgNoize}
+        />
+      </div>
+    );
+  }
+
+  const wireGuardFamily = protocol === "wireguard" || protocol === "gool";
+  return (
+    <ProfileSelector
+      selected={wireGuardFamily ? wgNoize : masqueNoize}
+      locked={locked}
+      onChange={wireGuardFamily ? setWgNoize : setMasqueNoize}
+    />
   );
 }
