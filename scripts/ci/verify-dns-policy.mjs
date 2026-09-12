@@ -9,15 +9,35 @@ function requireContract(condition, message) {
   if (!condition) throw new Error(`[dns-contracts] ${message}`);
 }
 
-const dnsControl = read("src/components/DnsProtectionControl.tsx");
+const dnsProfile = read("src/lib/dnsProfile.ts");
 for (const marker of [
   "94.140.14.14,94.140.15.15",
   "2a10:50c0::ad1:ff",
   "2606:4700:4700::1111",
-  "defaultCustomDns(ipVersion)",
+  "export function defaultDnsFor",
+  "export function adblockDnsFor",
+  "export function isAdblockDns",
+]) {
+  requireContract(dnsProfile.includes(marker), `central DNS preset policy drifted: ${marker}`);
+}
+
+const dnsControl = read("src/components/DnsProtectionControl.tsx");
+for (const marker of [
+  "adblockDnsFor(ipVersion)",
+  "defaultDnsFor(ipVersion)",
+  "isAdblockDns(value)",
   'setField("dns"',
 ]) {
   requireContract(dnsControl.includes(marker), `DNS control drifted: ${marker}`);
+}
+
+const ipToggle = read("src/components/IpVersionToggle.tsx");
+for (const marker of [
+  "isAdblockDns(dns)",
+  "adblockDnsFor(next)",
+  'setField("dns", adblockDnsFor(next))',
+]) {
+  requireContract(ipToggle.includes(marker), `IP-family change no longer preserves filtering DNS: ${marker}`);
 }
 
 const quickCard = read("src/components/QuickConnectionCard.tsx");
@@ -114,4 +134,4 @@ for (const marker of [
 const androidLib = read("src-tauri/src/lib.rs");
 requireContract(androidLib.includes("mod dns_policy;"), "Android build no longer includes shared DNS policy");
 
-console.log("[dns-contracts] DNS family, TUN parity and fail-closed recovery invariants are aligned");
+console.log("[dns-contracts] DNS presets, family policy, TUN parity and fail-closed recovery are aligned");
