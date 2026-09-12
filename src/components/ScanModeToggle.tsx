@@ -48,7 +48,7 @@ export function ScanModeToggle() {
               value={mode}
               size="sm"
               aria-label={`${LABELS[mode]} route discovery`}
-              className="min-h-12 w-full min-w-0 rounded-xl px-0.5 text-[10px] text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:px-2 sm:text-xs"
+              className="min-h-12 w-full min-w-0 rounded-xl px-0.5 text-[10px] text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary data-[state=on]:font-semibold data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:ring-1 data-[state=on]:ring-primary/80 sm:px-2 sm:text-xs"
             >
               <span className="min-w-0 truncate">{LABELS[mode]}</span>
             </ToggleGroupItem>
