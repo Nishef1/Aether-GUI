@@ -37,9 +37,9 @@ function runtimeTransportLabel(transport: string | null, profile: ConnectionProf
 function configuredIpLabel(profile: ConnectionProfile): string {
   switch (profile.ip_version) {
     case "v4":
-      return "IPv4 preferred";
+      return "IPv4 only";
     case "v6":
-      return "IPv6 preferred";
+      return "IPv6 only";
     case "both":
       return "Dual-stack";
   }
@@ -65,7 +65,7 @@ function maskLabel(profile: ConnectionProfile): string | null {
     case "clienthello":
       return "ClientHello mask";
     case "patterniha":
-      return "Adaptive compatibility mask";
+      return "Patterniha experimental";
   }
 }
 
