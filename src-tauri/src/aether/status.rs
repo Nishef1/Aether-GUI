@@ -50,10 +50,6 @@ pub fn connect_timeout(scan_mode: &ScanMode) -> Duration {
 /// TUN resource that would make a hard kill unsafe.
 pub const GRACEFUL_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 
-/// A failed first Turbo scan gets one safer Balanced fallback. Other initial
-/// scans fail visibly instead of repeating the same long scan in a loop.
-pub const INITIAL_TURBO_FALLBACK_BACKOFF: Duration = Duration::from_secs(1);
-
 /// Once a connection has actually worked, transient drops may be retried with
 /// backoff. This budget is deliberately separate from initial scan failure.
 pub const MAX_POST_CONNECT_RETRIES: u32 = 3;
