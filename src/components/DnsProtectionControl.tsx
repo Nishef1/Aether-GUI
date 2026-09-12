@@ -1,12 +1,12 @@
 import { ShieldCheck } from "lucide-react";
 import { NativeSelect } from "@/components/ui/native-select";
-import { adblockDnsFor, defaultDnsFor, isAdblockDns } from "@/lib/dnsProfile";
+import { adblockDnsFor, defaultDnsFor, isAdblockDns, isDefaultDns } from "@/lib/dnsProfile";
 import { useConnectionStore } from "@/state/connectionStore";
 
 type DnsMode = "default" | "adblock" | "custom";
 
 function dnsMode(value: string): DnsMode {
-  if (value.trim() === "") return "default";
+  if (isDefaultDns(value)) return "default";
   return isAdblockDns(value) ? "adblock" : "custom";
 }
 
