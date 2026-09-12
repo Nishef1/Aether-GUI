@@ -24,20 +24,20 @@ export function ProtocolSelect() {
   return (
     <Select
       value={protocol}
-      onValueChange={(v) => setProtocol(v as Protocol)}
+      onValueChange={(value) => setProtocol(value as Protocol)}
       disabled={locked}
     >
       <SelectTrigger
         size="sm"
-        className="min-h-12 w-full border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-2"
-        aria-label="Protocol"
+        className="min-h-12 w-full border-transparent bg-transparent text-foreground shadow-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
+        aria-label="Connection protocol"
       >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {(Object.keys(LABELS) as Protocol[]).map((p) => (
-          <SelectItem key={p} value={p} className="min-h-11">
-            {LABELS[p]}
+        {(Object.keys(LABELS) as Protocol[]).map((option) => (
+          <SelectItem key={option} value={option} className="min-h-11">
+            {LABELS[option]}
           </SelectItem>
         ))}
       </SelectContent>
