@@ -64,7 +64,7 @@ function ProfileSelector({
                 value={profile}
                 size="sm"
                 aria-label={LABELS[profile]}
-                className="min-h-12 w-full min-w-0 rounded-xl px-1 text-[10px] text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground sm:px-1 sm:text-[11px]"
+                className="min-h-12 w-full min-w-0 rounded-xl px-1 text-[10px] text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary data-[state=on]:font-semibold data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:ring-1 data-[state=on]:ring-primary/80 sm:px-1 sm:text-[11px]"
               >
                 <span className="min-w-0 truncate">{LABELS[profile]}</span>
               </ToggleGroupItem>
