@@ -1,11 +1,7 @@
+import { ChevronDown, TriangleAlert } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useConnectionStore } from "@/state/connectionStore";
-import type {
-  ConnectionProfile,
-  H2MaskMode,
-  PerfProfile,
-  TlsProfileMode,
-} from "@/types/connection";
+import type { ConnectionProfile, PerfProfile } from "@/types/connection";
 
 function TextField({
   label,
@@ -34,8 +30,9 @@ function TextField({
         placeholder={placeholder}
         disabled={disabled}
         autoComplete="off"
+        spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
-        className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus:ring-primary disabled:opacity-50"
+        className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
       />
     </label>
   );
@@ -87,7 +84,7 @@ function NumberField({
             event.currentTarget.blur();
           }
         }}
-        className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+        className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
       />
     </label>
   );
@@ -142,32 +139,26 @@ export function CoreAdvancedSettings() {
   const masqueFamily = profile.protocol === "auto" || profile.protocol === "masque";
   const wireGuardFamily = profile.protocol === "wireguard" || profile.protocol === "gool";
   const gool = profile.protocol === "gool";
-  const h2Mask: H2MaskMode = profile.masque_mask ?? (profile.fragment ? "legacy" : "off");
-  const tlsProfile: TlsProfileMode = profile.tls_profile ?? "automatic";
+  const legacyH2Fragment =
+    (profile.masque_mask ?? (profile.fragment ? "legacy" : "off")) === "legacy";
 
   const set = <K extends keyof ConnectionProfile>(field: K, value: ConnectionProfile[K]) =>
     setField(field, value);
 
-  const setH2Mask = (mode: H2MaskMode) => {
-    set("masque_mask", mode);
-    // Keep the old boolean coherent for saved-profile compatibility. New
-    // deterministic modes are selected by the explicit mask environment value.
-    set("fragment", mode === "legacy");
-  };
-
   return (
     <details className="group rounded-2xl bg-black/15 p-3.5 ring-1 ring-white/10">
-      <summary className="cursor-pointer list-none select-none text-xs font-semibold text-foreground marker:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p>Aether 1.9 expert controls</p>
-            <p className="mt-1 text-[11px] font-normal leading-4 text-muted-foreground">
-              Chaining, manual endpoints, validation and recovery behavior.
-            </p>
-          </div>
-          <span className="text-[10px] text-muted-foreground group-open:hidden">Open</span>
-          <span className="hidden text-[10px] text-muted-foreground group-open:inline">Close</span>
+      <summary className="-m-1 flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 rounded-xl p-1 text-xs font-semibold text-foreground outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-primary">
+        <div className="min-w-0">
+          <p>Aether 1.9 expert controls</p>
+          <p className="mt-1 text-[11px] font-normal leading-4 text-muted-foreground">
+            Chaining, manual endpoints, validation and recovery behavior.
+          </p>
         </div>
+        <ChevronDown
+          size={16}
+          className="shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-180"
+          aria-hidden="true"
+        />
       </summary>
 
       <div className="mt-4 flex flex-col gap-4">
@@ -233,6 +224,7 @@ export function CoreAdvancedSettings() {
           <>
             <TextField
               label="HTTP/2 peer"
+              description="Optional H2-only endpoint override. Leave empty to let route discovery choose."
               value={profile.h2_peer}
               placeholder="Automatic H2 peer"
               disabled={locked || !profile.masque_http2}
@@ -246,34 +238,18 @@ export function CoreAdvancedSettings() {
               disabled={locked}
               onChange={(value) => set("ech", value)}
             />
-            <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">HTTP/2 ClientHello mask</span>
-              <span className="text-[11px] leading-4">
-                Off is safest. Deterministic modes alter only ClientHello TCP write boundaries; Patterniha is experimental and never selected automatically.
-              </span>
-              <select
-                value={h2Mask}
-                disabled={locked || !profile.masque_http2}
-                onChange={(event) => setH2Mask(event.target.value as H2MaskMode)}
-                className="min-h-11 rounded-xl bg-surface-2 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
-              >
-                <option value="off">Off</option>
-                <option value="legacy">Legacy random TCP fragment</option>
-                <option value="clienthello">Deterministic ClientHello split</option>
-                <option value="patterniha">Patterniha-inspired (experimental)</option>
-              </select>
-            </label>
-            {h2Mask === "legacy" && (
+            {legacyH2Fragment && (
               <div className="grid grid-cols-2 gap-2">
                 <TextField
-                  label="Fragment size"
+                  label="Legacy fragment size"
+                  description="Applies only while Legacy random fragment is selected in Connection profile."
                   value={profile.fragment_size}
                   placeholder="16-32"
                   disabled={locked || !profile.masque_http2}
                   onChange={(value) => set("fragment_size", value)}
                 />
                 <TextField
-                  label="Delay (ms)"
+                  label="Legacy delay (ms)"
                   value={profile.fragment_delay}
                   placeholder="2-10"
                   disabled={locked || !profile.masque_http2}
@@ -349,14 +325,14 @@ export function CoreAdvancedSettings() {
           onChange={(value) => set("auto_reprovision", value)}
         />
 
-        <Divider label="Resources & diagnostics" />
+        <Divider label="Resources & protocol overrides" />
         <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">Performance profile</span>
           <select
             value={profile.perf_profile}
             disabled={locked}
             onChange={(event) => set("perf_profile", event.target.value as PerfProfile)}
-            className="min-h-11 rounded-xl bg-surface-2 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
+            className="min-h-11 rounded-xl bg-surface-2 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           >
             <option value="auto">Auto</option>
             <option value="low">Low power</option>
@@ -364,39 +340,34 @@ export function CoreAdvancedSettings() {
             <option value="high">High performance</option>
           </select>
         </label>
-        <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">TLS client profile</span>
-          <span className="text-[11px] leading-4">
-            Automatic preserves the proven Aether behavior. Alternate profiles change only TLS version, GREASE and default key-share groups; certificate pinning is unchanged.
-          </span>
-          <select
-            value={tlsProfile}
-            disabled={locked || !masqueFamily}
-            onChange={(event) => set("tls_profile", event.target.value as TlsProfileMode)}
-            className="min-h-11 rounded-xl bg-surface-2 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none focus:ring-primary disabled:opacity-50"
-          >
-            <option value="automatic">Automatic</option>
-            <option value="current">Current BoringSSL</option>
-            <option value="native-minimal">Native-Minimal</option>
-            <option value="compatibility">Compatibility</option>
-            <option value="experimental">Experimental</option>
-          </select>
-        </label>
         <TextField
           label="TLS key-share groups"
-          description="Optional expert override above the selected TLS profile. Leave empty to use that profile's defaults."
+          description="Optional expert override above the TLS profile selected in Connection profile. Leave empty to use that profile's defaults."
           value={profile.tls_groups}
           placeholder="P-256:X25519:P-384"
           disabled={locked || !masqueFamily}
           onChange={(value) => set("tls_groups", value)}
         />
-        <BooleanField
-          label="Skip end-to-end data check"
-          description="Troubleshooting only. A handshake can succeed while real internet traffic is still blocked."
-          checked={profile.no_data_check}
-          disabled={locked}
-          onChange={(value) => set("no_data_check", value)}
-        />
+
+        <div className="rounded-2xl bg-status-error/5 p-3 ring-1 ring-status-error/15">
+          <div className="mb-2 flex items-start gap-2 text-status-error">
+            <TriangleAlert size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="text-xs font-semibold">Unsafe diagnostic override</p>
+              <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                Disabling data-plane verification can accept a handshake that cannot carry real
+                internet traffic. Keep this off during normal use.
+              </p>
+            </div>
+          </div>
+          <BooleanField
+            label="Skip end-to-end data check"
+            description="Troubleshooting only. This can create a false-positive healthy connection."
+            checked={profile.no_data_check}
+            disabled={locked}
+            onChange={(value) => set("no_data_check", value)}
+          />
+        </div>
       </div>
     </details>
   );
