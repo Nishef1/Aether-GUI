@@ -391,6 +391,7 @@ async function invokeCandidate(profile: ConnectionProfile): Promise<string | nul
 }
 
 async function persistSuccessfulAutomaticIntent(profile: ConnectionProfile): Promise<string | null> {
+  if (profile.runtime_only) return null;
   try {
     // Persist the semantic user profile only after a candidate has passed
     // acceptance. This keeps desktop `last_successful_profile` truthful while
