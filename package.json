@@ -17,7 +17,7 @@
     "verify:version": "node scripts/ci/verify-product-version.mjs",
     "verify:runtimes": "node scripts/ci/verify-runtime-manifest.mjs",
     "verify:custom-core": "node scripts/ci/verify-custom-aether-pin.mjs",
-    "verify:contracts": "node scripts/ci/verify-custom-core-contracts.mjs && node scripts/ci/verify-dns-policy.mjs && node scripts/ci/verify-detectability-policy.mjs && node scripts/ci/verify-ui-ux-contracts.mjs",
+    "verify:contracts": "node scripts/ci/verify-custom-core-contracts.mjs && node scripts/ci/verify-dns-policy.mjs && node scripts/ci/verify-detectability-policy.mjs && node scripts/ci/verify-ui-ux-contracts.mjs && node scripts/ci/verify-android-background-policy.mjs",
     "verify:release": "npm run verify:version && npm run verify:runtimes && npm run verify:custom-core && npm run verify:contracts && npm run typecheck",
     "dev": "npm run prepare:app-icon && npm run prepare:aether && npm run prepare:sidecars && vite",
     "dev:custom": "npm run dev",
