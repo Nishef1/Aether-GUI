@@ -23,7 +23,7 @@ export function IpVersionToggle() {
       }}
       disabled={locked}
       aria-label="IP version to scan"
-      className="w-full gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
+      className="grid w-full grid-cols-3 gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
     >
       {(Object.keys(LABELS) as IpVersion[]).map((v) => (
         <ToggleGroupItem
@@ -31,7 +31,7 @@ export function IpVersionToggle() {
           value={v}
           size="sm"
           aria-label={LABELS[v]}
-          className="min-h-12 flex-1 rounded-xl text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
+          className="min-h-12 w-full min-w-0 rounded-xl text-muted-foreground transition-colors duration-75 focus-visible:ring-2 focus-visible:ring-primary data-[state=on]:bg-primary/85 data-[state=on]:text-primary-foreground"
         >
           {LABELS[v]}
         </ToggleGroupItem>
