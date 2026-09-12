@@ -1,5 +1,5 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { adblockDnsFor, isAdblockDns } from "@/lib/dnsProfile";
+import { adblockDnsFor, isAdblockDns, isDefaultDns } from "@/lib/dnsProfile";
 import { useConnectionStore } from "@/state/connectionStore";
 import type { IpVersion } from "@/types/connection";
 
@@ -24,9 +24,11 @@ export function IpVersionToggle() {
   const locked = status.state !== "Idle" && status.state !== "Error";
 
   const selectFamily = (next: IpVersion) => {
-    const preserveAdblock = isAdblockDns(dns);
+    const preserveDefault = isDefaultDns(dns);
+    const preserveAdblock = !preserveDefault && isAdblockDns(dns);
     setIpVersion(next);
-    if (preserveAdblock) setField("dns", adblockDnsFor(next));
+    if (preserveDefault) setField("dns", "");
+    else if (preserveAdblock) setField("dns", adblockDnsFor(next));
   };
 
   return (
