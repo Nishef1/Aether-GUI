@@ -1,4 +1,5 @@
 import { ChevronDown, TriangleAlert } from "lucide-react";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { useConnectionStore } from "@/state/connectionStore";
 import type { ConnectionProfile, PerfProfile } from "@/types/connection";
@@ -21,7 +22,7 @@ function TextField({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+    <label className="flex min-w-0 flex-col gap-1.5 text-xs text-muted-foreground">
       <span className="font-medium text-foreground">{label}</span>
       {description && <span className="text-[11px] leading-4">{description}</span>}
       <input
@@ -32,7 +33,7 @@ function TextField({
         autoComplete="off"
         spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
-        className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+        className="min-h-11 min-w-0 max-w-full rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
       />
     </label>
   );
@@ -65,7 +66,7 @@ function NumberField({
   };
 
   return (
-    <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+    <label className="flex min-w-0 flex-col gap-1.5 text-xs text-muted-foreground">
       <span className="font-medium text-foreground">{label}</span>
       <input
         key={value}
@@ -84,7 +85,7 @@ function NumberField({
             event.currentTarget.blur();
           }
         }}
-        className="min-h-11 rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+        className="min-h-11 min-w-0 max-w-full rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
       />
     </label>
   );
@@ -104,7 +105,7 @@ function BooleanField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-4">
+    <div className="flex min-h-12 min-w-0 items-center justify-between gap-4">
       <div className="min-w-0">
         <p className="text-xs font-medium text-foreground">{label}</p>
         <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{description}</p>
@@ -122,11 +123,11 @@ function BooleanField({
 
 function Divider({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 pt-1">
-      <span className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+    <div className="flex min-w-0 items-center gap-2 pt-1">
+      <span className="shrink-0 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
         {label}
       </span>
-      <div className="h-px flex-1 bg-white/8" />
+      <div className="h-px min-w-0 flex-1 bg-white/8" />
     </div>
   );
 }
@@ -147,8 +148,8 @@ export function CoreAdvancedSettings() {
     setField(field, value);
 
   return (
-    <details className="group rounded-2xl bg-black/15 p-3.5 ring-1 ring-white/10">
-      <summary className="-m-1 flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 rounded-xl p-1 text-xs font-semibold text-foreground outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-primary">
+    <details className="group min-w-0 rounded-2xl bg-black/15 p-3.5 ring-1 ring-white/10">
+      <summary className="-m-1 flex min-h-12 min-w-0 cursor-pointer list-none items-center justify-between gap-3 rounded-xl p-1 text-xs font-semibold text-foreground outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-primary">
         <div className="min-w-0">
           <p>Aether 1.9 expert controls</p>
           <p className="mt-1 text-[11px] font-normal leading-4 text-muted-foreground">
@@ -162,7 +163,7 @@ export function CoreAdvancedSettings() {
         />
       </summary>
 
-      <div className="mt-4 flex flex-col gap-4">
+      <div className="mt-4 flex min-w-0 flex-col gap-4">
         <Divider label="Proxy & chaining" />
         <TextField
           label="Upstream proxy"
@@ -240,7 +241,7 @@ export function CoreAdvancedSettings() {
               onChange={(value) => set("ech", value)}
             />
             {legacyH2Fragment && (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
                 <TextField
                   label="Legacy fragment size"
                   description="Applies only while Legacy random fragment is selected in Connection profile."
@@ -262,7 +263,7 @@ export function CoreAdvancedSettings() {
         )}
 
         <Divider label="Reliability" />
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
           <NumberField
             label="Validate (s)"
             value={profile.validate_secs}
@@ -327,19 +328,18 @@ export function CoreAdvancedSettings() {
         />
 
         <Divider label="Resources & protocol overrides" />
-        <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+        <label className="flex min-w-0 flex-col gap-1.5 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">Performance profile</span>
-          <select
+          <NativeSelect
             value={profile.perf_profile}
             disabled={locked}
             onChange={(event) => set("perf_profile", event.target.value as PerfProfile)}
-            className="min-h-11 rounded-xl bg-surface-2 px-3 text-xs text-foreground ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
           >
             <option value="auto">Auto</option>
             <option value="low">Low power</option>
             <option value="medium">Balanced resources</option>
             <option value="high">High performance</option>
-          </select>
+          </NativeSelect>
         </label>
         <TextField
           label="TLS key-share groups"
@@ -350,10 +350,10 @@ export function CoreAdvancedSettings() {
           onChange={(value) => set("tls_groups", value)}
         />
 
-        <div className="rounded-2xl bg-status-error/5 p-3 ring-1 ring-status-error/15">
-          <div className="mb-2 flex items-start gap-2 text-status-error">
+        <div className="min-w-0 rounded-2xl bg-status-error/5 p-3 ring-1 ring-status-error/15">
+          <div className="mb-2 flex min-w-0 items-start gap-2 text-status-error">
             <TriangleAlert size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
-            <div>
+            <div className="min-w-0">
               <p className="text-xs font-semibold">Unsafe diagnostic override</p>
               <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
                 Disabling data-plane verification can accept a handshake that cannot carry real
