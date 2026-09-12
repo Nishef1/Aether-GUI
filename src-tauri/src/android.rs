@@ -102,7 +102,7 @@ impl Default for MobileConnectionProfile {
             fragment: false,
             fragment_size: "16-32".into(),
             fragment_delay: "2-10".into(),
-            keepalive: 5,
+            keepalive: 25,
             no_profile_retry: false,
             tls_groups: String::new(),
             perf_profile: "auto".into(),
