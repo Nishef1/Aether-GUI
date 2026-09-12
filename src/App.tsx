@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
-import { ShieldCheck } from "lucide-react";
+import { LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { ConnectButton } from "@/components/ConnectButton";
 import { ConnectionDiagnostics } from "@/components/ConnectionDiagnostics";
 import { ConnectionStatusLine } from "@/components/ConnectionStatusLine";
@@ -12,6 +13,7 @@ import { AccessCodePrompt } from "@/components/AccessCodePrompt";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TitleBar } from "@/components/TitleBar";
 import { connectWithAutomaticPolicy } from "@/lib/autoConnect";
+import { cn } from "@/lib/utils";
 import { isAndroid } from "@/lib/platform";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
 import { useExitPolicyStore } from "@/state/exitPolicyStore";
@@ -38,19 +40,36 @@ const SCREEN_TRANSITION = isAndroid
     };
 
 function MobileHeader() {
+  const loaded = useSystemTunnelStore((state) => state.loaded);
+  const selection = useSystemTunnelStore((state) => state.selection);
+  const error = useSystemTunnelStore((state) => state.error);
+  const ready = loaded && selection === "native" && !error;
+  const Icon = error ? TriangleAlert : ready ? ShieldCheck : LoaderCircle;
+  const label = error ? "VPN attention" : ready ? "Device VPN ready" : "Preparing VPN";
+
   return (
     <header className="mb-2 flex w-full items-center justify-between gap-3 px-0.5">
-      <div>
+      <div className="min-w-0">
         <p className="text-[10px] font-semibold tracking-[0.18em] text-primary uppercase">
           Aether
         </p>
-        <h1 className="mt-0.5 text-lg font-semibold tracking-tight text-foreground">
+        <h1 className="mt-0.5 truncate text-lg font-semibold tracking-tight text-foreground">
           Private connection
         </h1>
       </div>
-      <span className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-status-connected/8 px-3 text-[11px] font-medium text-status-connected ring-1 ring-status-connected/15">
-        <ShieldCheck size={13} />
-        Device VPN
+      <span
+        className={cn(
+          "inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-[11px] font-medium ring-1",
+          error
+            ? "bg-status-error/8 text-status-error ring-status-error/20"
+            : ready
+              ? "bg-status-connected/8 text-status-connected ring-status-connected/20"
+              : "bg-status-connecting/8 text-status-connecting ring-status-connecting/20",
+        )}
+        role="status"
+      >
+        <Icon size={13} className={!error && !ready ? "android-connect-spin" : undefined} />
+        {label}
       </span>
     </header>
   );
@@ -61,7 +80,9 @@ function MainScreen() {
   const tunnelLoaded = useSystemTunnelStore((state) => state.loaded);
   const tunnelSelection = useSystemTunnelStore((state) => state.selection);
   const tunnelError = useSystemTunnelStore((state) => state.error);
-  const mobileTunnelReady = !isAndroid || (tunnelLoaded && tunnelSelection === "native");
+  const reloadTunnel = useSystemTunnelStore((state) => state.load);
+  const mobileTunnelReady =
+    !isAndroid || (tunnelLoaded && tunnelSelection === "native" && !tunnelError);
 
   return (
     <div className="app-scroll relative z-10 h-full overflow-y-auto overscroll-contain">
@@ -75,19 +96,36 @@ function MainScreen() {
           />
           <div className="flex flex-col items-center gap-4 text-center">
             {!mobileTunnelReady ? (
-              <div className="grid min-h-32 w-full place-items-center rounded-3xl bg-black/15 px-6 ring-1 ring-white/8">
-                <div className="max-w-64">
-                  <div className="mx-auto mb-3 grid size-11 place-items-center rounded-2xl bg-white/5 text-muted-foreground ring-1 ring-white/10">
-                    <ShieldCheck size={20} />
+              <div className="grid min-h-36 w-full place-items-center rounded-3xl bg-black/15 px-5 py-5 ring-1 ring-white/8">
+                <div className="max-w-72">
+                  <div
+                    className={cn(
+                      "mx-auto mb-3 grid size-11 place-items-center rounded-2xl ring-1",
+                      tunnelError
+                        ? "bg-status-error/8 text-status-error ring-status-error/15"
+                        : "bg-white/5 text-muted-foreground ring-white/10",
+                    )}
+                  >
+                    {tunnelError ? <TriangleAlert size={20} /> : <ShieldCheck size={20} />}
                   </div>
                   <p className="text-sm font-medium text-foreground">
                     {tunnelError ? "Device VPN needs attention" : "Preparing device VPN"}
                   </p>
                   <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
                     {tunnelError
-                      ? "Open More settings to retry the Android VPN runtime."
+                      ? "Aether will not connect until the Android device tunnel is ready."
                       : "Aether is loading the native tunnel before Connect becomes available."}
                   </p>
+                  {tunnelError && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-3 min-h-12 px-4"
+                      onClick={() => void reloadTunnel()}
+                    >
+                      Retry device VPN
+                    </Button>
+                  )}
                 </div>
               </div>
             ) : (
