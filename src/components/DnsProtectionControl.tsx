@@ -1,36 +1,13 @@
 import { ShieldCheck } from "lucide-react";
 import { NativeSelect } from "@/components/ui/native-select";
+import { adblockDnsFor, defaultDnsFor, isAdblockDns } from "@/lib/dnsProfile";
 import { useConnectionStore } from "@/state/connectionStore";
-import type { IpVersion } from "@/types/connection";
-
-const CLOUDFLARE_DNS_V4 = "1.1.1.1,1.0.0.1";
-const CLOUDFLARE_DNS_V6 = "2606:4700:4700::1111,2606:4700:4700::1001";
-const ADBLOCK_DNS =
-  "94.140.14.14,94.140.15.15,2a10:50c0::ad1:ff,2a10:50c0::ad2:ff";
 
 type DnsMode = "default" | "adblock" | "custom";
 
-function normalizedDns(value: string): string[] {
-  return value
-    .split(/[\s,;]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
 function dnsMode(value: string): DnsMode {
-  const values = normalizedDns(value);
-  if (values.length === 0) return "default";
-
-  const adblock = new Set(normalizedDns(ADBLOCK_DNS));
-  return values.length === adblock.size && values.every((value) => adblock.has(value))
-    ? "adblock"
-    : "custom";
-}
-
-function defaultCustomDns(ipVersion: IpVersion): string {
-  if (ipVersion === "v6") return CLOUDFLARE_DNS_V6;
-  if (ipVersion === "both") return `${CLOUDFLARE_DNS_V4},${CLOUDFLARE_DNS_V6}`;
-  return CLOUDFLARE_DNS_V4;
+  if (value.trim() === "") return "default";
+  return isAdblockDns(value) ? "adblock" : "custom";
 }
 
 export function DnsProtectionControl({ disabled = false }: { disabled?: boolean }) {
@@ -45,10 +22,10 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
         setField("dns", "");
         break;
       case "adblock":
-        setField("dns", ADBLOCK_DNS);
+        setField("dns", adblockDnsFor(ipVersion));
         break;
       case "custom":
-        if (mode !== "custom") setField("dns", defaultCustomDns(ipVersion));
+        if (mode !== "custom") setField("dns", defaultDnsFor(ipVersion));
         break;
     }
   };
@@ -93,7 +70,7 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
             value={dns}
             disabled={disabled}
             onChange={(event) => setField("dns", event.target.value)}
-            placeholder={defaultCustomDns(ipVersion)}
+            placeholder={defaultDnsFor(ipVersion)}
             autoComplete="off"
             spellCheck={false}
             className="min-h-12 min-w-0 max-w-full rounded-xl bg-black/20 px-3 font-mono text-xs text-foreground ring-1 ring-white/10 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
