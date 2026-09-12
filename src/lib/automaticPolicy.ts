@@ -10,7 +10,10 @@ export interface AutomaticCandidate {
 
 type AutomaticTransport = Exclude<PathTransport, "unknown">;
 
-const DEFAULT_TRANSPORT_ORDER: AutomaticTransport[] = ["h3", "h2", "wg", "gool"];
+// Iran-first rescue order. H2/TCP gets the first clean shot, WireGuard is the
+// next low-overhead family when UDP works, H3 follows after WG, and Gool stays
+// last because the nested setup is intentionally the most expensive fallback.
+const DEFAULT_TRANSPORT_ORDER: AutomaticTransport[] = ["h2", "wg", "h3", "gool"];
 
 function baselineTransport(profile: ConnectionProfile): AutomaticTransport {
   return profile.masque_http2 ? "h2" : "h3";
