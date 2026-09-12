@@ -191,7 +191,7 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2)", telemetry)
         self.assertIn("IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(15)", telemetry)
         self.assertIn("setInterval(() => setNow(Date.now()), 1000)", status)
-        self.assertIn("PROBE_INTERVAL: Duration = Duration::from_secs(60)", telemetry)
+        self.assertIn("PROBE_INTERVAL: Duration = Duration::from_secs(300)", telemetry)
 
     def test_path_intelligence_store_keeps_network_scoped_deduplicated_history(self) -> None:
         source = self.read("src/state/pathStore.ts")
