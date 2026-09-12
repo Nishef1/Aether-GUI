@@ -10,9 +10,10 @@ export interface AutomaticCandidate {
 
 type AutomaticTransport = Exclude<PathTransport, "unknown">;
 
-// Iran-first rescue order. H2/TCP gets the first clean shot, WireGuard is the
-// next low-overhead family when UDP works, H3 follows after WG, and Gool stays
-// last because the nested setup is intentionally the most expensive fallback.
+// Iran-first rescue order. It also minimizes avoidable website-facing tunnel
+// fingerprints: prefer a single-hop path before the nested Warp-in-Warp path.
+// H2/TCP gets the first clean shot, WireGuard is the next low-overhead family
+// when UDP works, H3 follows after WG, and Gool remains the final fallback.
 const DEFAULT_TRANSPORT_ORDER: AutomaticTransport[] = ["h2", "wg", "h3", "gool"];
 
 function baselineTransport(profile: ConnectionProfile): AutomaticTransport {
@@ -241,7 +242,14 @@ export function buildAutomaticCandidates(
   if (base.protocol !== "auto") return [];
 
   const baseline = baselineTransport(base);
-  const history = historicalTransportOrder(paths, now).filter((transport) => transport !== baseline);
+  // Historical success can reorder single-hop transports, but it must never
+  // promote the nested WiW path ahead of a single-hop fallback. Nested tunnels
+  // add unavoidable RTT/MTU overhead that can become a website-visible signal;
+  // keep WiW as the final reachability fallback unless the user selected it
+  // explicitly as the protocol.
+  const history = historicalTransportOrder(paths, now).filter(
+    (transport) => transport !== baseline && transport !== "gool",
+  );
   const fallbacks = DEFAULT_TRANSPORT_ORDER.filter(
     (transport) => transport !== baseline && !history.includes(transport),
   );
