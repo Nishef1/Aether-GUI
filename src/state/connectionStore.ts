@@ -1,37 +1,24 @@
-import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { decodeNativeConnectionProfile, profileForNativeInvoke } from "@/lib/nativeProfile";
-import { RingBuffer } from "@/lib/ringBuffer";
+import { create } from "zustand";
+import { profileForNativeInvoke, decodeNativeConnectionProfile } from "@/lib/nativeProfile";
 import { isAndroid } from "@/lib/platform";
-import type { RuntimePathSelection, PathTransport } from "@/lib/pathIntelligence";
+import { appendRingBuffer } from "@/lib/ringBuffer";
 import type {
   ConnectionProfile,
   ConnectionStatus,
   LogLine,
+  RuntimeTelemetry,
+  ScanMode,
+  IpVersion,
+  Protocol,
   MasqueNoize,
   WgNoize,
   ZeroTrustAuth,
+  PerfProfile,
+  H2MaskMode,
+  TlsProfileMode,
 } from "@/types/connection";
-
-export type LogLineLimit = 100 | 250 | 500;
-export interface RuntimeCapacitySelection {
-  downloadKbps: number;
-  uploadKbps: number;
-  uploadLimited: boolean;
-}
-
-const DEFAULT_LOG_LINE_LIMIT: LogLineLimit = 250;
-const MAX_LOG_LINE_LIMIT = 500;
-const LOG_FLUSH_MS = isAndroid ? 250 : 100;
-const BUDGET_RE = /budget=(\d+)s/;
-const ACCESS_CODE_MARKER = "[gui] Zero Trust access code required";
-const PATH_MARKER_RE = /^\[gui\] path selected transport=(h2|h3|wg|gool) endpoint=(.+)$/;
-const PATH_UNAVAILABLE_MARKER = "[gui] path unavailable";
-const CAPACITY_MARKER_RE =
-  /^\[gui\] capacity download_kbps=(\d+) upload_kbps=(\d+) upload_limited=(0|1)$/;
-
-const logBuffer = new RingBuffer<LogLine>(MAX_LOG_LINE_LIMIT);
 
 const DEFAULT_PROFILE: ConnectionProfile = {
   protocol: "auto",
@@ -56,6 +43,7 @@ const DEFAULT_PROFILE: ConnectionProfile = {
   no_data_check: false,
   validate_secs: 10,
   reconnect_secs: 2,
+  masque_mask: "off",
   fragment: false,
   fragment_size: "16-32",
   fragment_delay: "2-10",
@@ -79,48 +67,86 @@ const DEFAULT_PROFILE: ConnectionProfile = {
   routes_file: "",
 };
 
-function androidStartupBudgetSecs(profile: ConnectionProfile): number {
-  const family = profile.protocol;
-  const transportCost = (masque: number, wireguard: number, gool: number) => {
-    if (family === "gool") return gool;
-    if (family === "wireguard") return wireguard;
-    return masque;
+const LOG_LIMITS = [100, 250, 500] as const;
+export type LogLineLimit = (typeof LOG_LIMITS)[number];
+const DEFAULT_LOG_LINE_LIMIT: LogLineLimit = 250;
+
+function normalizeLogLineLimit(value: unknown): LogLineLimit {
+  const numeric = Number(value);
+  return LOG_LIMITS.includes(numeric as LogLineLimit)
+    ? (numeric as LogLineLimit)
+    : DEFAULT_LOG_LINE_LIMIT;
+}
+
+function normalizeProfile(profile: Partial<ConnectionProfile> | null | undefined): ConnectionProfile {
+  return {
+    ...DEFAULT_PROFILE,
+    ...decodeNativeConnectionProfile(profile ?? {}),
   };
+}
+
+function androidStartupBudgetSecs(profile: ConnectionProfile): number {
+  const transport =
+    profile.protocol === "gool"
+      ? "gool"
+      : profile.protocol === "wireguard"
+        ? "wg"
+        : profile.masque_http2
+          ? "h2"
+          : "h3";
 
   switch (profile.scan_mode) {
     case "turbo":
-      return transportCost(60, 70, 90);
+      if (transport === "gool") return 90;
+      if (transport === "wg") return 70;
+      return 60;
     case "balanced":
-      return transportCost(120, 135, 165);
+      if (transport === "gool") return 165;
+      if (transport === "wg") return 135;
+      return 120;
     case "thorough":
-      return transportCost(300, 330, 360);
+      if (transport === "gool") return 360;
+      if (transport === "wg") return 330;
+      return 300;
     case "stealth":
-      return transportCost(210, 240, 270);
+      if (transport === "gool") return 270;
+      if (transport === "wg") return 240;
+      return 210;
     case "ironclad":
-      return transportCost(240, 270, 300);
+      if (transport === "gool") return 300;
+      if (transport === "wg") return 270;
+      return 240;
   }
 }
 
-interface ConnectionState {
+interface RuntimePath {
+  transport: string;
+  endpoint: string;
+}
+
+interface RuntimeCapacity {
+  downloadKbps: number;
+  uploadKbps: number;
+  uploadLimited: boolean;
+}
+
+interface ConnectionStore {
   status: ConnectionStatus;
   profile: ConnectionProfile;
   logs: LogLine[];
   loggingEnabled: boolean;
   logLineLimit: LogLineLimit;
-  sidecarError: string | null;
-  scanBudgetSecs: number | null;
-  attemptId: number;
   accessCodeRequired: boolean;
-  runtimePath: RuntimePathSelection | null;
+  scanBudgetSecs: number | null;
+  sidecarError: string | null;
+  runtimePath: RuntimePath | null;
   runtimePathAttemptId: number | null;
-  runtimeCapacity: RuntimeCapacitySelection | null;
+  runtimeCapacity: RuntimeCapacity | null;
   runtimeCapacityAttemptId: number | null;
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
-  clearAccessCodeRequirement: () => void;
-  setProtocol: (protocol: ConnectionProfile["protocol"]) => void;
-  setScanMode: (scan_mode: ConnectionProfile["scan_mode"]) => void;
-  setIpVersion: (ip_version: ConnectionProfile["ip_version"]) => void;
+  attemptId: number;
+  setProtocol: (protocol: Protocol) => void;
+  setScanMode: (scan_mode: ScanMode) => void;
+  setIpVersion: (ip_version: IpVersion) => void;
   setQuickReconnect: (quick_reconnect: boolean) => void;
   setMasqueHttp2: (masque_http2: boolean) => void;
   setMasqueNoize: (masque_noize: MasqueNoize) => void;
@@ -128,10 +154,7 @@ interface ConnectionState {
   setBindAddress: (bind_address: string) => void;
   setDns: (dns: string) => void;
   setMtu: (mtu: number) => void;
-  setProfileField: <K extends keyof ConnectionProfile>(
-    field: K,
-    value: ConnectionProfile[K],
-  ) => void;
+  setProfileField: <K extends keyof ConnectionProfile>(field: K, value: ConnectionProfile[K]) => void;
   setZeroTrustTeam: (zero_trust_team: string) => void;
   setZeroTrustAuth: (zero_trust_auth: ZeroTrustAuth) => void;
   setAccessEmail: (access_email: string) => void;
@@ -145,188 +168,33 @@ interface ConnectionState {
   setLoggingEnabled: (enabled: boolean) => Promise<void>;
   setLogLineLimit: (limit: LogLineLimit) => void;
   clearLogs: () => void;
+  clearAccessCodeRequirement: () => void;
   retryAfterSidecarError: () => void;
+  connect: (profileOverride?: ConnectionProfile) => Promise<void>;
+  disconnect: () => Promise<void>;
 }
 
-function normalizedProfile(profile: Partial<ConnectionProfile>): ConnectionProfile {
-  const decoded = decodeNativeConnectionProfile(profile);
-  return {
-    ...DEFAULT_PROFILE,
-    ...decoded,
-    mtu: decoded.mtu ?? DEFAULT_PROFILE.mtu,
-    validate_secs: decoded.validate_secs ?? DEFAULT_PROFILE.validate_secs,
-    reconnect_secs: decoded.reconnect_secs ?? DEFAULT_PROFILE.reconnect_secs,
-    keepalive: decoded.keepalive ?? DEFAULT_PROFILE.keepalive,
-    tls_profile: decoded.tls_profile ?? DEFAULT_PROFILE.tls_profile,
-    route_sniff: decoded.route_sniff ?? DEFAULT_PROFILE.route_sniff,
-    route_sniff_ms: decoded.route_sniff_ms ?? DEFAULT_PROFILE.route_sniff_ms,
-    auto_reprovision: decoded.auto_reprovision ?? DEFAULT_PROFILE.auto_reprovision,
-    // Upstream URLs can contain credentials and are intentionally session-only.
-    upstream: "",
-  };
+function appendLog(logs: LogLine[], line: string, limit: LogLineLimit): LogLine[] {
+  return appendRingBuffer(logs, { line, timestamp: Date.now() }, limit);
 }
 
-function terminalStateClearsInteraction(status: ConnectionStatus): boolean {
-  return (
-    status.state === "Idle" ||
-    status.state === "Connected" ||
-    status.state === "Tunneling" ||
-    status.state === "Disconnecting" ||
-    status.state === "Error"
-  );
-}
-
-function connectionStatusEqual(left: ConnectionStatus, right: ConnectionStatus): boolean {
-  if (left.state !== right.state) return false;
-
-  switch (left.state) {
-    case "Connected":
-      return (
-        right.state === "Connected" &&
-        left.socks_addr === right.socks_addr &&
-        left.connected_at_ms === right.connected_at_ms
-      );
-    case "StartingTunnel":
-    case "Tunneling":
-      return (
-        right.state === left.state &&
-        left.tunnel === right.tunnel &&
-        left.socks_addr === right.socks_addr &&
-        left.connected_at_ms === right.connected_at_ms
-      );
-    case "Reconnecting":
-      return (
-        right.state === "Reconnecting" &&
-        left.attempt === right.attempt &&
-        left.max_attempts === right.max_attempts
-      );
-    case "Error":
-      return right.state === "Error" && left.message === right.message && left.phase === right.phase;
-    default:
-      return true;
-  }
-}
-
-function clearBufferedLogs(): void {
-  logBuffer.clear();
-}
-
-async function syncNativeLogging(enabled: boolean): Promise<void> {
-  const active = enabled && (!isAndroid || document.visibilityState === "visible");
-  if (isAndroid) {
-    await invoke("set_android_logging", { enabled: active });
-    return;
-  }
-  await invoke("set_diagnostics_logging", { enabled: active });
-}
-
-function updateStatus(status: ConnectionStatus, resetDesktopBudget = false): void {
-  const current = useConnectionStore.getState();
-  const clearInteraction = terminalStateClearsInteraction(status);
-  const statusChanged = !connectionStatusEqual(current.status, status);
-  const shouldClearInteraction = clearInteraction && current.accessCodeRequired;
-  const shouldResetBudget = resetDesktopBudget && current.scanBudgetSecs !== null;
-
-  if (!statusChanged && !shouldClearInteraction && !shouldResetBudget) return;
-
-  useConnectionStore.setState({
-    ...(statusChanged ? { status } : {}),
-    ...(shouldClearInteraction ? { accessCodeRequired: false } : {}),
-    ...(shouldResetBudget ? { scanBudgetSecs: null } : {}),
-  });
-}
-
-export const useConnectionStore = create<ConnectionState>((set, get) => ({
+export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   status: { state: "Idle" },
-  profile: { ...DEFAULT_PROFILE },
+  profile: DEFAULT_PROFILE,
   logs: [],
   loggingEnabled: false,
   logLineLimit: DEFAULT_LOG_LINE_LIMIT,
-  sidecarError: null,
-  scanBudgetSecs: null,
-  attemptId: 0,
   accessCodeRequired: false,
+  scanBudgetSecs: null,
+  sidecarError: null,
   runtimePath: null,
   runtimePathAttemptId: null,
   runtimeCapacity: null,
   runtimeCapacityAttemptId: null,
+  attemptId: 0,
 
-  connect: async () => {
-    const profile = get().profile;
-    clearBufferedLogs();
-    let attemptId = 0;
-    set((state) => {
-      attemptId = state.attemptId + 1;
-      return {
-        logs: [],
-        accessCodeRequired: false,
-        runtimePath: null,
-        runtimePathAttemptId: null,
-        runtimeCapacity: null,
-        runtimeCapacityAttemptId: null,
-        scanBudgetSecs: isAndroid ? androidStartupBudgetSecs(profile) : null,
-        attemptId,
-      };
-    });
-    try {
-      await invoke("connect", { profileOverride: profileForNativeInvoke(profile) });
-    } catch (error) {
-      if (get().attemptId !== attemptId) return;
-      const message = String(error);
-      if (
-        message.toLowerCase().includes("binary not found") ||
-        message.toLowerCase().includes("bundled arm64 aether core was not found")
-      ) {
-        set({ sidecarError: message, accessCodeRequired: false });
-      } else {
-        set({
-          status: { state: "Error", message, phase: "launching" },
-          accessCodeRequired: false,
-        });
-      }
-    }
-  },
-
-  disconnect: async () => {
-    let attemptId = 0;
-    set((state) => {
-      attemptId = state.attemptId + 1;
-      return {
-        attemptId,
-        accessCodeRequired: false,
-        runtimePath: null,
-        runtimePathAttemptId: null,
-        runtimeCapacity: null,
-        runtimeCapacityAttemptId: null,
-        scanBudgetSecs: null,
-        ...(state.status.state === "Idle" ? {} : { status: { state: "Disconnecting" } as const }),
-      };
-    });
-    try {
-      await invoke("disconnect");
-    } catch (error) {
-      // A stop IPC can fail after the native runtime has already transitioned.
-      // Reconcile immediately instead of leaving the UI stuck in Disconnecting
-      // until the next mobile lifecycle poll. Never let a stale stop overwrite
-      // a newer connection attempt.
-      try {
-        const status = await invoke<ConnectionStatus>("get_status");
-        if (get().attemptId === attemptId) updateStatus(status);
-      } catch {
-        if (get().attemptId !== attemptId) return;
-        set({
-          status: {
-            state: "Error",
-            message: `Disconnect failed: ${String(error)}`,
-            phase: "disconnect",
-          },
-        });
-      }
-    }
-  },
-
-  clearAccessCodeRequirement: () => set({ accessCodeRequired: false }),
-  setProtocol: (protocol) => set((state) => ({ profile: { ...state.profile, protocol } })),
+  setProtocol: (protocol) =>
+    set((state) => ({ profile: { ...state.profile, protocol } })),
   setScanMode: (scan_mode) =>
     set((state) => ({ profile: { ...state.profile, scan_mode } })),
   setIpVersion: (ip_version) =>
@@ -347,7 +215,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       profile: { ...state.profile, mtu: Math.min(1500, Math.max(1280, Math.round(mtu))) },
     })),
   setProfileField: (field, value) =>
-    set((state) => ({ profile: { ...state.profile, [field]: value })),
+    set((state) => ({ profile: { ...state.profile, [field]: value } })),
   setZeroTrustTeam: (zero_trust_team) =>
     set((state) => ({ profile: { ...state.profile, zero_trust_team } })),
   setZeroTrustAuth: (zero_trust_auth) =>
@@ -378,246 +246,130 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   setRoutesFile: (routes_file) =>
     set((state) => ({ profile: { ...state.profile, routes_file } })),
   setLoggingEnabled: async (enabled) => {
-    if (!enabled) clearBufferedLogs();
-    set({ loggingEnabled: enabled, ...(enabled ? {} : { logs: [] }) });
+    await invoke("set_logging_enabled", { enabled });
+    set({ loggingEnabled: enabled });
+  },
+  setLogLineLimit: (limit) =>
+    set((state) => ({
+      logLineLimit: normalizeLogLineLimit(limit),
+      logs: state.logs.slice(-normalizeLogLineLimit(limit)),
+    })),
+  clearLogs: () => set({ logs: [] }),
+  clearAccessCodeRequirement: () => set({ accessCodeRequired: false }),
+  retryAfterSidecarError: () => set({ sidecarError: null, status: { state: "Idle" } }),
+
+  connect: async (profileOverride) => {
+    const current = get();
+    const profile = normalizeProfile(profileOverride ?? current.profile);
+    const attemptId = current.attemptId + 1;
+    set({
+      status: { state: "Launching" },
+      accessCodeRequired: false,
+      runtimePath: null,
+      runtimePathAttemptId: null,
+      runtimeCapacity: null,
+      runtimeCapacityAttemptId: null,
+      scanBudgetSecs: isAndroid ? androidStartupBudgetSecs(profile) : null,
+      sidecarError: null,
+      attemptId,
+    });
     try {
-      await syncNativeLogging(enabled);
-    } catch {
-      clearBufferedLogs();
-      void syncNativeLogging(false).catch(() => undefined);
-      set({ loggingEnabled: false, logs: [] });
+      await invoke("connect", { profileOverride: profileForNativeInvoke(profile) });
+    } catch (error) {
+      const message = String(error);
+      set({ status: { state: "Error", message, phase: "launching" } });
+      if (
+        message.toLowerCase().includes("binary not found") ||
+        message.toLowerCase().includes("bundled arm64 aether core was not found")
+      ) {
+        set({ sidecarError: message });
+      }
     }
   },
-  setLogLineLimit: (logLineLimit) =>
-    set({
-      logLineLimit,
-      logs: logBuffer.toArray(logLineLimit),
-    }),
-  clearLogs: () => {
-    clearBufferedLogs();
-    set({ logs: [] });
+
+  disconnect: async () => {
+    set({ status: { state: "Disconnecting" } });
+    try {
+      await invoke("disconnect");
+    } catch (error) {
+      set({ status: { state: "Error", message: String(error), phase: "disconnect" } });
+    }
   },
-  retryAfterSidecarError: () => set({ sidecarError: null }),
 }));
 
-if (import.meta.env.DEV) {
-  (window as unknown as { __conn?: typeof useConnectionStore }).__conn = useConnectionStore;
-}
-
-function updateScanBudgetFromLine(line: string): void {
-  const match = BUDGET_RE.exec(line);
-  if (!match) return;
-
-  const budget = Number(match[1]);
-  if (useConnectionStore.getState().scanBudgetSecs !== budget) {
-    useConnectionStore.setState({ scanBudgetSecs: budget });
-  }
-}
-
-function updateControlStateFromLine(line: string): void {
-  const state = useConnectionStore.getState();
-
-  if (line.includes(ACCESS_CODE_MARKER) && !state.accessCodeRequired) {
-    useConnectionStore.setState({ accessCodeRequired: true });
-  }
-
-  updateScanBudgetFromLine(line);
-
-  const trimmed = line.trim();
-  const capacityMatch = CAPACITY_MARKER_RE.exec(trimmed);
-  if (capacityMatch) {
+export async function initConnectionListeners(): Promise<() => void> {
+  const unlistenStatus = await listen<ConnectionStatus>("connection-status", (event) => {
+    useConnectionStore.setState({ status: event.payload });
+  });
+  const unlistenProfile = await listen<Partial<ConnectionProfile>>("connection-profile", (event) => {
+    useConnectionStore.setState({ profile: normalizeProfile(event.payload) });
+  });
+  const unlistenLog = await listen<string>("connection-log", (event) => {
+    const state = useConnectionStore.getState();
+    if (!state.loggingEnabled) return;
+    useConnectionStore.setState({ logs: appendLog(state.logs, event.payload, state.logLineLimit) });
+  });
+  const unlistenAccessCode = await listen<boolean>("access-code-required", (event) => {
+    useConnectionStore.setState({ accessCodeRequired: event.payload });
+  });
+  const unlistenRuntimePath = await listen<RuntimePath>("runtime-path", (event) => {
+    const state = useConnectionStore.getState();
     useConnectionStore.setState({
-      runtimeCapacity: {
-        downloadKbps: Number(capacityMatch[1]),
-        uploadKbps: Number(capacityMatch[2]),
-        uploadLimited: capacityMatch[3] === "1",
-      },
-      runtimeCapacityAttemptId: state.attemptId,
-    });
-  }
-
-  const pathMatch = PATH_MARKER_RE.exec(trimmed);
-  if (pathMatch) {
-    useConnectionStore.setState({
-      runtimePath: {
-        transport: pathMatch[1] as PathTransport,
-        endpoint: pathMatch[2].trim(),
-      },
+      runtimePath: event.payload,
       runtimePathAttemptId: state.attemptId,
     });
-  } else if (trimmed === PATH_UNAVAILABLE_MARKER) {
-    useConnectionStore.setState({ runtimePath: null, runtimePathAttemptId: state.attemptId });
-  }
-}
+  });
+  const unlistenRuntimeCapacity = await listen<RuntimeCapacity>("runtime-capacity", (event) => {
+    const state = useConnectionStore.getState();
+    useConnectionStore.setState({
+      runtimeCapacity: event.payload,
+      runtimeCapacityAttemptId: state.attemptId,
+    });
+  });
 
-function appendLogBatch(batch: LogLine[]): void {
-  if (batch.length === 0) return;
+  const current = await invoke<{
+    status: ConnectionStatus;
+    profile: Partial<ConnectionProfile>;
+    logging_enabled: boolean;
+    log_line_limit?: number;
+  }>("get_initial_state");
 
-  const state = useConnectionStore.getState();
-  if (!state.loggingEnabled) return;
-
-  logBuffer.pushMany(batch);
-  useConnectionStore.setState({ logs: logBuffer.toArray(state.logLineLimit) });
-}
-
-function androidPollDelay(status: ConnectionStatus): number {
-  switch (status.state) {
-    case "Launching":
-    case "Connecting":
-    case "AwaitingAccessCode":
-    case "StartingTunnel":
-    case "Reconnecting":
-    case "Disconnecting":
-      return 750;
-    case "Connected":
-    case "Tunneling":
-      return 3_000;
-    case "Idle":
-    case "Error":
-      return 15_000;
-  }
-}
-
-function stableStatus(status: ConnectionStatus): boolean {
-  return status.state === "Connected" || status.state === "Tunneling";
-}
-
-export async function initConnectionListeners(): Promise<() => void> {
-  let pendingLogs: LogLine[] = [];
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const flushLogs = () => {
-    flushTimer = null;
-    if (pendingLogs.length === 0) return;
-    const batch = pendingLogs;
-    pendingLogs = [];
-    appendLogBatch(batch);
-  };
-
-  const [unlistenStatus, unlistenLog] = await Promise.all([
-    listen<ConnectionStatus>("aether://status", (event) => {
-      updateStatus(event.payload, !isAndroid && event.payload.state === "Launching");
-    }),
-    listen<LogLine>("aether://log", (event) => {
-      updateControlStateFromLine(event.payload.line);
-
-      if (!useConnectionStore.getState().loggingEnabled) return;
-      pendingLogs.push(event.payload);
-      flushTimer ??= setTimeout(flushLogs, LOG_FLUSH_MS);
-    }),
-  ]);
-
-  const bootstrapAttemptId = useConnectionStore.getState().attemptId;
-  try {
-    const [status, profile] = await Promise.all([
-      invoke<ConnectionStatus>("get_status"),
-      invoke<Partial<ConnectionProfile>>("get_default_profile"),
-    ]);
-    useConnectionStore.setState((state) =>
-      state.attemptId === bootstrapAttemptId
-        ? {
-            status,
-            profile: normalizedProfile(profile),
-            ...(terminalStateClearsInteraction(status) ? { accessCodeRequired: false } : {}),
-          }
-        : { profile: state.profile },
-    );
-  } catch (error) {
-    console.error("Failed to load initial connection state:", error);
-  }
-
-  let disposed = false;
-  let pollTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastNativeLogId = 0;
-
-  const scheduleAndroidPoll = () => {
-    if (!isAndroid || disposed || document.visibilityState !== "visible" || pollTimer !== null) {
-      return;
-    }
-
-    const delay = androidPollDelay(useConnectionStore.getState().status);
-    pollTimer = setTimeout(async () => {
-      pollTimer = null;
-      if (disposed || document.visibilityState !== "visible") return;
-
-      const pollAttemptId = useConnectionStore.getState().attemptId;
-      try {
-        const status = await invoke<ConnectionStatus>("get_status");
-        if (useConnectionStore.getState().attemptId === pollAttemptId) updateStatus(status);
-      } catch {
-        // The foreground service can be between lifecycle states.
-      }
-
-      const connection = useConnectionStore.getState();
-      const needsPathControl =
-        connection.attemptId > 0 &&
-        stableStatus(connection.status) &&
-        connection.runtimePathAttemptId !== connection.attemptId;
-
-      if (connection.loggingEnabled || needsPathControl) {
-        try {
-          const batch = await invoke<{
-            entries: Array<{ id: number; timestamp: number; line: string }>;
-            last_id: number;
-          }>("get_android_logs", { afterId: lastNativeLogId });
-          lastNativeLogId = Math.max(lastNativeLogId, batch.last_id);
-
-          // If the attempt changed while the native log request was in flight,
-          // these entries belong to a previous lifecycle and must not seed path
-          // or capacity evidence for the new attempt.
-          if (useConnectionStore.getState().attemptId === pollAttemptId) {
-            for (const entry of batch.entries) updateControlStateFromLine(entry.line);
-            appendLogBatch(
-              batch.entries.map((entry) => ({ timestamp: entry.timestamp, line: entry.line })),
-            );
-          }
-        } catch {
-          // Control metadata and logging are supplementary and must not destabilize the VPN.
-        }
-      }
-      scheduleAndroidPoll();
-    }, delay);
-  };
-
-  const syncAndroidVisibility = () => {
-    if (!isAndroid) return;
-    const visible = document.visibilityState === "visible";
-    void syncNativeLogging(useConnectionStore.getState().loggingEnabled).catch(() => undefined);
-
-    if (pollTimer !== null) {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-
-    if (visible) {
-      scheduleAndroidPoll();
-    } else {
-      clearBufferedLogs();
-      useConnectionStore.setState({ logs: [] });
-      lastNativeLogId = 0;
-    }
-  };
-
-  // Native diagnostics are opt-in and start disabled on every platform.
-  void syncNativeLogging(false).catch(() => undefined);
-
-  if (isAndroid) {
-    document.addEventListener("visibilitychange", syncAndroidVisibility);
-    scheduleAndroidPoll();
-  }
+  useConnectionStore.setState({
+    status: current.status,
+    profile: normalizeProfile(current.profile),
+    loggingEnabled: current.logging_enabled,
+    logLineLimit: normalizeLogLineLimit(current.log_line_limit),
+  });
 
   return () => {
-    disposed = true;
     unlistenStatus();
+    unlistenProfile();
     unlistenLog();
-    if (flushTimer !== null) clearTimeout(flushTimer);
-    if (pollTimer !== null) clearTimeout(pollTimer);
-    pendingLogs = [];
-    clearBufferedLogs();
-    void syncNativeLogging(false).catch(() => undefined);
+    unlistenAccessCode();
+    unlistenRuntimePath();
+    unlistenRuntimeCapacity();
+  };
+}
 
-    if (isAndroid) {
-      document.removeEventListener("visibilitychange", syncAndroidVisibility);
-    }
+export function resetConnectionTelemetrySnapshot(): RuntimeTelemetry {
+  return {
+    received_bytes: 0,
+    sent_bytes: 0,
+    public_ip: null,
+    country_code: null,
+    latency_ms: null,
+    sampled_at_ms: 0,
+    egress_probe_complete: false,
+    path_health: "unknown",
+    tunnel_validation: "unknown",
+    probe_failures: 0,
+    smoothed_latency_ms: null,
+    jitter_ms: null,
+    quality_score: 0,
+    quality_confidence: 0,
+    capacity_probe_complete: false,
+    download_kbps: null,
+    upload_kbps: null,
+    upload_limited: false,
   };
 }
