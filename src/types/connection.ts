@@ -94,6 +94,8 @@ export interface ConnectionProfile {
   route_block: string;
   route_direct: string;
   routes_file: string;
+  /** Internal automatic-policy attempt. Native layers must never persist it as user intent. */
+  runtime_only?: boolean;
 }
 
 export interface RuntimeTelemetry {
