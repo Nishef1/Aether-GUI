@@ -169,6 +169,10 @@ pub enum ZeroTrustAuth {
     Token,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ConnectionProfile {
     #[serde(default)]
@@ -261,6 +265,10 @@ pub struct ConnectionProfile {
     pub route_direct: String,
     #[serde(default)]
     pub routes_file: String,
+    /// Frontend Automatic expands one user profile into concrete transport
+    /// attempts. Those runtime candidates must never replace persisted intent.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub runtime_only: bool,
 }
 
 fn default_masque_noize() -> NoizeProfile {
@@ -496,6 +504,7 @@ impl Default for ConnectionProfile {
             route_block: String::new(),
             route_direct: String::new(),
             routes_file: String::new(),
+            runtime_only: false,
         }
     }
 }
@@ -513,9 +522,13 @@ pub fn load(app: &tauri::AppHandle) -> ConnectionProfile {
 }
 
 pub fn save(app: &tauri::AppHandle, profile: &ConnectionProfile) {
+    if profile.runtime_only {
+        return;
+    }
     use tauri_plugin_store::StoreExt;
     if let Ok(store) = app.store(STORE_FILE) {
         let mut persisted = profile.clone();
+        persisted.runtime_only = false;
         persisted.access_email.clear();
         persisted.access_client_id.clear();
         persisted.access_client_secret.clear();
@@ -550,6 +563,7 @@ mod tests {
         assert!(profile.auto_reprovision);
         assert_eq!(profile.masque_mask, MasqueMask::Off);
         assert_eq!(profile.tls_profile, TlsProfile::Automatic);
+        assert!(!profile.runtime_only);
     }
 
     #[test]
@@ -621,5 +635,12 @@ mod tests {
         assert!(profile.route_sniff);
         assert!(profile.auto_reprovision);
         assert_eq!(profile.mtu, 1280);
+        assert!(!profile.runtime_only);
+    }
+
+    #[test]
+    fn runtime_only_marker_is_not_serialized_when_false() {
+        let json = serde_json::to_string(&ConnectionProfile::default()).unwrap();
+        assert!(!json.contains("runtime_only"));
     }
 }
