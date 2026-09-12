@@ -69,6 +69,9 @@ struct MobileConnectionProfile {
     route_block: String,
     route_direct: String,
     routes_file: String,
+    /// Concrete Automatic candidates are execution-only and must not replace
+    /// the user's saved Automatic profile.
+    runtime_only: bool,
 }
 
 impl Default for MobileConnectionProfile {
@@ -119,6 +122,7 @@ impl Default for MobileConnectionProfile {
             route_block: String::new(),
             route_direct: String::new(),
             routes_file: String::new(),
+            runtime_only: false,
         }
     }
 }
@@ -131,6 +135,7 @@ impl MobileConnectionProfile {
         sanitized.access_client_secret.clear();
         sanitized.access_token.clear();
         sanitized.upstream.clear();
+        sanitized.runtime_only = false;
         sanitized
     }
 
@@ -489,11 +494,10 @@ async fn connect(
         .lock()
         .map_err(|_| "mobile state unavailable")?
         .clone();
-    if let Some(profile) = profile_override {
-        settings.profile = profile;
-    }
-    validate_profile(&settings.profile)?;
-    if settings.system_tunnel == MobileSystemTunnel::Native {
+    let mut runtime_profile = profile_override.unwrap_or_else(|| settings.profile.clone());
+    validate_profile(&runtime_profile)?;
+    let tunnel = settings.system_tunnel;
+    if tunnel == MobileSystemTunnel::Native {
         let permission = app
             .aether_vpn()
             .prepare()
@@ -503,18 +507,21 @@ async fn connect(
         }
     }
     let _ = app.aether_vpn().ensure_notification_permission();
-    settings.version = MOBILE_SETTINGS_VERSION;
-    save_settings(&app, &settings)?;
-    *state
-        .settings
-        .lock()
-        .map_err(|_| "mobile state unavailable")? = settings.clone();
+
+    if !runtime_profile.runtime_only {
+        runtime_profile.runtime_only = false;
+        settings.profile = runtime_profile.clone();
+        settings.version = MOBILE_SETTINGS_VERSION;
+        save_settings(&app, &settings)?;
+        *state
+            .settings
+            .lock()
+            .map_err(|_| "mobile state unavailable")? = settings;
+    }
+
     crate::network_context::sync_process_environment();
     emit_status(&app, &json!({ "state": "Launching" }));
-    match app
-        .aether_vpn()
-        .start(vpn_profile(settings.profile, settings.system_tunnel))
-    {
+    match app.aether_vpn().start(vpn_profile(runtime_profile, tunnel)) {
         Ok(status) => {
             emit_status(&app, &status_value(status));
             Ok(())
@@ -595,8 +602,9 @@ fn get_default_profile(state: State<'_, MobileState>) -> MobileConnectionProfile
 fn set_default_profile(
     app: AppHandle,
     state: State<'_, MobileState>,
-    profile: MobileConnectionProfile,
+    mut profile: MobileConnectionProfile,
 ) -> Result<(), String> {
+    profile.runtime_only = false;
     validate_profile(&profile)?;
     let mut settings = state
         .settings
