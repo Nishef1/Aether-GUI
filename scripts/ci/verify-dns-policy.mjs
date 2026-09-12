@@ -16,6 +16,7 @@ for (const marker of [
   "2606:4700:4700::1111",
   "export function defaultDnsFor",
   "export function adblockDnsFor",
+  "export function isDefaultDns",
   "export function isAdblockDns",
 ]) {
   requireContract(dnsProfile.includes(marker), `central DNS preset policy drifted: ${marker}`);
@@ -25,6 +26,7 @@ const dnsControl = read("src/components/DnsProtectionControl.tsx");
 for (const marker of [
   "adblockDnsFor(ipVersion)",
   "defaultDnsFor(ipVersion)",
+  "isDefaultDns(value)",
   "isAdblockDns(value)",
   'setField("dns"',
 ]) {
@@ -33,11 +35,13 @@ for (const marker of [
 
 const ipToggle = read("src/components/IpVersionToggle.tsx");
 for (const marker of [
+  "isDefaultDns(dns)",
   "isAdblockDns(dns)",
+  'setField("dns", "")',
   "adblockDnsFor(next)",
   'setField("dns", adblockDnsFor(next))',
 ]) {
-  requireContract(ipToggle.includes(marker), `IP-family change no longer preserves filtering DNS: ${marker}`);
+  requireContract(ipToggle.includes(marker), `IP-family change no longer preserves DNS preset semantics: ${marker}`);
 }
 
 const quickCard = read("src/components/QuickConnectionCard.tsx");
@@ -134,4 +138,4 @@ for (const marker of [
 const androidLib = read("src-tauri/src/lib.rs");
 requireContract(androidLib.includes("mod dns_policy;"), "Android build no longer includes shared DNS policy");
 
-console.log("[dns-contracts] DNS presets, family policy, TUN parity and fail-closed recovery are aligned");
+console.log("[dns-contracts] DNS presets, persistence, family policy, TUN parity and fail-closed recovery are aligned");
