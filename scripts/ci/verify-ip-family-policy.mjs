@@ -76,6 +76,21 @@ for (const marker of [
   requireContract(ipToggle.includes(marker), `IP-family UI semantics drifted: ${marker}`);
 }
 
+const diagnostics = read("src/components/ConnectionDiagnostics.tsx");
+for (const marker of [
+  'return "IPv4 only"',
+  'return "IPv6 only"',
+  'return "Dual-stack"',
+]) {
+  requireContract(diagnostics.includes(marker), `diagnostics contradict strict IP-family policy: ${marker}`);
+}
+for (const forbidden of ["IPv4 preferred", "IPv6 preferred"]) {
+  requireContract(
+    !diagnostics.includes(forbidden),
+    `diagnostics weakens a strict family constraint: ${forbidden}`,
+  );
+}
+
 const androidRuntime = read("src-tauri/src/android.rs");
 for (const marker of [
   "fn normalize_runtime_dns",
@@ -95,4 +110,4 @@ requireContract(
   "custom Core no longer defines -6 as IPv6-only scan/connect",
 );
 
-console.log("[ip-family-policy] selected internet family is strict across UI, Auto, DNS and runtime");
+console.log("[ip-family-policy] selected internet family is strict across UI, diagnostics, Auto, DNS and runtime");
