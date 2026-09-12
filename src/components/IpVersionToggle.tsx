@@ -9,8 +9,8 @@ const LABELS: Record<IpVersion, string> = {
 };
 
 const DESCRIPTIONS: Record<IpVersion, string> = {
-  v4: "IPv4 only. IPv6 internet traffic is blocked at runtime on Android instead of being allowed to bypass the selected family.",
-  v6: "IPv6 only. IPv4 internet traffic is blocked at runtime on Android.",
+  v4: "IPv4 only. IPv6 internet traffic stays blocked across Automatic fallbacks and every transport.",
+  v6: "IPv6 only. IPv4 internet traffic stays blocked across Automatic fallbacks and every transport.",
   both: "Dual stack. IPv4 and IPv6 internet traffic are both allowed through the protected path.",
 };
 
