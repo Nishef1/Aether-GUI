@@ -59,7 +59,7 @@ export function ExitPreferenceControl({ disabled = false }: { disabled?: boolean
           );
         })}
       </div>
-      <p id="connection-goal-help" className="px-1 text-[10px] leading-4 text-muted-foreground">
+      <p id="connection-goal-help" className="px-1 text-[11px] leading-4 text-muted-foreground">
         {HELP[preference]}
       </p>
     </fieldset>
