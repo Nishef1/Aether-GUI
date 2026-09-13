@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minus, X } from "lucide-react";
+import { CloseToTrayToggle } from "@/components/CloseToTrayToggle";
 
 const appWindow = getCurrentWindow();
 const CONTROL =
@@ -7,13 +8,19 @@ const CONTROL =
 
 export function TitleBar() {
   return (
-    // data-tauri-drag-region only fires when the mousedown target IS this
-    // element, so the buttons stay clickable without any extra handling.
     <header
       data-tauri-drag-region
-      className="relative z-10 flex h-9 shrink-0 select-none items-center justify-end"
-      aria-label="Window controls"
+      className="relative z-10 flex h-9 shrink-0 select-none items-center border-b border-white/[0.045] bg-background/55 backdrop-blur-sm"
+      aria-label="Aether window controls"
     >
+      <div className="pointer-events-none flex min-w-0 items-center gap-2 px-3">
+        <span className="truncate text-[11px] font-semibold tracking-[0.14em] text-foreground uppercase">
+          Aether
+        </span>
+        <span className="hidden text-[10px] text-muted-foreground sm:inline">Secure tunnel</span>
+      </div>
+      <div data-tauri-drag-region className="h-full min-w-4 flex-1" />
+      <CloseToTrayToggle compact />
       <button
         type="button"
         aria-label="Minimize"

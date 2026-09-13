@@ -5,7 +5,7 @@ import { useConnectionStore } from "@/state/connectionStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
 import type { ConnectionProfile, PathHealth } from "@/types/connection";
 
-function inferredTransport(profile: ConnectionProfile): string {
+function configuredTransport(profile: ConnectionProfile): string {
   switch (profile.protocol) {
     case "masque":
       return profile.masque_http2 ? "H2" : "H3";
@@ -18,7 +18,7 @@ function inferredTransport(profile: ConnectionProfile): string {
   }
 }
 
-function runtimeTransportLabel(transport: string | null, profile: ConnectionProfile): string {
+function runtimeTransportLabel(transport: string | null): string | null {
   switch (transport) {
     case "h2":
       return "H2";
@@ -29,28 +29,35 @@ function runtimeTransportLabel(transport: string | null, profile: ConnectionProf
     case "gool":
       return "Warp-in-Warp";
     default:
-      return inferredTransport(profile);
+      return null;
   }
 }
 
-function configuredIpLabel(profile: ConnectionProfile): string {
-  switch (profile.ip_version) {
-    case "v4":
-      return "IPv4";
-    case "v6":
-      return "IPv6";
-    case "both":
-      return "Dual-stack";
-  }
+type IpFamily = "IPv4" | "IPv6";
+
+function ipFamilyFromHost(value: string | null): IpFamily | null {
+  if (!value) return null;
+  const host = value.trim();
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return "IPv4";
+  if (host.includes(":")) return "IPv6";
+  return null;
 }
 
-function runtimeIpLabel(endpoint: string | null, profile: ConnectionProfile): string {
-  if (endpoint) {
-    const firstHop = endpoint.split(">")[0].trim();
-    if (firstHop.startsWith("[")) return "IPv6";
-    if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(firstHop)) return "IPv4";
+function endpointIpFamily(endpoint: string | null): IpFamily | null {
+  if (!endpoint) return null;
+  const firstHop = endpoint.split(">")[0]?.trim() ?? "";
+  if (!firstHop) return null;
+
+  if (firstHop.startsWith("[")) {
+    const closing = firstHop.indexOf("]");
+    return closing > 1 ? "IPv6" : null;
   }
-  return configuredIpLabel(profile);
+
+  const ipv4WithOptionalPort = firstHop.match(/^(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?$/);
+  if (ipv4WithOptionalPort) return "IPv4";
+
+  const colonCount = [...firstHop].filter((character) => character === ":").length;
+  return colonCount >= 2 ? "IPv6" : null;
 }
 
 function healthPresentation(health: PathHealth): { label: string; className: string } {
@@ -85,6 +92,7 @@ export function ConnectionDiagnostics() {
   const runtimeCapacityAttemptId = useConnectionStore((state) => state.runtimeCapacityAttemptId);
   const automaticAttempt = useAutomaticRuntimeStore((state) => state.attempt);
   const pathHealth = useTelemetryStore((state) => state.snapshot.path_health ?? "unknown");
+  const publicIp = useTelemetryStore((state) => state.snapshot.public_ip ?? null);
   const telemetryUploadLimited = useTelemetryStore((state) => state.snapshot.upload_limited ?? false);
 
   const stable = status.state === "Connected" || status.state === "Tunneling";
@@ -95,8 +103,10 @@ export function ConnectionDiagnostics() {
   const path = runtimePathAttemptId === attemptId ? runtimePath : null;
   const runtimeAttemptCapacity = runtimeCapacityAttemptId === attemptId ? runtimeCapacity : null;
   const uploadLimited = runtimeAttemptCapacity?.uploadLimited ?? telemetryUploadLimited;
-  const transport = runtimeTransportLabel(path?.transport ?? null, profile);
-  const ipFamily = runtimeIpLabel(path?.endpoint ?? null, profile);
+  const runtimeTransport = runtimeTransportLabel(path?.transport ?? null);
+  const transport = runtimeTransport ?? `Configured ${configuredTransport(profile)}`;
+  const edgeFamily = endpointIpFamily(path?.endpoint ?? null);
+  const exitFamily = ipFamilyFromHost(publicIp);
   const health = healthPresentation(pathHealth);
 
   return (
@@ -108,7 +118,10 @@ export function ConnectionDiagnostics() {
         <div className="flex min-w-0 items-center gap-2">
           <Activity size={14} className="shrink-0 text-primary" aria-hidden="true" />
           <span className="truncate text-xs font-medium text-foreground">
-            {transport} <span className="text-muted-foreground">· {ipFamily}</span>
+            {transport}
+            <span className="text-muted-foreground">
+              {edgeFamily ? ` · Edge ${edgeFamily}` : " · Edge family pending"}
+            </span>
           </span>
         </div>
         <span
@@ -121,6 +134,14 @@ export function ConnectionDiagnostics() {
           {health.label}
         </span>
       </div>
+
+      {(publicIp || exitFamily) && (
+        <p className="mt-1.5 break-all font-mono text-[10px] leading-4 text-muted-foreground">
+          {exitFamily ? `Exit ${exitFamily}` : "Exit IP"}
+          {publicIp ? ` · ${publicIp}` : ""}
+        </p>
+      )}
+
       {uploadLimited && (
         <p className="mt-2 text-[10px] text-status-connecting">Upload is currently restricted.</p>
       )}

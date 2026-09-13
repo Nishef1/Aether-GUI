@@ -6,7 +6,6 @@ import { ConnectButton } from "@/components/ConnectButton";
 import { ConnectionDiagnostics } from "@/components/ConnectionDiagnostics";
 import { ConnectionStatusLine } from "@/components/ConnectionStatusLine";
 import { QuickConnectionCard } from "@/components/QuickConnectionCard";
-import { CloseToTrayToggle } from "@/components/CloseToTrayToggle";
 import { AmbientBackground } from "@/components/AmbientBackground";
 import { SidecarErrorScreen } from "@/components/SidecarErrorScreen";
 import { AccessCodePrompt } from "@/components/AccessCodePrompt";
@@ -137,12 +136,6 @@ function MainScreen() {
         >
           <AdvancedPanel />
         </Suspense>
-
-        {!isAndroid && (
-          <div className="px-1 pb-1">
-            <CloseToTrayToggle />
-          </div>
-        )}
       </div>
     </div>
   );

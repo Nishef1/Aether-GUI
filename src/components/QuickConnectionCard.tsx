@@ -75,40 +75,33 @@ export function QuickConnectionCard() {
       className="w-full min-w-0 rounded-3xl bg-surface-1/80 p-4 ring-1 ring-white/10 backdrop-blur-sm"
       aria-labelledby="connection-profile-title"
     >
-      <div className="mb-3 flex min-w-0 items-center gap-2.5">
-        <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
-          <Gauge size={17} aria-hidden="true" />
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
+            <Gauge size={17} aria-hidden="true" />
+          </div>
+          <h2 id="connection-profile-title" className="truncate text-sm font-semibold text-foreground">
+            Connection profile
+          </h2>
         </div>
-        <h2 id="connection-profile-title" className="text-sm font-semibold text-foreground">
-          Connection profile
-        </h2>
+        <button
+          type="button"
+          disabled={locked}
+          onClick={applyFastIranPreset}
+          className={`inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-[11px] font-medium ring-1 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${
+            fastIranActive
+              ? "bg-primary/12 text-primary ring-primary/30"
+              : "bg-black/15 text-muted-foreground ring-white/10 hover:bg-white/5 hover:text-foreground"
+          }`}
+          aria-pressed={fastIranActive}
+          aria-label="Apply recommended fast gaming connection defaults"
+          title="Apply H2, Turbo, IPv4 and low-latency defaults"
+        >
+          <Gamepad2 size={13} aria-hidden="true" />
+          Fast / Gaming
+          <span className="font-semibold">{fastIranActive ? "On" : "Use"}</span>
+        </button>
       </div>
-
-      <button
-        type="button"
-        disabled={locked}
-        onClick={applyFastIranPreset}
-        className={`mb-3 flex min-h-12 w-full min-w-0 items-center justify-between gap-3 rounded-2xl px-3 text-left ring-1 outline-none transition focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${
-          fastIranActive
-            ? "bg-primary/12 text-foreground ring-primary/35"
-            : "bg-black/15 text-foreground ring-white/10 hover:bg-white/5"
-        }`}
-        aria-pressed={fastIranActive}
-        aria-label="Apply recommended fast gaming connection defaults"
-      >
-        <span className="flex min-w-0 items-center gap-2.5">
-          <Gamepad2 size={16} className="shrink-0 text-primary" aria-hidden="true" />
-          <span className="min-w-0">
-            <span className="block text-xs font-semibold">Fast / Gaming</span>
-            <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
-              H2 · Turbo · IPv4 · Firewall
-            </span>
-          </span>
-        </span>
-        <span className="shrink-0 text-[11px] font-medium text-primary">
-          {fastIranActive ? "Active" : "Apply"}
-        </span>
-      </button>
 
       <div className="grid min-w-0 gap-3">
         <ExitPreferenceControl disabled={locked} />

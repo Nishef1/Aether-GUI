@@ -1,0 +1,18 @@
+/* Platform-specific polish kept separate from the shared design tokens. */
+
+.platform-android [aria-label="Aether diagnostic logs"] {
+  width: calc(100% + 2rem);
+  height: min(58svh, 32rem);
+  max-height: none;
+  margin-inline: -1rem;
+  padding: 0.875rem;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  font-size: 0.6875rem;
+  line-height: 1.55;
+}
+
+.platform-android [aria-label="Aether diagnostic logs"] p {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}

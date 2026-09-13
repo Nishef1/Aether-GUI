@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useSystemTunnelStore } from "@/state/systemTunnelStore";
 
+const SING_BOX_VERSION = "v1.14.0";
+
 export function SystemTunnelToggle() {
   const status = useConnectionStore((state) => state.status);
   const selection = useSystemTunnelStore((state) => state.selection);
@@ -101,7 +103,9 @@ export function SystemTunnelToggle() {
     <div className="flex flex-col gap-2">
       <div className="flex min-h-14 items-center justify-between gap-4 rounded-2xl bg-black/15 px-3.5 py-3 ring-1 ring-white/8">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-foreground">Protect the whole device</p>
+          <p className="text-xs font-medium text-foreground">
+            System tunnel · sing-box {SING_BOX_VERSION}
+          </p>
           <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
             {loaded
               ? "Routes apps through Aether using the bundled sing-box TUN. Elevation may be required."
@@ -115,7 +119,7 @@ export function SystemTunnelToggle() {
           onCheckedChange={(enabled) => {
             void setSelection(enabled ? "singbox" : "off");
           }}
-          aria-label="Enable system-wide Aether tunnel"
+          aria-label={`Enable system-wide Aether tunnel with sing-box ${SING_BOX_VERSION}`}
         />
       </div>
       {error && (
