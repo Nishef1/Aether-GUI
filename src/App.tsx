@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
-import { LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ShieldCheck, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConnectButton } from "@/components/ConnectButton";
 import { ConnectionDiagnostics } from "@/components/ConnectionDiagnostics";
@@ -40,12 +40,7 @@ const SCREEN_TRANSITION = isAndroid
     };
 
 function MobileHeader() {
-  const loaded = useSystemTunnelStore((state) => state.loaded);
-  const selection = useSystemTunnelStore((state) => state.selection);
   const error = useSystemTunnelStore((state) => state.error);
-  const ready = loaded && selection === "native" && !error;
-  const Icon = error ? TriangleAlert : ready ? ShieldCheck : LoaderCircle;
-  const label = error ? "VPN attention" : ready ? "Device VPN ready" : "Preparing VPN";
 
   return (
     <header className="mb-2 flex w-full items-center justify-between gap-3 px-0.5">
@@ -57,20 +52,15 @@ function MobileHeader() {
           Private connection
         </h1>
       </div>
-      <span
-        className={cn(
-          "inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-[11px] font-medium ring-1",
-          error
-            ? "bg-status-error/8 text-status-error ring-status-error/20"
-            : ready
-              ? "bg-status-connected/8 text-status-connected ring-status-connected/20"
-              : "bg-status-connecting/8 text-status-connecting ring-status-connecting/20",
-        )}
-        role="status"
-      >
-        <Icon size={13} className={!error && !ready ? "android-connect-spin" : undefined} />
-        {label}
-      </span>
+      {error && (
+        <span
+          className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-status-error/8 px-3 text-[11px] font-medium text-status-error ring-1 ring-status-error/20"
+          role="status"
+        >
+          <TriangleAlert size={13} />
+          VPN issue
+        </span>
+      )}
     </header>
   );
 }
