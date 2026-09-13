@@ -183,9 +183,9 @@ internal object AndroidEgressProbe {
                         break
                     }
 
-                    error(
-                        "Tunnel transport became unavailable during end-to-end egress verification " +
-                            "and did not recover (${failureSummary(failures)})",
+                    failWithDiagnostics(
+                        "Tunnel transport did not recover during end-to-end verification",
+                        failures,
                     )
                 }
             }
@@ -202,9 +202,9 @@ internal object AndroidEgressProbe {
                 ).use { Unit }
             }
             if (literal.isSuccess) {
-                error(
-                    "Tunnel TCP is reachable through $LITERAL_TCP_LABEL, but remote DNS/domain " +
-                        "egress verification failed (${failureSummary(failures)})",
+                failWithDiagnostics(
+                    "Tunnel end-to-end identity/DNS verification failed",
+                    failures,
                 )
             }
 
@@ -226,14 +226,23 @@ internal object AndroidEgressProbe {
                 continue
             }
 
-            error(
-                "Tunnel end-to-end egress verification failed (${failureSummary(failures)})",
+            failWithDiagnostics(
+                "Tunnel end-to-end egress verification failed",
+                failures,
             )
         }
     }
 
     private fun failureSummary(failures: List<String>): String =
         failures.takeLast(6).joinToString(" | ")
+
+    private fun failWithDiagnostics(message: String, failures: List<String>): Nothing {
+        val detail = failureSummary(failures)
+        if (detail.isNotBlank()) {
+            AndroidVpnRuntime.appendServiceLine("$message: $detail")
+        }
+        error(message)
+    }
 
     private fun localProxyListening(proxyHost: String, proxyPort: Int): Boolean =
         runCatching {
