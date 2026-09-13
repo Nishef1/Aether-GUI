@@ -1,6 +1,6 @@
 pub mod sing_box;
 
-use crate::events::STATUS_EVENT;
+use crate::events::{now_millis, LogEvent, LOG_EVENT, STATUS_EVENT};
 use crate::runtime_error::RuntimeError;
 use crate::state::ConnectionState;
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,16 @@ use tauri_plugin_store::StoreExt;
 const STORE_FILE: &str = "settings.json";
 const STORE_KEY: &str = "system_tunnel";
 pub const SING_BOX_TUNNEL_ID: &str = "singbox";
+
+fn emit_system_tunnel_log(app: &AppHandle, line: impl Into<String>) {
+    let _ = app.emit(
+        LOG_EVENT,
+        LogEvent {
+            line: format!("[system-tunnel] {}", line.into()),
+            timestamp: now_millis(),
+        },
+    );
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -263,8 +273,10 @@ impl SystemTunnelRuntime {
         }
 
         if let Err(error) = result {
+            let message = error.to_string();
+            emit_system_tunnel_log(app, format!("start failed: {message}"));
             if let Ok(mut stage) = self.stage.lock() {
-                *stage = TunnelStage::Error(error.to_string());
+                *stage = TunnelStage::Error(message);
             }
             return Err(error);
         }
@@ -276,6 +288,7 @@ impl SystemTunnelRuntime {
                 .map_err(|_| RuntimeError::Internal("system tunnel state is unavailable".into()))?;
             *stage = TunnelStage::Active(context.clone());
         }
+        emit_system_tunnel_log(app, format!("data path verified: {}", adapter.id()));
         let _ = app.emit(
             STATUS_EVENT,
             &ConnectionState::Tunneling {
@@ -347,6 +360,7 @@ impl SystemTunnelRuntime {
         let Some(message) = adapter.poll_exit()? else {
             return Ok(None);
         };
+        emit_system_tunnel_log(app, format!("runtime failed: {message}"));
         adapter.stop(app);
         if let Ok(mut stage) = self.stage.lock() {
             *stage = TunnelStage::Error(message.clone());
