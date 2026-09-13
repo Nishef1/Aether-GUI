@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, type Variants } from "motion/react";
 import { AlertTriangle, Check, Loader2, Power } from "lucide-react";
 import { cancelAutomaticConnect, connectWithAutomaticPolicy } from "@/lib/autoConnect";
+import { disconnectAndReset } from "@/lib/disconnectLifecycle";
 import { cn } from "@/lib/utils";
 import { isAndroid } from "@/lib/platform";
 import { useConnectionStore } from "@/state/connectionStore";
@@ -55,12 +56,11 @@ const ARIA_LABEL: Record<Phase, string> = {
   idle: "Connect",
   connecting: "Cancel connection attempt",
   connected: "Disconnect",
-  error: "Retry connection",
+  error: "Reset failed connection",
 };
 
 export function ConnectButton() {
   const status = useConnectionStore((state) => state.status);
-  const disconnect = useConnectionStore((state) => state.disconnect);
   const beginManualAttempt = useExitPolicyStore((state) => state.beginManualAttempt);
   const cancelAutomation = useExitPolicyStore((state) => state.cancelAutomation);
   const focused = useWindowFocused();
@@ -72,14 +72,18 @@ export function ConnectButton() {
   const ariaLabel = disconnecting ? "Disconnecting" : ARIA_LABEL[phase];
 
   const handleClick = () => {
-    if (phase === "idle" || phase === "error") {
+    if (phase === "idle") {
       beginManualAttempt();
       void connectWithAutomaticPolicy();
-    } else {
-      cancelAutomaticConnect();
-      cancelAutomation();
-      void disconnect();
+      return;
     }
+
+    // Every non-idle press is an explicit teardown. Error is deliberately a
+    // reset action rather than an immediate retry: the next connection must
+    // start from a native-confirmed Idle state with no stale transport/TUN UI.
+    cancelAutomaticConnect();
+    cancelAutomation();
+    void disconnectAndReset();
   };
 
   return (
