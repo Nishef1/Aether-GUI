@@ -1,5 +1,4 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useConnectionStore } from "@/state/connectionStore";
 
 type Transport = "http3" | "http2";
@@ -41,21 +40,15 @@ export function MasqueTransportToggle() {
         className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10"
       >
         {TRANSPORTS.map((transport) => (
-          <Tooltip key={transport}>
-            <TooltipTrigger asChild>
-              <ToggleGroupItem
-                value={transport}
-                size="sm"
-                aria-label={LABELS[transport]}
-                className="min-h-12 w-full min-w-0 rounded-xl text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                {LABELS[transport]}
-              </ToggleGroupItem>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-72 leading-relaxed">
-              {DESCRIPTIONS[transport]}
-            </TooltipContent>
-          </Tooltip>
+          <ToggleGroupItem
+            key={transport}
+            value={transport}
+            size="sm"
+            aria-label={LABELS[transport]}
+            className="min-h-12 w-full min-w-0 rounded-xl text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            {LABELS[transport]}
+          </ToggleGroupItem>
         ))}
       </ToggleGroup>
       <p className="px-1 text-[10px] leading-4 text-muted-foreground">
