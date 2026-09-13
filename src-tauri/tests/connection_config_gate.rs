@@ -3,9 +3,7 @@ mod profiles;
 #[path = "../src/system_tunnel/sing_box/config.rs"]
 mod sing_box_config;
 
-use profiles::{
-    ConnectionProfile, IpVersion, MasqueMask, NoizeProfile, Protocol, TlsProfile,
-};
+use profiles::{ConnectionProfile, IpVersion, MasqueMask, NoizeProfile, Protocol, TlsProfile};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -79,7 +77,10 @@ fn transport_argument_matrix_covers_masque_wireguard_and_warp_in_warp() {
         "--fragment-delay",
         "--wiw-scan",
     ] {
-        assert!(!has_flag(&args, forbidden), "{forbidden} leaked into WireGuard");
+        assert!(
+            !has_flag(&args, forbidden),
+            "{forbidden} leaked into WireGuard"
+        );
     }
 
     let wiw_scan = ConnectionProfile {
@@ -233,7 +234,11 @@ fn system_tunnel_config_matrix_has_explicit_dns_and_fail_closed_routing() {
 }
 
 fn pinned_sing_box_binary() -> PathBuf {
-    let name = if cfg!(windows) { "sing-box.exe" } else { "sing-box" };
+    let name = if cfg!(windows) {
+        "sing-box.exe"
+    } else {
+        "sing-box"
+    };
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
         .join(name)
