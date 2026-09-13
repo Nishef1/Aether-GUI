@@ -94,8 +94,8 @@ export function QuickConnectionCard() {
               : "bg-black/15 text-muted-foreground ring-white/10 hover:bg-white/5 hover:text-foreground"
           }`}
           aria-pressed={fastIranActive}
-          aria-label="Apply recommended fast gaming connection defaults"
-          title="Apply H2, Turbo, IPv4 and low-latency defaults"
+          aria-label="Fast / Gaming preset: H2 · Turbo · IPv4 · Firewall"
+          title="H2 · Turbo · IPv4 · Firewall"
         >
           <Gamepad2 size={13} aria-hidden="true" />
           Fast / Gaming
