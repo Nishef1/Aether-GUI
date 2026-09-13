@@ -126,8 +126,13 @@ jobs:
       - name: Generate Tauri Android Gradle integration
         env:
           TAURI_ANDROID_PROJECT_PATH: ${{ github.workspace }}/src-tauri/gen/android
+          TAURI_ANDROID_PACKAGE_UNESCAPED: com.cluvexstudio.aethergui
+          WRY_ANDROID_PACKAGE: com.cluvexstudio.aethergui
+          WRY_ANDROID_LIBRARY: aether_gui_lib
+          WRY_ANDROID_KOTLIN_FILES_OUT_DIR: ${{ github.workspace }}/src-tauri/gen/android/app/src/main/generated
         run: |
           set -euo pipefail
+          mkdir -p "$WRY_ANDROID_KOTLIN_FILES_OUT_DIR"
           toolchain="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           export PATH="$toolchain:$PATH"
           export CC_aarch64_linux_android="$toolchain/aarch64-linux-android${ANDROID_MIN_API}-clang"
