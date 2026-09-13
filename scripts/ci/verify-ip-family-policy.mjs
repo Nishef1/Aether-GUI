@@ -76,23 +76,30 @@ for (const marker of [
   requireContract(ipToggle.includes(marker), `IP-family UI semantics drifted: ${marker}`);
 }
 
-// Live diagnostics intentionally use compact family names. Strictness is
-// enforced by the runtime route guards and the selector copy above, so the
-// compact panel must preserve the family mapping without weakening it into a
-// "preferred" family.
+// The selector remains a strict user policy, but live diagnostics must not
+// present that configured policy as an observed runtime fact. Edge family is
+// derived from the selected endpoint, while exit family is derived from the
+// measured public IP. If neither has evidence, diagnostics must say so instead
+// of guessing from profile.ip_version.
 const diagnostics = read("src/components/ConnectionDiagnostics.tsx");
 for (const marker of [
-  'case "v4":\n      return "IPv4"',
-  'case "v6":\n      return "IPv6"',
-  'case "both":\n      return "Dual-stack"',
-  "return configuredIpLabel(profile)",
+  "function endpointIpFamily",
+  "function ipFamilyFromHost",
+  "state.snapshot.public_ip",
+  '" · Edge family pending"',
+  "`Exit ${exitFamily}`",
 ]) {
-  requireContract(diagnostics.includes(marker), `diagnostics family label drifted: ${marker}`);
+  requireContract(diagnostics.includes(marker), `runtime diagnostics evidence drifted: ${marker}`);
 }
-for (const forbidden of ["IPv4 preferred", "IPv6 preferred"]) {
+for (const forbidden of [
+  "return configuredIpLabel(profile)",
+  "function configuredIpLabel",
+  "IPv4 preferred",
+  "IPv6 preferred",
+]) {
   requireContract(
     !diagnostics.includes(forbidden),
-    `diagnostics weakens a strict family constraint: ${forbidden}`,
+    `diagnostics must not infer an observed IP family from configuration: ${forbidden}`,
   );
 }
 
@@ -115,4 +122,6 @@ requireContract(
   "custom Core no longer defines -6 as IPv6-only scan/connect",
 );
 
-console.log("[ip-family-policy] selected internet family is strict across UI, diagnostics, Auto, DNS and runtime");
+console.log(
+  "[ip-family-policy] selected family stays strict while live diagnostics only report observed edge/exit families",
+);
