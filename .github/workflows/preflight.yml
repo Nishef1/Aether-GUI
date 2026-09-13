@@ -66,6 +66,10 @@ jobs:
         with:
           submodules: recursive
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -76,6 +80,16 @@ jobs:
           sudo apt-get install -y \
             build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev pkg-config
+
+      - name: Prepare pinned sing-box for configuration validation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/prepare-sidecars.mjs
+
+      - name: Connection configuration matrix
+        env:
+          AETHER_REQUIRE_SING_BOX_CHECK: "1"
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test connection_config_gate
 
       - name: Rust formatting check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
