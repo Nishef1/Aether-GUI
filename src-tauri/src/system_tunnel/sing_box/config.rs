@@ -42,7 +42,7 @@ pub fn generate(upstream_socks_addr: &str, dns_servers: &[SocketAddr]) -> Result
         },
         dns: DnsConfig {
             servers: dns,
-            final_: final_dns,
+            final_: final_dns.clone(),
         },
         inbounds: vec![TunInbound {
             type_: "tun",
@@ -70,6 +70,11 @@ pub fn generate(upstream_socks_addr: &str, dns_servers: &[SocketAddr]) -> Result
             ],
             final_: "proxy",
             auto_detect_interface: true,
+            // sing-box 1.14 requires an explicit resolver when more than one
+            // DNS server exists. Keep direct-outbound domain resolution on the
+            // same protected resolver selected for tunnel DNS instead of
+            // re-enabling the removed deprecated fallback behavior.
+            default_domain_resolver: final_dns,
         },
     };
 
@@ -162,6 +167,7 @@ struct RouteConfig<'a> {
     #[serde(rename = "final")]
     final_: &'a str,
     auto_detect_interface: bool,
+    default_domain_resolver: String,
 }
 
 #[derive(Serialize)]
@@ -216,6 +222,7 @@ mod tests {
         assert_eq!(value["route"]["rules"][0]["outbound"], "direct");
         assert_eq!(value["route"]["rules"][1]["action"], "hijack-dns");
         assert_eq!(value["route"]["final"], "proxy");
+        assert_eq!(value["route"]["default_domain_resolver"], "dns-proxy-0");
         assert_eq!(value["dns"]["servers"][0]["server"], "1.1.1.1");
         assert_eq!(value["dns"]["servers"][0]["detour"], "proxy");
     }
@@ -230,6 +237,7 @@ mod tests {
         assert_eq!(value["dns"]["servers"][0]["server"], "94.140.14.14");
         assert_eq!(value["dns"]["servers"][1]["server"], "94.140.15.15");
         assert_eq!(value["dns"]["final"], "dns-proxy-0");
+        assert_eq!(value["route"]["default_domain_resolver"], "dns-proxy-0");
     }
 
     #[test]
@@ -237,6 +245,7 @@ mod tests {
         let dns = ["9.9.9.9:5353".parse().unwrap()];
         let value = parse_config(&dns);
         assert_eq!(value["dns"]["servers"][0]["server_port"], 5353);
+        assert_eq!(value["route"]["default_domain_resolver"], "dns-proxy-0");
     }
 
     #[test]
