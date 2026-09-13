@@ -24,10 +24,50 @@ requireContract(
 const status = read("src/components/ConnectionStatusLine.tsx");
 requireContract(
   status.includes("friendlyConnectionError") &&
-    status.includes("secondary = friendlyConnectionError(status.phase, status.message)") &&
-    !status.includes("secondary = status.message"),
-  "raw transport/backend errors must not be dumped into the primary connection UI",
+    status.includes("secondary = friendlyConnectionError(status.phase, status.message)"),
+  "friendly connection guidance disappeared from the primary status presentation",
 );
+for (const marker of [
+  "useReducedMotion",
+  'mode="popLayout"',
+  'initial={false}',
+  "Technical details",
+  'status.state === "Error" && (',
+  "{status.message}",
+  "break-words whitespace-pre-wrap",
+]) {
+  requireContract(status.includes(marker), `connection status polish/diagnostic contract drifted: ${marker}`);
+}
+requireContract(
+  !status.includes("line-clamp-3"),
+  "connection errors can be visually truncated before users can inspect them",
+);
+
+const connectButton = read("src/components/ConnectButton.tsx");
+for (const marker of [
+  "useReducedMotion",
+  'mode="popLayout"',
+  'initial={false}',
+  "reduceMotion || isAndroid",
+  "scale: 0.98",
+]) {
+  requireContract(connectButton.includes(marker), `connect-orb motion contract drifted: ${marker}`);
+}
+requireContract(
+  !connectButton.includes('mode="wait"'),
+  "connect-orb icon transitions regressed to wait-mode flicker/gaps",
+);
+
+const systemTunnel = read("src-tauri/src/system_tunnel/mod.rs");
+for (const marker of [
+  "[system-tunnel]",
+  "start failed:",
+  "runtime failed:",
+  "data path verified:",
+  "LOG_EVENT",
+]) {
+  requireContract(systemTunnel.includes(marker), `system-tunnel diagnostics lost explicit log marker: ${marker}`);
+}
 
 const sidecar = read("src/components/SidecarErrorScreen.tsx");
 requireContract(
@@ -35,4 +75,6 @@ requireContract(
   "engine diagnostics must remain available without dominating the error screen",
 );
 
-console.log("[ui-polish] narrow-screen layout, preset disclosure and error presentation verified");
+console.log(
+  "[ui-polish] motion, reduced-motion handling and full system-tunnel diagnostics verified",
+);
