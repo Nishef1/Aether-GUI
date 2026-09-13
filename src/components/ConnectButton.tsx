@@ -1,4 +1,4 @@
-import { AnimatePresence, motion, type Variants } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion, type Variants } from "motion/react";
 import { AlertTriangle, Check, Loader2, Power } from "lucide-react";
 import { cancelAutomaticConnect, connectWithAutomaticPolicy } from "@/lib/autoConnect";
 import { disconnectAndReset } from "@/lib/disconnectLifecycle";
@@ -33,8 +33,8 @@ function phaseOf(status: ConnectionStatus): Phase {
 const SHAKE_VARIANTS: Variants = {
   rest: { x: 0 },
   error: {
-    x: [0, -5, 5, -3, 3, 0],
-    transition: { x: { duration: 0.36, ease: "easeInOut" } },
+    x: [0, -3, 3, -2, 2, 0],
+    transition: { x: { duration: 0.3, ease: [0.22, 1, 0.36, 1] } },
   },
 };
 
@@ -64,10 +64,11 @@ export function ConnectButton() {
   const beginManualAttempt = useExitPolicyStore((state) => state.beginManualAttempt);
   const cancelAutomation = useExitPolicyStore((state) => state.cancelAutomation);
   const focused = useWindowFocused();
+  const reduceMotion = useReducedMotion();
   const phase = phaseOf(status);
   const Icon = ICONS[phase];
   const color = STATUS_COLOR[phase];
-  const animationPlayState = focused ? ("running" as const) : ("paused" as const);
+  const animationPlayState = focused && !reduceMotion ? ("running" as const) : ("paused" as const);
   const disconnecting = status.state === "Disconnecting";
   const ariaLabel = disconnecting ? "Disconnecting" : ARIA_LABEL[phase];
 
@@ -93,8 +94,8 @@ export function ConnectButton() {
       aria-busy={phase === "connecting"}
       onClick={handleClick}
       disabled={disconnecting}
-      whileTap={disconnecting ? undefined : { scale: 0.965 }}
-      animate={phase === "error" ? "error" : "rest"}
+      whileTap={disconnecting || reduceMotion ? undefined : { scale: 0.98 }}
+      animate={!reduceMotion && phase === "error" ? "error" : "rest"}
       variants={SHAKE_VARIANTS}
       className={cn(
         "connect-orb relative grid shrink-0 place-items-center rounded-full outline-none",
@@ -130,17 +131,18 @@ export function ConnectButton() {
         }}
       />
 
-      {!isAndroid && (
-        <AnimatePresence>
+      {!isAndroid && !reduceMotion && (
+        <AnimatePresence initial={false}>
           {(phase === "connecting" || phase === "connected") && (
             <motion.span
               key={`${phase}-ripple`}
               aria-hidden
               className="pointer-events-none absolute inset-0 rounded-full border"
               style={{ borderColor: color }}
-              initial={{ scale: 0.96, opacity: 0.35 }}
-              animate={{ scale: phase === "connected" ? 1.55 : 1.35, opacity: 0 }}
-              transition={{ duration: 0.85, ease: "easeOut" }}
+              initial={{ scale: 0.98, opacity: 0.28 }}
+              animate={{ scale: phase === "connected" ? 1.48 : 1.32, opacity: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: phase === "connected" ? 1.1 : 0.95, ease: "easeOut" }}
             />
           )}
         </AnimatePresence>
@@ -154,13 +156,17 @@ export function ConnectButton() {
         />
       )}
 
-      <AnimatePresence mode="wait">
+      <AnimatePresence initial={false} mode="popLayout">
         <motion.span
           key={phase}
-          initial={isAndroid ? false : { opacity: 0, scale: 0.88 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={isAndroid ? undefined : { opacity: 0, scale: 0.88 }}
-          transition={{ duration: isAndroid ? 0 : 0.12 }}
+          initial={reduceMotion || isAndroid ? false : { opacity: 0, scale: 0.94, y: 2 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={reduceMotion || isAndroid ? undefined : { opacity: 0, scale: 0.94, y: -2 }}
+          transition={
+            reduceMotion || isAndroid
+              ? { duration: 0 }
+              : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }
+          }
           className="relative grid place-items-center"
         >
           <Icon
@@ -169,7 +175,7 @@ export function ConnectButton() {
             style={{ animationPlayState }}
             aria-hidden="true"
             className={cn(
-              phase === "connecting" && !isAndroid && "animate-spin",
+              phase === "connecting" && !isAndroid && !reduceMotion && "animate-spin",
               phase === "connecting" && isAndroid && "android-connect-spin",
               phase === "connecting" && "text-status-connecting",
               phase === "connected" && "text-status-connected",
