@@ -1,29 +1,26 @@
-import { Gamepad2, Gauge, LockKeyhole } from "lucide-react";
+import { Gamepad2, Gauge } from "lucide-react";
 import { DnsProtectionControl } from "@/components/DnsProtectionControl";
 import { ExitPreferenceControl } from "@/components/ExitPreferenceControl";
 import { ProtocolSelect } from "@/components/ProtocolSelect";
 import { ScanModeToggle } from "@/components/ScanModeToggle";
 import { MasqueTransportToggle } from "@/components/MasqueTransportToggle";
-import { NativeSelect } from "@/components/ui/native-select";
 import { useExitPolicyStore } from "@/state/exitPolicyStore";
 import { useConnectionStore } from "@/state/connectionStore";
-import type { H2MaskMode, Protocol, ScanMode, TlsProfileMode } from "@/types/connection";
+import type { Protocol, ScanMode } from "@/types/connection";
 
 const PROTOCOL_COPY: Record<Protocol, string> = {
-  auto: "Automatic starts with H2/TCP, then falls back to WireGuard, H3/QUIC and finally WARP-in-WARP when a carrier cannot pass real traffic.",
-  masque: "MASQUE only. H2/TCP is the restricted-network default; H3/QUIC is available when UDP works cleanly.",
-  wireguard: "WireGuard only. Fast on networks that allow its UDP path; Automatic is safer when reachability changes.",
-  gool: "WARP-in-WARP uses two nested WARP hops. It is the heaviest fallback and is not preferred ahead of healthy single-hop transports.",
+  auto: "Starts with H2 and only tries fallback carriers when needed.",
+  masque: "MASQUE only; choose H2/TCP or H3/QUIC below.",
+  wireguard: "WireGuard only; best when its UDP path is reliable.",
+  gool: "WARP-in-WARP; the heavier nested fallback.",
 };
 
 const SCAN_COPY: Record<ScanMode, string> = {
-  turbo: "Fast pass: find the first healthy route quickly, then let Automatic fall back only if it has to.",
-  balanced: "Broader discovery with more time per route when Turbo cannot find a reliable path.",
-  thorough: "Searches more candidates and gives slow paths longer when normal discovery cannot find a usable route.",
-  stealth:
-    "Quiet gateway discovery with fewer concurrent probes and more timing jitter. It does not hide the final VPN exit from websites.",
-  ironclad:
-    "Validates real traffic through each candidate before accepting it. This verifies the route now; it cannot guarantee future availability.",
+  turbo: "First healthy route with the smallest scan budget.",
+  balanced: "More tolerance when Turbo misses a reliable route.",
+  thorough: "Broader search with longer windows for difficult networks.",
+  stealth: "Quieter discovery with fewer concurrent probes.",
+  ironclad: "Verifies real traffic before accepting a candidate.",
 };
 
 export function QuickConnectionCard() {
@@ -34,8 +31,8 @@ export function QuickConnectionCard() {
   const setPreference = useExitPolicyStore((state) => state.setPreference);
   const locked = status.state !== "Idle" && status.state !== "Error";
   const masqueFamily = profile.protocol === "auto" || profile.protocol === "masque";
-  const h2Mask: H2MaskMode = profile.masque_mask ?? (profile.fragment ? "legacy" : "off");
-  const tlsProfile: TlsProfileMode = profile.tls_profile ?? "automatic";
+  const h2Mask = profile.masque_mask ?? (profile.fragment ? "legacy" : "off");
+  const tlsProfile = profile.tls_profile ?? "automatic";
   const fastIranActive =
     profile.protocol === "auto" &&
     profile.scan_mode === "turbo" &&
@@ -53,17 +50,9 @@ export function QuickConnectionCard() {
     !profile.no_data_check &&
     preference === "low-latency";
 
-  const setH2Mask = (mode: H2MaskMode) => {
-    setField("masque_mask", mode);
-    setField("fragment", mode === "legacy");
-  };
-
   const applyFastIranPreset = () => {
     if (locked) return;
 
-    // Reachability first: H2/TCP avoids depending on QUIC/UDP, Turbo keeps the
-    // first pass short, and quick reconnect re-tests a known-good route before
-    // scanning again. Country is deliberately not part of acceptance.
     setField("protocol", "auto");
     setField("scan_mode", "turbo");
     setField("ip_version", "v4");
@@ -86,25 +75,13 @@ export function QuickConnectionCard() {
       className="w-full min-w-0 rounded-3xl bg-surface-1/80 p-4 ring-1 ring-white/10 backdrop-blur-sm"
       aria-labelledby="connection-profile-title"
     >
-      <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
-            <Gauge size={17} aria-hidden="true" />
-          </div>
-          <div className="min-w-0">
-            <h2 id="connection-profile-title" className="text-sm font-semibold text-foreground">
-              Connection profile
-            </h2>
-            <p className="text-[11px] leading-4 text-muted-foreground">
-              Fast controls stay here; deep tuning remains under More settings.
-            </p>
-          </div>
+      <div className="mb-3 flex min-w-0 items-center gap-2.5">
+        <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
+          <Gauge size={17} aria-hidden="true" />
         </div>
-        {locked && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/5 px-2 py-1 text-[10px] text-muted-foreground ring-1 ring-white/10">
-            <LockKeyhole size={10} aria-hidden="true" /> Live
-          </span>
-        )}
+        <h2 id="connection-profile-title" className="text-sm font-semibold text-foreground">
+          Connection profile
+        </h2>
       </div>
 
       <button
@@ -117,14 +94,14 @@ export function QuickConnectionCard() {
             : "bg-black/15 text-foreground ring-white/10 hover:bg-white/5"
         }`}
         aria-pressed={fastIranActive}
-        aria-label="Apply Iran fast gaming connection preset"
+        aria-label="Apply fast gaming connection preset"
       >
         <span className="flex min-w-0 items-center gap-2.5">
           <Gamepad2 size={16} className="shrink-0 text-primary" aria-hidden="true" />
           <span className="min-w-0">
-            <span className="block text-xs font-semibold">Fast / Gaming — Iran</span>
+            <span className="block text-xs font-semibold">Fast / Gaming</span>
             <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
-              H2 + Turbo + quick reconnect; first healthy route wins, regardless of country.
+              H2 · Turbo · quick reconnect
             </span>
           </span>
         </span>
@@ -157,60 +134,10 @@ export function QuickConnectionCard() {
         <DnsProtectionControl disabled={locked} />
 
         {masqueFamily && (
-          <>
-            <div className="grid min-w-0 gap-1.5">
-              <span className="text-[11px] font-medium text-muted-foreground">MASQUE carrier</span>
-              <MasqueTransportToggle />
-            </div>
-
-            <div className="grid min-w-0 gap-1.5">
-              <div className="flex min-w-0 items-end justify-between gap-2 px-1">
-                <span className="text-[11px] font-medium text-muted-foreground">MASK & TLS</span>
-                <span className="min-w-0 truncate text-[10px] text-muted-foreground">
-                  Manual compatibility controls
-                </span>
-              </div>
-              <div className="grid min-w-0 gap-2 sm:grid-cols-2">
-                <label className="grid min-w-0 gap-1 text-[10px] text-muted-foreground">
-                  <span>H2 ClientHello MASK</span>
-                  <NativeSelect
-                    value={h2Mask}
-                    disabled={locked || !profile.masque_http2}
-                    onChange={(event) => setH2Mask(event.target.value as H2MaskMode)}
-                    aria-label="H2 ClientHello MASK"
-                  >
-                    <option value="off">Off — baseline first</option>
-                    <option value="clienthello">ClientHello split</option>
-                    <option value="patterniha">Patterniha MASK (experimental)</option>
-                    <option value="legacy">Legacy random fragment</option>
-                  </NativeSelect>
-                </label>
-
-                <label className="grid min-w-0 gap-1 text-[10px] text-muted-foreground">
-                  <span>TLS profile</span>
-                  <NativeSelect
-                    value={tlsProfile}
-                    disabled={locked}
-                    onChange={(event) =>
-                      setField("tls_profile", event.target.value as TlsProfileMode)
-                    }
-                    aria-label="TLS profile"
-                  >
-                    <option value="automatic">Automatic</option>
-                    <option value="current">Current BoringSSL</option>
-                    <option value="compatibility">Compatibility</option>
-                    <option value="native-minimal">Native-Minimal</option>
-                    <option value="experimental">Experimental</option>
-                  </NativeSelect>
-                </label>
-              </div>
-              <p className="px-1 text-[10px] leading-4 text-muted-foreground">
-                Start with H2 + MASK Off + TLS Automatic. If H2 reaches TLS but is blocked, try
-                ClientHello or Patterniha manually; Automatic only reuses Patterniha after it has
-                proven reliable on that network.
-              </p>
-            </div>
-          </>
+          <div className="grid min-w-0 gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">MASQUE carrier</span>
+            <MasqueTransportToggle />
+          </div>
         )}
       </div>
     </section>
