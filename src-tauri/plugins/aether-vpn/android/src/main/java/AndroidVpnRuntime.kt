@@ -30,6 +30,40 @@ data class FinalNativeTraffic(
     val sentBytes: Long = 0L,
 )
 
+internal class SessionTrafficCounter {
+    private var lastRaw: FinalNativeTraffic? = null
+    private var total = FinalNativeTraffic()
+
+    @Synchronized
+    fun reset() {
+        lastRaw = null
+        total = FinalNativeTraffic()
+    }
+
+    @Synchronized
+    fun snapshot(): FinalNativeTraffic = total
+
+    @Synchronized
+    fun sample(raw: FinalNativeTraffic): FinalNativeTraffic {
+        val previous = lastRaw
+        lastRaw = raw
+        if (previous == null) return total
+
+        val receivedDelta =
+            if (raw.receivedBytes >= previous.receivedBytes) raw.receivedBytes - previous.receivedBytes else 0L
+        val sentDelta =
+            if (raw.sentBytes >= previous.sentBytes) raw.sentBytes - previous.sentBytes else 0L
+        total = FinalNativeTraffic(
+            receivedBytes = saturatingAdd(total.receivedBytes, receivedDelta),
+            sentBytes = saturatingAdd(total.sentBytes, sentDelta),
+        )
+        return total
+    }
+
+    private fun saturatingAdd(current: Long, delta: Long): Long =
+        if (delta > Long.MAX_VALUE - current) Long.MAX_VALUE else current + delta
+}
+
 data class FinalNativeLogEntry(
     val id: Long,
     val timestamp: Long,
@@ -100,6 +134,7 @@ internal object AndroidVpnRuntime {
     private val status = AtomicReference(idleSnapshot())
     private val activeTunBridge = AtomicReference<HevTun2Socks?>(null)
     private val telemetry = AtomicReference(FinalRuntimeTelemetry())
+    private val trafficCounter = SessionTrafficCounter()
     private val lastFailure = AtomicReference<FinalFailureSummary?>(null)
     private val appContext = AtomicReference<Context?>(null)
     private val crashHandlerInstalled = AtomicBoolean(false)
@@ -354,6 +389,7 @@ internal object AndroidVpnRuntime {
 
     fun resetTelemetry() {
         capacityProbeClaimed.set(false)
+        trafficCounter.reset()
         telemetry.set(FinalRuntimeTelemetry(sampledAtMs = System.currentTimeMillis()))
         synchronized(controlLogs) { controlLogs.clear() }
     }
@@ -366,14 +402,15 @@ internal object AndroidVpnRuntime {
             reportSafetyFailure("Android device tunnel is no longer running; traffic remains blocked to prevent an IP leak")
         }
         val stats = runCatching { bridge?.TProxyGetStats() }.getOrNull()
-        val traffic = if (stats == null || stats.size < 4) {
-            FinalNativeTraffic()
+        val raw = if (stats == null || stats.size < 4) {
+            null
         } else {
             FinalNativeTraffic(
                 receivedBytes = stats[3].coerceAtLeast(0L),
                 sentBytes = stats[1].coerceAtLeast(0L),
             )
         }
+        val traffic = raw?.let(trafficCounter::sample) ?: trafficCounter.snapshot()
         telemetry.updateAndGet { current ->
             current.copy(
                 receivedBytes = traffic.receivedBytes,
