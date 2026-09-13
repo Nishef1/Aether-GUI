@@ -1,0 +1,124 @@
+name: preflight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: contracts-and-frontend
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Synchronize product version metadata
+        run: node scripts/ci/sync-product-version.mjs
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Verify release metadata
+        run: npm run verify:version
+
+      - name: Verify runtime manifest
+        run: npm run verify:runtimes
+
+      - name: Verify pinned custom Aether source
+        run: npm run verify:custom-core
+
+      - name: Verify integration and UI contracts
+        run: npm run verify:contracts
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Android feature-parity contracts
+        run: python3 scripts/tests/test_android_feature_parity.py
+
+      - name: Path Intelligence unit tests
+        run: node --test scripts/tests/test_path_intelligence.mjs
+
+  rust:
+    name: rust-checks
+    needs: contracts
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install Linux compile dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev pkg-config
+
+      - name: Rust formatting check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Rust unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+  android-source:
+    name: android-kotlin-checks
+    needs: contracts
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Android SDK inputs used by the generated project
+        run: |
+          yes 2>/dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Initialize generated Android project
+        run: npm run android:init
+
+      - name: Compile plugin Kotlin and run JVM unit tests
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-aether-vpn:compileDebugKotlin :tauri-plugin-aether-vpn:testDebugUnitTest --no-daemon
