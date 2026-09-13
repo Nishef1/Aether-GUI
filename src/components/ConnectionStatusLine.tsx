@@ -65,7 +65,7 @@ function formatBytes(bytes: number): string {
     value /= 1024;
     unit += 1;
   } while (value >= 1024 && unit < BYTE_UNITS.length - 1);
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${BYTE_UNITS[unit]}`;
+  return `${value.toFixed(2)} ${BYTE_UNITS[unit]}`;
 }
 
 function formatKbps(kbps: number): string {
@@ -185,10 +185,16 @@ function ScanProgressBar({ percent, active }: { percent: number | null; active: 
 function TunnelTraffic() {
   const receivedBytes = useTelemetryStore((state) => state.snapshot.received_bytes);
   const sentBytes = useTelemetryStore((state) => state.snapshot.sent_bytes);
+  const totalBytes = receivedBytes + sentBytes;
+  const exactBytes = `Received ${receivedBytes.toLocaleString()} bytes · Sent ${sentBytes.toLocaleString()} bytes · Total ${totalBytes.toLocaleString()} bytes`;
 
   return (
-    <span className="font-mono text-[10px] text-muted-foreground" aria-label="Tunnel traffic">
-      ↓ {formatBytes(receivedBytes)} · ↑ {formatBytes(sentBytes)}
+    <span
+      className="font-mono text-[10px] text-muted-foreground"
+      aria-label={`Tunnel traffic. ${exactBytes}`}
+      title={exactBytes}
+    >
+      ↓ {formatBytes(receivedBytes)} · ↑ {formatBytes(sentBytes)} · Σ {formatBytes(totalBytes)}
     </span>
   );
 }
@@ -391,7 +397,7 @@ export function ConnectionStatusLine() {
       )}
       {connectionReady && egressProbeComplete && !hasEgressInfo && (
         <span className="font-mono text-[10px] text-muted-foreground">
-          Exit information unavailable
+          Exit information unavailable · retrying
         </span>
       )}
       {connectionReady && hasEgressInfo && (
@@ -462,7 +468,7 @@ export function ConnectionStatusLine() {
             {privacyPreferred
               ? "Privacy exit accepted"
               : !countryCode
-                ? "Exit country could not be verified; connection kept"
+                ? "Exit country could not be verified yet; connection kept"
                 : privacyExhausted
                   ? `Preferred exit unavailable after ${EXIT_RETRY_LIMIT} automatic retries; current connection kept`
                   : `Current exit is outside the privacy pool · retry ${privacyRetryCount}/${EXIT_RETRY_LIMIT}`}
