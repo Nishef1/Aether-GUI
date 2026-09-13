@@ -25,7 +25,14 @@ internal data class CapacityProbeResult(
 )
 
 /**
- * End-to-end SOCKS verification used as the definition of transport readiness.
+ * End-to-end transport verification through Aether Core's loopback handoff.
+ *
+ * The loopback SOCKS endpoint is an internal implementation detail even when
+ * the user selected Native TUN. Aether Core deliberately tears that listener
+ * down while it recycles an unhealthy MASQUE/WireGuard route, then exposes it
+ * again after the replacement route has passed Core validation. The verifier
+ * therefore tolerates one bounded listener recycle instead of turning Core's
+ * own recovery into a terminal Android VPN error.
  *
  * GeoIP is observational data and never rejects an otherwise healthy tunnel:
  * low-latency mode is allowed to keep a nearby WARP egress, while the UI's
@@ -35,7 +42,16 @@ internal data class CapacityProbeResult(
  * fail-closed safety faults as well.
  */
 internal object AndroidEgressProbe {
-    private const val CONNECT_TIMEOUT_MS = 6_000
+    // This socket only connects to the Core listener on loopback. Waiting six
+    // seconds here used to amplify a normal Core route recycle into several
+    // consecutive 6s ECONNREFUSED stalls. Loopback either accepts quickly or
+    // is temporarily absent, in which case the bounded recovery path below owns
+    // the wait.
+    private const val LOCAL_PROXY_CONNECT_TIMEOUT_MS = 1_000
+    private const val LOCAL_RECOVERY_CONNECT_TIMEOUT_MS = 200
+    private const val LOCAL_RECOVERY_POLL_MS = 250L
+    private const val LOCAL_RECOVERY_WINDOW_MS = 15_000L
+    private const val MAX_LOCAL_RECOVERIES = 1
     private const val READ_TIMEOUT_MS = 8_000
     private const val HTTP_HEAD_LIMIT = 16 * 1024
     private const val LITERAL_TCP_LABEL = "cloudflare-literal-tcp"
@@ -105,8 +121,8 @@ internal object AndroidEgressProbe {
         probeInner(bindAddress)
     } catch (error: Throwable) {
         // Only the final end-to-end outcome reaches this boundary. Individual
-        // provider fallbacks are intentionally invisible to health state so a
-        // blocked echo service cannot make an otherwise healthy path suspect.
+        // provider fallbacks and a recovered Core listener recycle are invisible
+        // to health state so a transient route change cannot poison telemetry.
         AndroidVpnRuntime.publishProbeFailure()
         throw error
     }
@@ -115,51 +131,133 @@ internal object AndroidEgressProbe {
         val underlayIps = AndroidEgressIdentityGuard.underlayPublicIps()
         val (proxyHost, proxyPort) = splitHostPort(bindAddress)
         val failures = mutableListOf<String>()
+        var localRecoveries = 0
 
-        for (provider in identityProviders) {
-            val result = runCatching { probeProvider(proxyHost, proxyPort, provider) }
-            if (result.isSuccess) {
-                val probe = result.getOrThrow()
-                AndroidEgressIdentityGuard.assertChanged(underlayIps, probe.publicIp)
+        while (true) {
+            var restartAfterRecovery = false
 
-                if (underlayIps.any { it.contains(':') }) {
-                    runCatching { probeProvider(proxyHost, proxyPort, ipv6IdentityProvider) }
-                        .getOrNull()
-                        ?.let { ipv6 ->
-                            AndroidEgressIdentityGuard.assertChanged(underlayIps, ipv6.publicIp)
-                        }
+            for (provider in identityProviders) {
+                val result = runCatching { probeProvider(proxyHost, proxyPort, provider) }
+                if (result.isSuccess) {
+                    val probe = result.getOrThrow()
+                    AndroidEgressIdentityGuard.assertChanged(underlayIps, probe.publicIp)
+
+                    if (underlayIps.any { it.contains(':') }) {
+                        runCatching { probeProvider(proxyHost, proxyPort, ipv6IdentityProvider) }
+                            .getOrNull()
+                            ?.let { ipv6 ->
+                                AndroidEgressIdentityGuard.assertChanged(underlayIps, ipv6.publicIp)
+                            }
+                    }
+
+                    val finalProbe = if (probe.countryCode != null) {
+                        probe
+                    } else {
+                        val geo = runCatching {
+                            probeProvider(proxyHost, proxyPort, geoProvider)
+                        }.getOrNull()
+                        probe.copy(countryCode = geo?.countryCode)
+                    }
+                    maybeProbeCapacity(proxyHost, proxyPort)
+                    return finalProbe
                 }
 
-                val finalProbe = if (probe.countryCode != null) {
-                    probe
-                } else {
-                    val geo = runCatching { probeProvider(proxyHost, proxyPort, geoProvider) }.getOrNull()
-                    probe.copy(countryCode = geo?.countryCode)
+                failures += "${provider.label}: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+
+                // Aether Core keeps the process alive while replacing an
+                // unhealthy route, but its per-route SOCKS listener disappears
+                // during that handoff. The old code immediately tried the next
+                // providers against the closed port and converted recovery into
+                // a fatal pre-TUN error. Detect that state explicitly and give
+                // Core one bounded chance to re-expose the validated listener.
+                if (!localProxyListening(proxyHost, proxyPort)) {
+                    if (
+                        localRecoveries < MAX_LOCAL_RECOVERIES &&
+                        waitForLocalProxyRecovery(proxyHost, proxyPort)
+                    ) {
+                        localRecoveries += 1
+                        AndroidVpnRuntime.appendServiceLine(
+                            "Aether Core recycled its local transport during egress verification; retrying on the recovered route",
+                        )
+                        restartAfterRecovery = true
+                        break
+                    }
+
+                    error(
+                        "Tunnel transport became unavailable during end-to-end egress verification " +
+                            "and did not recover (${failureSummary(failures)})",
+                    )
                 }
-                maybeProbeCapacity(proxyHost, proxyPort)
-                return finalProbe
             }
-            failures += "${provider.label}: ${result.exceptionOrNull()?.message ?: "unknown error"}"
-        }
 
-        val literal = runCatching {
-            socks5Connect(
-                proxyHost = proxyHost,
-                proxyPort = proxyPort,
-                targetHost = "1.1.1.1",
-                targetPort = 80,
-                useDomain = false,
-            ).use { Unit }
-        }
-        if (literal.isSuccess) {
+            if (restartAfterRecovery) continue
+
+            val literal = runCatching {
+                socks5Connect(
+                    proxyHost = proxyHost,
+                    proxyPort = proxyPort,
+                    targetHost = "1.1.1.1",
+                    targetPort = 80,
+                    useDomain = false,
+                ).use { Unit }
+            }
+            if (literal.isSuccess) {
+                error(
+                    "Tunnel TCP is reachable through $LITERAL_TCP_LABEL, but remote DNS/domain " +
+                        "egress verification failed (${failureSummary(failures)})",
+                )
+            }
+
+            failures += "$LITERAL_TCP_LABEL: ${literal.exceptionOrNull()?.message ?: "unknown error"}"
+
+            // The listener can disappear between the final HTTPS provider and
+            // the literal fallback. Handle that race exactly like the provider
+            // loop rather than reporting an internal SOCKS implementation detail
+            // as if the user had selected proxy mode.
+            if (
+                !localProxyListening(proxyHost, proxyPort) &&
+                localRecoveries < MAX_LOCAL_RECOVERIES &&
+                waitForLocalProxyRecovery(proxyHost, proxyPort)
+            ) {
+                localRecoveries += 1
+                AndroidVpnRuntime.appendServiceLine(
+                    "Aether Core recovered after the final egress probe failed; retrying verification once",
+                )
+                continue
+            }
+
             error(
-                "SOCKS TCP works through $LITERAL_TCP_LABEL, but remote DNS/domain " +
-                    "egress failed (${failures.joinToString(" | ")})",
+                "Tunnel end-to-end egress verification failed (${failureSummary(failures)})",
             )
         }
+    }
 
-        failures += "$LITERAL_TCP_LABEL: ${literal.exceptionOrNull()?.message ?: "unknown error"}"
-        error("SOCKS end-to-end egress failed (${failures.joinToString(" | ")})")
+    private fun failureSummary(failures: List<String>): String =
+        failures.takeLast(6).joinToString(" | ")
+
+    private fun localProxyListening(proxyHost: String, proxyPort: Int): Boolean =
+        runCatching {
+            Socket().use { socket ->
+                socket.connect(
+                    InetSocketAddress(proxyHost, proxyPort),
+                    LOCAL_RECOVERY_CONNECT_TIMEOUT_MS,
+                )
+            }
+            true
+        }.getOrDefault(false)
+
+    private fun waitForLocalProxyRecovery(proxyHost: String, proxyPort: Int): Boolean {
+        val deadline = System.nanoTime() + LOCAL_RECOVERY_WINDOW_MS * 1_000_000L
+        while (System.nanoTime() < deadline) {
+            if (localProxyListening(proxyHost, proxyPort)) return true
+            try {
+                Thread.sleep(LOCAL_RECOVERY_POLL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+        return localProxyListening(proxyHost, proxyPort)
     }
 
     private fun maybeProbeCapacity(proxyHost: String, proxyPort: Int) {
@@ -347,7 +445,10 @@ internal object AndroidEgressProbe {
     ): Socket {
         val socket = Socket()
         try {
-            socket.connect(InetSocketAddress(proxyHost, proxyPort), CONNECT_TIMEOUT_MS)
+            socket.connect(
+                InetSocketAddress(proxyHost, proxyPort),
+                LOCAL_PROXY_CONNECT_TIMEOUT_MS,
+            )
             socket.soTimeout = READ_TIMEOUT_MS
             val input = socket.inputStream
             val output = socket.outputStream
