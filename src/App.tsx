@@ -13,6 +13,7 @@ import { AccessCodePrompt } from "@/components/AccessCodePrompt";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TitleBar } from "@/components/TitleBar";
 import { connectWithAutomaticPolicy } from "@/lib/autoConnect";
+import { initConnectionUiLifecycle } from "@/lib/connectionUiLifecycle";
 import { cn } from "@/lib/utils";
 import { isAndroid } from "@/lib/platform";
 import { initConnectionListeners, useConnectionStore } from "@/state/connectionStore";
@@ -163,8 +164,10 @@ export function App() {
     const connectionCleanup = safeCleanup(initConnectionListeners(), "Connection listeners");
     const telemetryCleanup = safeCleanup(initTelemetryListeners(), "Telemetry listeners");
     const pathCleanup = initPathIntelligence();
+    const uiLifecycleCleanup = initConnectionUiLifecycle();
 
     return () => {
+      uiLifecycleCleanup();
       pathCleanup();
       void connectionCleanup.then((unlisten) => unlisten());
       void telemetryCleanup.then((unlisten) => unlisten());
