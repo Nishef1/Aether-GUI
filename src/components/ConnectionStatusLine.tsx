@@ -92,6 +92,38 @@ function countryName(code: string): string {
   return getRegionNames()?.of(code) ?? code;
 }
 
+function friendlyConnectionError(phase: string, message: string): string {
+  const detail = message.toLowerCase();
+
+  if (
+    phase === "disconnect" ||
+    /disconnect|teardown|failed to stop|did not reach idle|still running/.test(detail)
+  ) {
+    return "The previous session did not stop cleanly. Reset it with the main button, then connect again.";
+  }
+
+  if (phase === "system-tunnel") {
+    if (/administrator|approval|uac|pkexec|polkit|permission|privilege/.test(detail)) {
+      return "Device VPN permission is required. Grant access, then try again.";
+    }
+    return "The device VPN could not be verified. Reset the connection, then try again.";
+  }
+
+  if (/access code|cloudflare access|unauthor|forbidden|credential|token|verification/.test(detail)) {
+    return "Access verification failed. Check your access settings, then try again.";
+  }
+
+  if (
+    /timeout|timed out|unreachable|refused|peer closed|egress|route|transport|wireguard|masque|quic|socks|network/.test(
+      detail,
+    )
+  ) {
+    return "A healthy route could not be established. Reset the connection, then try again.";
+  }
+
+  return "Aether could not finish the connection. Reset it, then try again.";
+}
+
 function ScanProgressBar({ percent, active }: { percent: number | null; active: boolean }) {
   const accessibility =
     percent == null
@@ -275,7 +307,7 @@ export function ConnectionStatusLine() {
       break;
     case "Error":
       primary = status.phase === "system-tunnel" ? "Device protection failed" : "Connection failed";
-      secondary = status.message;
+      secondary = friendlyConnectionError(status.phase, status.message);
       break;
   }
 
