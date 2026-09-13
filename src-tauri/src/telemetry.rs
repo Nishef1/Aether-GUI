@@ -412,9 +412,8 @@ fn probe_egress(socks_addr: &str) -> Result<EgressProbe, String> {
         }
     }
 
-    partial.ok_or_else(|| {
-        last_error.unwrap_or_else(|| "all tunnel egress probes failed".to_string())
-    })
+    partial
+        .ok_or_else(|| last_error.unwrap_or_else(|| "all tunnel egress probes failed".to_string()))
 }
 
 fn null_device() -> &'static str {
