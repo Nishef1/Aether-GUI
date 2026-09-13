@@ -94,18 +94,18 @@ export function QuickConnectionCard() {
             : "bg-black/15 text-foreground ring-white/10 hover:bg-white/5"
         }`}
         aria-pressed={fastIranActive}
-        aria-label="Apply fast gaming connection preset"
+        aria-label="Apply recommended fast gaming connection defaults"
       >
         <span className="flex min-w-0 items-center gap-2.5">
           <Gamepad2 size={16} className="shrink-0 text-primary" aria-hidden="true" />
           <span className="min-w-0">
             <span className="block text-xs font-semibold">Fast / Gaming</span>
-            <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
-              H2 · Turbo · quick reconnect
+            <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
+              H2 · Turbo · IPv4 · Firewall
             </span>
           </span>
         </span>
-        <span className="shrink-0 text-[10px] font-medium text-primary">
+        <span className="shrink-0 text-[11px] font-medium text-primary">
           {fastIranActive ? "Active" : "Apply"}
         </span>
       </button>
@@ -118,7 +118,7 @@ export function QuickConnectionCard() {
           <div className="min-w-0 rounded-xl bg-black/15 px-1 ring-1 ring-white/8">
             <ProtocolSelect />
           </div>
-          <p className="px-1 text-[10px] leading-4 text-muted-foreground">
+          <p className="px-1 text-[11px] leading-4 text-muted-foreground">
             {PROTOCOL_COPY[profile.protocol]}
           </p>
         </div>
@@ -126,7 +126,7 @@ export function QuickConnectionCard() {
         <div className="grid min-w-0 gap-1.5">
           <span className="text-[11px] font-medium text-muted-foreground">Route discovery</span>
           <ScanModeToggle />
-          <p className="px-1 text-[10px] leading-4 text-muted-foreground">
+          <p className="px-1 text-[11px] leading-4 text-muted-foreground">
             {SCAN_COPY[profile.scan_mode]}
           </p>
         </div>
