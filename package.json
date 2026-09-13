@@ -14,7 +14,7 @@
     "prepare:android-native:official": "node scripts/prepare-android-native.mjs",
     "prepare:android-native:custom": "npm run prepare:android-native",
     "core:aether": "npm run prepare:aether",
-    "verify:version": "node scripts/ci/sync-product-version.mjs",
+    "verify:version": "node scripts/ci/verify-product-version.mjs",
     "verify:runtimes": "node scripts/ci/verify-runtime-manifest.mjs",
     "verify:custom-core": "node scripts/ci/verify-custom-aether-pin.mjs",
     "verify:contracts": "node scripts/ci/verify-custom-core-contracts.mjs && node scripts/ci/verify-dns-policy.mjs && node scripts/ci/verify-detectability-policy.mjs && node scripts/ci/verify-ui-ux-contracts.mjs && node scripts/ci/verify-disconnect-lifecycle.mjs && node scripts/ci/verify-android-egress-recovery.mjs && node scripts/ci/verify-android-background-policy.mjs && node scripts/ci/verify-selection-state.mjs && node scripts/ci/verify-ip-family-policy.mjs && node scripts/ci/verify-profile-persistence.mjs",
