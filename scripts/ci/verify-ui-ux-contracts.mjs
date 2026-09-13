@@ -48,12 +48,12 @@ for (const marker of [
   requireContract(quick.includes(marker), `Fast / Gaming Active state ignores preset-owned field: ${marker}`);
 }
 requireContract(
-  quick.includes("H2/TCP, then falls back to WireGuard, H3/QUIC and finally WARP-in-WARP"),
-  "Automatic fallback order is no longer explained in primary UI",
+  quick.includes("Starts with H2 and only tries fallback carriers when needed."),
+  "Automatic behavior is no longer explained in primary UI",
 );
 requireContract(
-  quick.includes("<NativeSelect") && quick.includes('aria-label="H2 ClientHello MASK"'),
-  "MASK/TLS controls regressed to unnormalized mobile selects",
+  !quick.includes('aria-label="H2 ClientHello MASK"'),
+  "expert H2 compatibility controls leaked back into primary connection UI",
 );
 
 const protocol = read("src/components/ProtocolSelect.tsx");
@@ -87,6 +87,10 @@ requireContract(
   scanMode.includes("grid-cols-5") && !scanMode.includes("min-w-[30%]"),
   "five scan modes can wrap into uneven mobile rows",
 );
+requireContract(
+  !scanMode.includes("TooltipTrigger"),
+  "route discovery reintroduced a Tooltip/Toggle data-state collision",
+);
 
 const noize = read("src/components/NoizeProfileToggle.tsx");
 for (const marker of ["MASQUE baseline", "WireGuard / WiW fallback", 'protocol === "auto"']) {
@@ -96,6 +100,10 @@ requireContract(
   noize.includes("grid-cols-3") && noize.includes("sm:grid-cols-6"),
   "obfuscation options can regress to unpredictable flex wrapping",
 );
+requireContract(
+  !noize.includes("TooltipTrigger"),
+  "obfuscation reintroduced a Tooltip/Toggle data-state collision",
+);
 
 const ipVersion = read("src/components/IpVersionToggle.tsx");
 requireContract(ipVersion.includes("grid-cols-3"), "IP version selector lost equal-width phone columns");
@@ -104,6 +112,10 @@ const masqueTransport = read("src/components/MasqueTransportToggle.tsx");
 requireContract(
   masqueTransport.includes("grid-cols-2"),
   "MASQUE carrier selector lost equal-width phone columns",
+);
+requireContract(
+  !masqueTransport.includes("TooltipTrigger"),
+  "MASQUE carrier reintroduced a Tooltip/Toggle data-state collision",
 );
 
 const dns = read("src/components/DnsProtectionControl.tsx");
@@ -126,6 +138,9 @@ requireContract(
   coreAdvanced.includes("<NativeSelect") && coreAdvanced.includes("Performance profile"),
   "performance profile regressed to an unnormalized native select",
 );
+for (const marker of ['aria-label="H2 ClientHello MASK"', 'aria-label="TLS profile"']) {
+  requireContract(coreAdvanced.includes(marker), `expert H2 compatibility control disappeared: ${marker}`);
+}
 
 const tunnel = read("src/components/SystemTunnelToggle.tsx");
 for (const marker of [
@@ -167,6 +182,10 @@ const diagnostics = read("src/components/ConnectionDiagnostics.tsx");
 for (const marker of ["Warp-in-Warp", 'label: "Healthy"', 'label: "Degraded"', 'label: "Failed"']) {
   requireContract(diagnostics.includes(marker), `live diagnostics presentation drifted: ${marker}`);
 }
+requireContract(
+  diagnostics.includes('status.state === "Connected" || status.state === "Tunneling"'),
+  "connection diagnostics can clutter transient connection states again",
+);
 
 const routing = read("src/components/RoutingSettings.tsx");
 requireContract(!routing.includes("setDns("), "Routing settings became a second owner for DNS state");
@@ -201,7 +220,12 @@ requireContract(
 );
 
 const html = read("index.html");
-for (const marker of ["viewport-fit=cover", "interactive-widget=resizes-content"]) {
+for (const marker of [
+  "viewport-fit=cover",
+  "interactive-widget=resizes-content",
+  "maximum-scale=1.0",
+  "user-scalable=no",
+]) {
   requireContract(html.includes(marker), `mobile viewport contract drifted: ${marker}`);
 }
 
@@ -210,6 +234,10 @@ requireContract(app.includes("safeCleanup"), "async listener initialization can 
 requireContract(
   app.includes("delayDuration={350}") && app.includes("skipDelayDuration={100}"),
   "desktop tooltips regressed to immediate hover noise",
+);
+requireContract(
+  !app.includes("Device VPN ready"),
+  "redundant ready-state VPN badge returned to the Android header",
 );
 
 console.log("[ui-ux-contracts] accessibility, interaction and imported UI dependencies are aligned");
