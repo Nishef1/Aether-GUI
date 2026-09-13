@@ -58,7 +58,7 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
       </NativeSelect>
 
       {mode === "custom" && (
-        <label className="grid min-w-0 gap-1 text-[10px] text-muted-foreground">
+        <label className="grid min-w-0 gap-1 text-[11px] text-muted-foreground">
           <span>Custom resolvers</span>
           <input
             value={dns}
