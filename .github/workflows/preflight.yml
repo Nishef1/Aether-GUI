@@ -121,8 +121,9 @@ jobs:
         run: npm run android:init
 
       # Tauri writes tauri.settings.gradle and app/tauri.build.gradle.kts from
-      # its Rust build script, not from `tauri android init`. Run an Android
-      # target cargo check to exercise that generation without packaging an APK.
+      # its Rust build script, not from `tauri android init`. Android packages
+      # the Rust library target, so check only --lib here; the desktop binary
+      # intentionally depends on desktop-only crates/features.
       - name: Generate Tauri Android Gradle integration
         env:
           TAURI_ANDROID_PROJECT_PATH: ${{ github.workspace }}/src-tauri/gen/android
@@ -144,6 +145,7 @@ jobs:
           cargo check \
             --manifest-path src-tauri/Cargo.toml \
             --target aarch64-linux-android \
+            --lib \
             --locked
           test -f src-tauri/gen/android/tauri.settings.gradle
           test -f src-tauri/gen/android/app/tauri.build.gradle.kts
