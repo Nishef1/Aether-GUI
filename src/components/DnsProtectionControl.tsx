@@ -32,24 +32,18 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
 
   return (
     <div className="grid min-w-0 gap-2 rounded-2xl bg-black/15 p-3 ring-1 ring-white/8">
-      <div className="flex min-w-0 items-start gap-2.5">
-        <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
           <ShieldCheck size={15} aria-hidden="true" />
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <span className="min-w-0 text-[11px] font-semibold text-foreground">DNS protection</span>
-            {mode === "adblock" && (
-              <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary ring-1 ring-primary/20">
-                Filtering on
-              </span>
-            )}
-          </div>
-          <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
-            DNS follows the protected path and the selected Internet IP family. AdGuard DNS filters
-            many ad, tracker and phishing domains at DNS level.
-          </p>
-        </div>
+        <span className="min-w-0 flex-1 text-[11px] font-semibold text-foreground">
+          DNS protection
+        </span>
+        {mode === "adblock" && (
+          <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary ring-1 ring-primary/20">
+            Filtering on
+          </span>
+        )}
       </div>
 
       <NativeSelect
@@ -77,10 +71,8 @@ export function DnsProtectionControl({ disabled = false }: { disabled?: boolean 
             aria-describedby="custom-dns-help"
           />
           <span id="custom-dns-help" className="leading-4">
-            Use resolver addresses separated by commas. At runtime Aether keeps resolvers matching
-            the selected IP family and uses the matching Cloudflare pair if none remain. Malformed
-            entries are ignored only when another usable resolver remains. App-level encrypted DNS
-            can bypass DNS-level filtering.
+            Comma-separated resolver addresses. Aether keeps only addresses compatible with the
+            selected IP family.
           </span>
         </label>
       )}
