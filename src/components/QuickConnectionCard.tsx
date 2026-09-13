@@ -19,7 +19,7 @@ const SCAN_COPY: Record<ScanMode, string> = {
   turbo: "First healthy route with the smallest scan budget.",
   balanced: "More tolerance when Turbo misses a reliable route.",
   thorough: "Broader search with longer windows for difficult networks.",
-  stealth: "Quieter discovery with fewer concurrent probes.",
+  stealth: "Quiet pre-connect discovery with fewer probes; it does not hide the final VPN exit.",
   ironclad: "Verifies real traffic before accepting a candidate.",
 };
 
