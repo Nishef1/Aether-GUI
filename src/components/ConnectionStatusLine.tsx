@@ -187,15 +187,22 @@ function TunnelTraffic() {
   const sentBytes = useTelemetryStore((state) => state.snapshot.sent_bytes);
   const totalBytes = receivedBytes + sentBytes;
   const exactBytes = `Received ${receivedBytes.toLocaleString()} bytes · Sent ${sentBytes.toLocaleString()} bytes · Total ${totalBytes.toLocaleString()} bytes`;
+  const explanation =
+    "All apps and background system services routed through the VPN in this connection; this is not Aether-only usage.";
 
   return (
-    <span
-      className="font-mono text-[10px] text-muted-foreground"
-      aria-label={`Tunnel traffic. ${exactBytes}`}
-      title={exactBytes}
+    <div
+      className="flex max-w-sm flex-col items-center gap-0.5 text-muted-foreground"
+      aria-label={`Device traffic through VPN. ${explanation} ${exactBytes}`}
+      title={`${explanation} ${exactBytes}`}
     >
-      ↓ {formatBytes(receivedBytes)} · ↑ {formatBytes(sentBytes)} · Σ {formatBytes(totalBytes)}
-    </span>
+      <span className="font-mono text-[10px]">
+        Device traffic through VPN · ↓ {formatBytes(receivedBytes)} · ↑ {formatBytes(sentBytes)}
+      </span>
+      <span className="text-[9px] leading-3 text-muted-foreground/70">
+        Includes apps + background services · not Aether-only usage
+      </span>
+    </div>
   );
 }
 
