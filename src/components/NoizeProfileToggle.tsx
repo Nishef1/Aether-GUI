@@ -45,7 +45,7 @@ function ProfileSelector({
 }) {
   return (
     <div className="grid min-w-0 gap-1.5">
-      {label && <span className="px-1 text-[10px] font-medium text-muted-foreground">{label}</span>}
+      {label && <span className="px-1 text-[11px] font-medium text-muted-foreground">{label}</span>}
       <ToggleGroup
         type="single"
         variant="accent"
@@ -63,13 +63,13 @@ function ProfileSelector({
             value={profile}
             size="sm"
             aria-label={LABELS[profile]}
-            className="min-h-12 w-full min-w-0 rounded-xl px-1 text-[10px] text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary sm:px-1 sm:text-[11px]"
+            className="min-h-12 w-full min-w-0 rounded-xl px-1 text-[11px] text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary sm:px-1"
           >
             <span className="min-w-0 truncate">{LABELS[profile]}</span>
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
-      <p className="px-1 text-[10px] leading-4 text-muted-foreground">
+      <p className="px-1 text-[11px] leading-4 text-muted-foreground">
         {DESCRIPTIONS[selected]}
       </p>
     </div>
