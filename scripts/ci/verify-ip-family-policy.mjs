@@ -59,7 +59,7 @@ const dnsUi = read("src/components/DnsProtectionControl.tsx");
 for (const marker of [
   "defaultDnsFor(ipVersion)",
   "adblockDnsFor(ipVersion)",
-  "selected Internet IP family",
+  "selected IP family",
 ]) {
   requireContract(dnsUi.includes(marker), `DNS UI family semantics drifted: ${marker}`);
 }
