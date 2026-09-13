@@ -9,6 +9,12 @@ use crate::tray;
 use serde_json::Value;
 use tauri::{AppHandle, State};
 
+fn capture_underlay_baseline_in_background(network_key: Option<String>) {
+    std::thread::spawn(move || {
+        crate::connection_acceptance::capture_underlay_baseline(network_key.as_deref());
+    });
+}
+
 // Compatibility commands used by Matin's upstream frontend. They remain
 // Aether-shaped so upstream UI updates can be merged without modification.
 #[tauri::command]
@@ -18,7 +24,7 @@ pub fn connect(
     profile_override: Option<ConnectionProfile>,
 ) -> Result<(), RuntimeError> {
     let network_key = crate::network_context::sync_process_environment();
-    crate::connection_acceptance::capture_underlay_baseline(network_key.as_deref());
+    capture_underlay_baseline_in_background(network_key);
     state.runtime.connect_aether(app, profile_override)
 }
 
@@ -79,7 +85,7 @@ pub fn connect_engine(
 ) -> Result<(), RuntimeError> {
     if engine_id == "aether" {
         let network_key = crate::network_context::sync_process_environment();
-        crate::connection_acceptance::capture_underlay_baseline(network_key.as_deref());
+        capture_underlay_baseline_in_background(network_key);
     }
     state.runtime.connect(app, Some(&engine_id), profile)
 }
