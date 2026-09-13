@@ -23,13 +23,16 @@ requireContract(
   "nested-path detectability rationale disappeared from automatic policy",
 );
 
-const scanMode = read("src/components/ScanModeToggle.tsx");
+// Route-discovery explanation now lives beside the selector in the primary
+// connection card. Keep Stealth scoped to discovery and avoid implying that it
+// changes or conceals the eventual public VPN exit.
+const quickConnection = read("src/components/QuickConnectionCard.tsx");
 requireContract(
-  scanMode.includes("Quiet discovery only"),
+  quickConnection.includes("Quiet pre-connect discovery"),
   "Stealth mode is no longer clearly scoped to pre-connect discovery",
 );
 requireContract(
-  scanMode.includes("does not hide the final VPN exit"),
+  quickConnection.includes("does not hide the final VPN exit"),
   "Stealth UI again implies website invisibility",
 );
 
