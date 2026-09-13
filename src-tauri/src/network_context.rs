@@ -1,4 +1,5 @@
 use std::net::UdpSocket;
+#[cfg(any(target_os = "macos", windows))]
 use std::process::Command;
 
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
@@ -76,8 +77,18 @@ fn platform_route_material() -> Vec<String> {
 }
 
 #[cfg(windows)]
+fn hide_console_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(windows)]
 fn platform_route_material() -> Vec<String> {
-    let Ok(output) = Command::new("route").args(["print", "-4"]).output() else {
+    let mut command = Command::new("route");
+    command.args(["print", "-4"]);
+    hide_console_window(&mut command);
+    let Ok(output) = command.output() else {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&output.stdout);
