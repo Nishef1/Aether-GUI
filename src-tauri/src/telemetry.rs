@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::io::Write;
 use std::net::IpAddr;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -20,9 +20,15 @@ const ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
 const ACTIVE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 const IDLE_SAMPLE_INTERVAL: Duration = Duration::from_secs(15);
 const PROBE_INTERVAL: Duration = Duration::from_secs(300);
+const PROBE_RETRY_INTERVAL: Duration = Duration::from_secs(12);
+const COUNTRY_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 const CAPACITY_FIRST_DELAY: Duration = Duration::from_secs(15);
 const CAPACITY_PROBE_INTERVAL: Duration = Duration::from_secs(10 * 60);
-const TRACE_URL: &str = "https://www.cloudflare.com/cdn-cgi/trace";
+const TRACE_URLS: &[&str] = &[
+    "https://www.cloudflare.com/cdn-cgi/trace",
+    "https://cloudflare.com/cdn-cgi/trace",
+    "https://one.one.one.one/cdn-cgi/trace",
+];
 const CAPACITY_DOWN_BYTES: u64 = 64 * 1024;
 const CAPACITY_UP_BYTES: usize = 32 * 1024;
 const CAPACITY_DOWN_URL: &str = "https://speed.cloudflare.com/__down?bytes=65536";
@@ -75,6 +81,7 @@ struct CapacityProbe {
 
 static TELEMETRY: OnceLock<Mutex<TelemetryState>> = OnceLock::new();
 static SESSION_TOKEN: AtomicU64 = AtomicU64::new(0);
+static EGRESS_PROBE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 fn telemetry_state() -> &'static Mutex<TelemetryState> {
     TELEMETRY.get_or_init(|| Mutex::new(TelemetryState::default()))
@@ -243,10 +250,20 @@ fn publish_capacity_result(app: &AppHandle, token: u64, result: Result<CapacityP
     }
 }
 
-fn spawn_egress_probe(app: AppHandle, token: u64, socks_addr: String) {
+fn spawn_egress_probe(app: AppHandle, token: u64, socks_addr: String) -> bool {
+    if EGRESS_PROBE_IN_FLIGHT
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return false;
+    }
+
     std::thread::spawn(move || {
-        publish_probe_result(&app, token, probe_egress(&socks_addr));
+        let result = probe_egress(&socks_addr);
+        publish_probe_result(&app, token, result);
+        EGRESS_PROBE_IN_FLIGHT.store(false, Ordering::SeqCst);
     });
+    true
 }
 
 fn spawn_capacity_probe(app: AppHandle, token: u64, socks_addr: String) {
@@ -275,6 +292,18 @@ fn connected_details(status: &ConnectionState) -> Option<(String, u64, bool)> {
     }
 }
 
+fn egress_probe_delay(snapshot: &RuntimeTelemetry) -> Duration {
+    if snapshot.path_health == PathHealth::Healthy && snapshot.public_ip.is_some() {
+        if snapshot.country_code.is_some() {
+            PROBE_INTERVAL
+        } else {
+            COUNTRY_RETRY_INTERVAL
+        }
+    } else {
+        PROBE_RETRY_INTERVAL
+    }
+}
+
 pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
     std::thread::spawn(move || {
         let mut active_session: Option<u64> = None;
@@ -297,9 +326,16 @@ pub fn spawn_watcher(app: AppHandle, runtime: Arc<EngineRuntime>) {
 
                 let now = Instant::now();
                 if next_probe.map(|deadline| now >= deadline).unwrap_or(true) {
-                    next_probe = Some(now + PROBE_INTERVAL);
-                    let token = SESSION_TOKEN.load(Ordering::SeqCst);
-                    spawn_egress_probe(app.clone(), token, socks_addr.clone());
+                    let current = snapshot();
+                    if spawn_egress_probe(
+                        app.clone(),
+                        SESSION_TOKEN.load(Ordering::SeqCst),
+                        socks_addr.clone(),
+                    ) {
+                        next_probe = Some(now + egress_probe_delay(&current));
+                    } else {
+                        next_probe = Some(now + ACTIVE_SAMPLE_INTERVAL);
+                    }
                 }
 
                 let capacity_ready = snapshot().path_health == PathHealth::Healthy;
@@ -335,7 +371,7 @@ fn hide_console_window(command: &mut Command) {
 #[cfg(not(windows))]
 fn hide_console_window(_command: &mut Command) {}
 
-fn probe_egress(socks_addr: &str) -> Result<EgressProbe, String> {
+fn probe_trace_url(socks_addr: &str, trace_url: &str) -> Result<EgressProbe, String> {
     let curl = if cfg!(windows) { "curl.exe" } else { "curl" };
     let mut command = Command::new(curl);
     command
@@ -351,7 +387,7 @@ fn probe_egress(socks_addr: &str) -> Result<EgressProbe, String> {
         .args([
             "--write-out",
             "\n__aether_time_total=%{time_total}\n",
-            TRACE_URL,
+            trace_url,
         ]);
     hide_console_window(&mut command);
 
@@ -362,6 +398,23 @@ fn probe_egress(socks_addr: &str) -> Result<EgressProbe, String> {
         return Err(format!("telemetry probe exited with {}", output.status));
     }
     parse_trace(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn probe_egress(socks_addr: &str) -> Result<EgressProbe, String> {
+    let mut partial = None;
+    let mut last_error = None;
+
+    for trace_url in TRACE_URLS {
+        match probe_trace_url(socks_addr, trace_url) {
+            Ok(probe) if probe.country_code.is_some() => return Ok(probe),
+            Ok(probe) => partial = Some(probe),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    partial.ok_or_else(|| {
+        last_error.unwrap_or_else(|| "all tunnel egress probes failed".to_string())
+    })
 }
 
 fn null_device() -> &'static str {
@@ -539,6 +592,27 @@ mod tests {
     #[test]
     fn rejects_trace_without_valid_ip() {
         assert!(parse_trace("ip=not-an-ip\nloc=US\n__aether_time_total=0.1\n").is_err());
+    }
+
+    #[test]
+    fn egress_probe_retries_failures_and_partial_geolocation_before_steady_state() {
+        let unresolved = RuntimeTelemetry::default();
+        assert_eq!(egress_probe_delay(&unresolved), PROBE_RETRY_INTERVAL);
+
+        let partial = RuntimeTelemetry {
+            public_ip: Some("203.0.113.10".into()),
+            path_health: PathHealth::Healthy,
+            ..RuntimeTelemetry::default()
+        };
+        assert_eq!(egress_probe_delay(&partial), COUNTRY_RETRY_INTERVAL);
+
+        let complete = RuntimeTelemetry {
+            public_ip: Some("203.0.113.10".into()),
+            country_code: Some("DE".into()),
+            path_health: PathHealth::Healthy,
+            ..RuntimeTelemetry::default()
+        };
+        assert_eq!(egress_probe_delay(&complete), PROBE_INTERVAL);
     }
 
     #[test]
