@@ -1,5 +1,4 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useConnectionStore } from "@/state/connectionStore";
 import type { NoizeProfile } from "@/types/connection";
 
@@ -59,21 +58,15 @@ function ProfileSelector({
         className="grid w-full grid-cols-3 gap-1 rounded-2xl bg-black/20 p-1 ring-1 ring-white/10 sm:grid-cols-6"
       >
         {OPTIONS.map((profile) => (
-          <Tooltip key={profile}>
-            <TooltipTrigger asChild>
-              <ToggleGroupItem
-                value={profile}
-                size="sm"
-                aria-label={LABELS[profile]}
-                className="min-h-12 w-full min-w-0 rounded-xl px-1 text-[10px] text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary sm:px-1 sm:text-[11px]"
-              >
-                <span className="min-w-0 truncate">{LABELS[profile]}</span>
-              </ToggleGroupItem>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-72 leading-relaxed">
-              {DESCRIPTIONS[profile]}
-            </TooltipContent>
-          </Tooltip>
+          <ToggleGroupItem
+            key={profile}
+            value={profile}
+            size="sm"
+            aria-label={LABELS[profile]}
+            className="min-h-12 w-full min-w-0 rounded-xl px-1 text-[10px] text-muted-foreground transition-[background-color,color,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-primary sm:px-1 sm:text-[11px]"
+          >
+            <span className="min-w-0 truncate">{LABELS[profile]}</span>
+          </ToggleGroupItem>
         ))}
       </ToggleGroup>
       <p className="px-1 text-[10px] leading-4 text-muted-foreground">
