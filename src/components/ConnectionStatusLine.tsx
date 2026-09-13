@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Gauge, Globe2, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { CountryFlag } from "@/components/CountryFlag";
 import { EXIT_RETRY_LIMIT, isPrivacyPreferredExit } from "@/lib/exitPolicy";
 import { isAndroid } from "@/lib/platform";
@@ -9,20 +9,8 @@ import { useExitPolicyStore } from "@/state/exitPolicyStore";
 import { useTelemetryStore } from "@/state/telemetryStore";
 import { useWindowFocused } from "@/state/windowFocus";
 
-const DESKTOP_TEXT_TRANSITION = {
-  initial: { y: 4, opacity: 0 },
-  animate: { y: 0, opacity: 1 },
-  exit: { y: -4, opacity: 0 },
-  transition: { duration: 0.1, ease: [0.4, 0, 0.2, 1] as const },
-};
-const MOBILE_TEXT_TRANSITION = {
-  initial: false as const,
-  animate: { opacity: 1 },
-  exit: { opacity: 1 },
-  transition: { duration: 0 },
-};
-const TEXT_TRANSITION = isAndroid ? MOBILE_TEXT_TRANSITION : DESKTOP_TEXT_TRANSITION;
 const BYTE_UNITS = ["KiB", "MiB", "GiB", "TiB"];
+const STATUS_EASE = [0.22, 1, 0.36, 1] as const;
 
 let regionNames: Intl.DisplayNames | null | undefined;
 
@@ -129,6 +117,7 @@ function friendlyConnectionError(phase: string, message: string): string {
 }
 
 function ScanProgressBar({ percent, active }: { percent: number | null; active: boolean }) {
+  const reduceMotion = useReducedMotion();
   const accessibility =
     percent == null
       ? { "aria-valuetext": "Searching for a healthy route" }
@@ -171,18 +160,22 @@ function ScanProgressBar({ percent, active }: { percent: number | null; active: 
       {percent == null ? (
         <motion.div
           className="h-full w-1/3 rounded-full bg-status-connecting"
-          animate={active ? { x: ["-100%", "220%"] } : { x: "50%", opacity: 0.6 }}
+          animate={
+            reduceMotion || !active
+              ? { x: "50%", opacity: 0.65 }
+              : { x: ["-110%", "310%"], opacity: [0.55, 1, 0.55] }
+          }
           transition={
-            active
-              ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" }
-              : { duration: 0.3 }
+            reduceMotion || !active
+              ? { duration: 0 }
+              : { duration: 1.35, repeat: Infinity, ease: "easeInOut" }
           }
         />
       ) : (
         <motion.div
           className="h-full rounded-full bg-status-connecting"
           animate={{ width: `${percent}%` }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
+          transition={reduceMotion ? { duration: 0 } : { duration: 0.45, ease: STATUS_EASE }}
         />
       )}
     </div>
@@ -220,6 +213,7 @@ export function ConnectionStatusLine() {
   const privacyExhausted = useExitPolicyStore((state) => state.exhausted);
   const focused = useWindowFocused();
   const documentVisible = useDocumentVisible();
+  const reduceMotion = useReducedMotion();
   const active = focused && documentVisible;
 
   const connectedAt =
@@ -325,42 +319,64 @@ export function ConnectionStatusLine() {
     !privacyPreferred &&
     !privacyRerolling &&
     (privacyExhausted || !countryCode);
+  const statusMotion =
+    reduceMotion || isAndroid
+      ? {
+          initial: false as const,
+          animate: { opacity: 1, y: 0 },
+          exit: { opacity: 1, y: 0 },
+          transition: { duration: 0 },
+        }
+      : {
+          initial: { opacity: 0, y: 6 },
+          animate: { opacity: 1, y: 0 },
+          exit: { opacity: 0, y: -4 },
+          transition: { duration: 0.18, ease: STATUS_EASE },
+        };
 
   return (
     <div className="flex min-h-[60px] flex-col items-center gap-2 text-center">
       <span className="sr-only" role={status.state === "Error" ? "alert" : "status"}>
-        {status.state === "Error" ? `${primary}. ${secondary}` : primary}
+        {status.state === "Error" ? `${primary}. ${secondary}. ${status.message}` : primary}
       </span>
 
-      <AnimatePresence mode="wait">
-        <motion.span
-          key={status.state}
-          className="block text-base font-medium text-foreground"
-          {...TEXT_TRANSITION}
+      <AnimatePresence initial={false} mode="popLayout">
+        <motion.div
+          key={`${status.state}-${status.state === "Error" ? status.phase : "status"}`}
+          layout={!reduceMotion && !isAndroid}
+          className="grid min-h-11 justify-items-center gap-1"
+          {...statusMotion}
         >
-          {primary}
-        </motion.span>
-      </AnimatePresence>
-      <AnimatePresence mode="wait">
-        <motion.span
-          key={`${status.state}-detail`}
-          className={`block min-h-5 max-w-xs font-mono text-xs text-muted-foreground ${
-            status.state === "Error"
-              ? "line-clamp-3 whitespace-normal leading-relaxed"
-              : "truncate"
-          }`}
-          {...TEXT_TRANSITION}
-        >
-          {secondary}
-        </motion.span>
+          <span className="block text-base font-medium text-foreground">{primary}</span>
+          <span
+            className={`block min-h-5 max-w-xs font-mono text-xs text-muted-foreground ${
+              status.state === "Error"
+                ? "break-words whitespace-normal leading-relaxed"
+                : "truncate"
+            }`}
+          >
+            {secondary}
+          </span>
+        </motion.div>
       </AnimatePresence>
 
       {systemTunnelError && (
-        <span className="max-w-xs rounded-xl bg-status-error/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground ring-1 ring-status-error/15">
+        <span className="w-full max-w-sm rounded-xl bg-status-error/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground ring-1 ring-status-error/15">
           {privilegeTunnelError
             ? "Full-device protection remains enabled. Retry after granting administrator access; on macOS, launch Aether-GUI with administrator privileges."
             : "Aether was stopped because the full-device tunnel could not be verified. Full-device protection remains enabled; resolve the tunnel error and retry."}
         </span>
+      )}
+
+      {status.state === "Error" && (
+        <details className="w-full max-w-sm rounded-xl bg-black/20 px-3 py-2 text-left ring-1 ring-white/10">
+          <summary className="cursor-pointer select-none text-[11px] font-medium text-foreground">
+            Technical details
+          </summary>
+          <p className="mt-2 break-words whitespace-pre-wrap font-mono text-[10px] leading-4 text-muted-foreground">
+            {status.message}
+          </p>
+        </details>
       )}
 
       {(status.state === "Connecting" || status.state === "Launching") && (
