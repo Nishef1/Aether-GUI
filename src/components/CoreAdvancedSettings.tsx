@@ -2,7 +2,12 @@ import { ChevronDown, TriangleAlert } from "lucide-react";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { useConnectionStore } from "@/state/connectionStore";
-import type { ConnectionProfile, PerfProfile } from "@/types/connection";
+import type {
+  ConnectionProfile,
+  H2MaskMode,
+  PerfProfile,
+  TlsProfileMode,
+} from "@/types/connection";
 
 function TextField({
   label,
@@ -141,11 +146,17 @@ export function CoreAdvancedSettings() {
   const wireGuardFamily =
     profile.protocol === "auto" || profile.protocol === "wireguard" || profile.protocol === "gool";
   const gool = profile.protocol === "gool";
-  const legacyH2Fragment =
-    (profile.masque_mask ?? (profile.fragment ? "legacy" : "off")) === "legacy";
+  const h2Mask: H2MaskMode = profile.masque_mask ?? (profile.fragment ? "legacy" : "off");
+  const tlsProfile: TlsProfileMode = profile.tls_profile ?? "automatic";
+  const legacyH2Fragment = h2Mask === "legacy";
 
   const set = <K extends keyof ConnectionProfile>(field: K, value: ConnectionProfile[K]) =>
     setField(field, value);
+
+  const setH2Mask = (mode: H2MaskMode) => {
+    set("masque_mask", mode);
+    set("fragment", mode === "legacy");
+  };
 
   return (
     <details className="group min-w-0 rounded-2xl bg-black/15 p-3.5 ring-1 ring-white/10">
@@ -153,7 +164,7 @@ export function CoreAdvancedSettings() {
         <div className="min-w-0">
           <p>Aether 1.9 expert controls</p>
           <p className="mt-1 text-[11px] font-normal leading-4 text-muted-foreground">
-            Chaining, manual endpoints, validation and recovery behavior.
+            Compatibility, chaining, manual endpoints, validation and recovery behavior.
           </p>
         </div>
         <ChevronDown
@@ -164,6 +175,47 @@ export function CoreAdvancedSettings() {
       </summary>
 
       <div className="mt-4 flex min-w-0 flex-col gap-4">
+        {masqueFamily && (
+          <>
+            <Divider label="H2 compatibility" />
+            <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="grid min-w-0 gap-1 text-[10px] text-muted-foreground">
+                <span className="font-medium text-foreground">H2 ClientHello MASK</span>
+                <NativeSelect
+                  value={h2Mask}
+                  disabled={locked || !profile.masque_http2}
+                  onChange={(event) => setH2Mask(event.target.value as H2MaskMode)}
+                  aria-label="H2 ClientHello MASK"
+                >
+                  <option value="off">Off — baseline first</option>
+                  <option value="clienthello">ClientHello split</option>
+                  <option value="patterniha">Patterniha MASK (experimental)</option>
+                  <option value="legacy">Legacy random fragment</option>
+                </NativeSelect>
+              </label>
+
+              <label className="grid min-w-0 gap-1 text-[10px] text-muted-foreground">
+                <span className="font-medium text-foreground">TLS profile</span>
+                <NativeSelect
+                  value={tlsProfile}
+                  disabled={locked}
+                  onChange={(event) => set("tls_profile", event.target.value as TlsProfileMode)}
+                  aria-label="TLS profile"
+                >
+                  <option value="automatic">Automatic</option>
+                  <option value="current">Current BoringSSL</option>
+                  <option value="compatibility">Compatibility</option>
+                  <option value="native-minimal">Native-Minimal</option>
+                  <option value="experimental">Experimental</option>
+                </NativeSelect>
+              </label>
+            </div>
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              Leave both on their baseline defaults unless H2 reaches TLS but cannot pass traffic.
+            </p>
+          </>
+        )}
+
         <Divider label="Proxy & chaining" />
         <TextField
           label="Upstream proxy"
@@ -244,7 +296,7 @@ export function CoreAdvancedSettings() {
               <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
                 <TextField
                   label="Legacy fragment size"
-                  description="Applies only while Legacy random fragment is selected in Connection profile."
+                  description="Applies only while Legacy random fragment is selected above."
                   value={profile.fragment_size}
                   placeholder="16-32"
                   disabled={locked || !profile.masque_http2}
@@ -343,7 +395,7 @@ export function CoreAdvancedSettings() {
         </label>
         <TextField
           label="TLS key-share groups"
-          description="Optional expert override above the TLS profile selected in Connection profile. Leave empty to use that profile's defaults."
+          description="Optional expert override above the TLS profile selected above. Leave empty to use that profile's defaults."
           value={profile.tls_groups}
           placeholder="P-256:X25519:P-384"
           disabled={locked || !masqueFamily}
