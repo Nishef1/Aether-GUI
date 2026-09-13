@@ -45,9 +45,18 @@ requireContract(
   exitPreference.includes('"bg-primary text-primary-foreground ring-primary shadow-sm"'),
   "connection-goal selection is no longer clearly highlighted",
 );
+// The compact connection-goal cards contain only icon + label. Contextual help
+// intentionally lives below the orange selected surface, so it keeps the normal
+// muted foreground instead of needing a selected-surface contrast override.
 requireContract(
-  exitPreference.includes('selected ? "text-primary-foreground/75" : "text-muted-foreground"'),
-  "selected connection-goal description can lose contrast on the orange surface",
+  exitPreference.includes('id="connection-goal-help"') &&
+    exitPreference.includes('className="px-1 text-[11px] leading-4 text-muted-foreground"') &&
+    exitPreference.includes("{HELP[preference]}"),
+  "connection-goal contextual help must remain outside the selected orange card",
+);
+requireContract(
+  !exitPreference.includes('selected ? "text-primary-foreground/75" : "text-muted-foreground"'),
+  "connection-goal help regressed into the selected orange surface",
 );
 
 const css = read("src/index.css");
