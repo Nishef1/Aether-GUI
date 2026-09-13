@@ -62,19 +62,31 @@ export async function disconnectAndReset(): Promise<boolean> {
     return resetUiToIdle(before.attemptId);
   }
 
-  await before.disconnect();
-  const attemptId = useConnectionStore.getState().attemptId;
   const startedAt = Date.now();
+  const disconnectPromise = before.disconnect();
+  // disconnect() increments attemptId synchronously before its first await.
+  // Capturing it here lets us suppress stale snapshots even while the initial
+  // native stop IPC is still in flight.
+  const attemptId = useConnectionStore.getState().attemptId;
   let retriedStop = false;
   let lastFailure: string | null = null;
+  let publishingTerminalFailure = false;
 
   const keepResetVisualStable = useConnectionStore.subscribe((state) => {
-    if (state.attemptId !== attemptId) return;
+    if (publishingTerminalFailure || state.attemptId !== attemptId) return;
     if (state.status.state === "Idle" || state.status.state === "Disconnecting") return;
     useConnectionStore.setState({ status: { state: "Disconnecting" } });
   });
 
   try {
+    try {
+      await disconnectPromise;
+    } catch (error) {
+      // The store currently absorbs native stop failures, but keep this guard so
+      // a future implementation cannot strand the UI by rejecting here.
+      lastFailure = String(error);
+    }
+
     while (attemptIsCurrent(attemptId) && Date.now() - startedAt < DISCONNECT_TIMEOUT_MS) {
       try {
         const status = await readNativeStatus();
@@ -117,6 +129,7 @@ export async function disconnectAndReset(): Promise<boolean> {
     }
 
     if (!attemptIsCurrent(attemptId)) return false;
+    publishingTerminalFailure = true;
     useAutomaticRuntimeStore.getState().clearAttempt();
     useConnectionStore.setState({
       status: {
