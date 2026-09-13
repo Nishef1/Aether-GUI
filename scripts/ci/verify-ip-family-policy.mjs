@@ -76,13 +76,18 @@ for (const marker of [
   requireContract(ipToggle.includes(marker), `IP-family UI semantics drifted: ${marker}`);
 }
 
+// Live diagnostics intentionally use compact family names. Strictness is
+// enforced by the runtime route guards and the selector copy above, so the
+// compact panel must preserve the family mapping without weakening it into a
+// "preferred" family.
 const diagnostics = read("src/components/ConnectionDiagnostics.tsx");
 for (const marker of [
-  'return "IPv4 only"',
-  'return "IPv6 only"',
-  'return "Dual-stack"',
+  'case "v4":\n      return "IPv4"',
+  'case "v6":\n      return "IPv6"',
+  'case "both":\n      return "Dual-stack"',
+  "return configuredIpLabel(profile)",
 ]) {
-  requireContract(diagnostics.includes(marker), `diagnostics contradict strict IP-family policy: ${marker}`);
+  requireContract(diagnostics.includes(marker), `diagnostics family label drifted: ${marker}`);
 }
 for (const forbidden of ["IPv4 preferred", "IPv6 preferred"]) {
   requireContract(
