@@ -20,13 +20,22 @@ export function SidecarErrorScreen({ message, onRetry }: Props) {
       </div>
       <div role="alert" className="grid max-w-sm gap-2">
         <h1 className="text-base font-semibold text-foreground">Aether engine failed to start</h1>
-        <p className="break-words rounded-xl bg-black/15 px-3 py-2 font-mono text-xs leading-5 text-muted-foreground ring-1 ring-white/8">
-          {message}
+        <p className="text-sm leading-5 text-muted-foreground">
+          The connection engine did not start correctly. Retry once; if it fails again, restart the
+          app before reconnecting.
         </p>
       </div>
       <Button variant="outline" className="min-h-12 min-w-28 px-4" onClick={onRetry}>
         Retry
       </Button>
+      <details className="w-full max-w-sm rounded-xl bg-black/15 px-3 py-2 text-left ring-1 ring-white/8">
+        <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">
+          Technical details
+        </summary>
+        <p className="mt-2 break-words font-mono text-[11px] leading-5 text-muted-foreground">
+          {message}
+        </p>
+      </details>
     </div>
   );
 }
