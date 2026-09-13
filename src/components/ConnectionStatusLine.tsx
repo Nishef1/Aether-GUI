@@ -109,7 +109,11 @@ function friendlyConnectionError(phase: string, message: string): string {
     return "The device VPN could not be verified. Reset the connection, then try again.";
   }
 
-  if (/access code|cloudflare access|unauthor|forbidden|credential|token|verification/.test(detail)) {
+  if (
+    /access code|cloudflare access|unauthor|forbidden|credential|token|authentication|auth failed/.test(
+      detail,
+    )
+  ) {
     return "Access verification failed. Check your access settings, then try again.";
   }
 
