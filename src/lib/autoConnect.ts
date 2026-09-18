@@ -255,6 +255,13 @@ async function verifyConnectedCandidate(
   }
 
   if (isAndroid) {
+    // Android does its mandatory egress safety check and, in tunnel mode, TUN
+    // liveness before publishing Connected/Tunneling. Turbo must not wait for
+    // the optional capacity sample after that protected state is already ready.
+    if (candidate.profile.scan_mode === "turbo") {
+      return { accepted: true, cancelled: false, reason: "unknown", message: null };
+    }
+
     const deadline = Date.now() + ANDROID_ACCEPTANCE_GRACE_MS;
     while (Date.now() < deadline && attemptIsCurrent(epoch, attemptId)) {
       const connection = useConnectionStore.getState();
@@ -294,6 +301,7 @@ async function verifyConnectedCandidate(
   try {
     report = await invoke<ConnectionAcceptanceReport>("probe_connection_acceptance", {
       socksAddr,
+      measureQuality: candidate.profile.scan_mode !== "turbo",
     });
   } catch (error) {
     return attemptIsCurrent(epoch, attemptId)
