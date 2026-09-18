@@ -26,9 +26,11 @@ requireContract(
   "historical ordering must explicitly distinguish Turbo from quality-ranked modes",
 );
 requireContract(
-  automaticPolicy.includes("qualityConfidence") &&
-    /turbo[\s\S]{0,1200}qualityConfidence/.test(automaticPolicy) === false,
-  "Turbo historical selection must not require quality-confidence evidence",
+  automaticPolicy.includes('if (scanMode === "turbo") return true;') &&
+    automaticPolicy.includes(
+      'scanMode === "turbo" ? (path.lastSuccessAt ?? path.lastSeenAt) : scorePath(path, now)',
+    ),
+  "Turbo history must use reachability/recency instead of quality scoring",
 );
 
 requireContract(
@@ -55,8 +57,9 @@ requireContract(
   "Android Turbo startup must skip the capacity probe",
 );
 requireContract(
-  /startEgressProbeLoop[\s\S]{0,1800}measureCapacity\s*=\s*true/.test(androidService),
-  "Android must still collect capacity after the connection is ready",
+  androidProbe.includes("sampleCapacity") &&
+    /startEgressProbeLoop[\s\S]{0,1800}sampleCapacity/.test(androidService),
+  "Android must still collect capacity asynchronously after the connection is ready",
 );
 
 console.log("Turbo reachability-first contracts verified");
