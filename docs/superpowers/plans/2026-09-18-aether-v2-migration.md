@@ -69,10 +69,10 @@
 - Modify: custom Aether fork as required.
 - Do not change GUI runtime pin yet.
 
-- [ ] Inventory custom commits since the v1.9 baseline.
-- [ ] Classify every patch Adopt / Keep-Port / Rework / Drop.
-- [ ] Establish v2.0.0 canonical base in the fork.
-- [ ] Verify upstream v2 builds before custom patches are reintroduced.
+- [x] Inventory custom commits since the v1.9 baseline.
+- [x] Classify every patch Adopt / Keep-Port / Rework / Drop.
+- [x] Establish v2.0.0 canonical base in the fork.
+- [x] Verify upstream v2 builds before custom patches are reintroduced.
 
 ### Task 4: Port only justified custom-core behavior
 
