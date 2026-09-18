@@ -57,10 +57,10 @@
 - Modify: `src-tauri/plugins/aether-vpn/android/src/main/java/AndroidTransportPolicy.kt`
 - Modify/add focused policy tests/contracts.
 
-- [ ] Define core-owned scan budget contract.
-- [ ] Reduce frontend/native tables to safety margins only.
-- [ ] Preserve bounded cancellation and recovery.
-- [ ] Verify timeout behavior for each scan mode and transport.
+- [x] Define core-owned scan budget contract.
+- [x] Reduce frontend/native tables to safety margins only.
+- [x] Preserve bounded cancellation and recovery.
+- [x] Verify timeout behavior for each scan mode and transport.
 
 ### Task 3: Create the fork patch ledger and v2 pristine baseline
 
