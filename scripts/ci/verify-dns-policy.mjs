@@ -51,7 +51,18 @@ const frontendStore = read("src/state/connectionStore.ts");
 for (const marker of ['scan_mode: "turbo"', "quick_reconnect: true", "masque_http2: true"]) {
   requireContract(frontendStore.includes(marker), `fresh frontend profile lost ${marker}`);
 }
-requireContract(frontendStore.includes("androidStartupBudgetSecs(profile)"), "Android UI watchdog drifted from transport-aware policy");
+requireContract(
+  !frontendStore.includes("androidStartupBudgetSecs"),
+  "frontend must not duplicate Android transport watchdog policy",
+);
+const androidTransportPolicy = read(
+  "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidTransportPolicy.kt",
+);
+requireContract(
+  androidTransportPolicy.includes("coreScanBudgetMs") &&
+    androidTransportPolicy.includes("ESTABLISHMENT_MARGIN_MS"),
+  "Android native watchdog lost its transport-aware core-budget policy",
+);
 
 const desktopDns = read("src-tauri/src/dns_policy.rs");
 for (const marker of [
