@@ -18,7 +18,7 @@
     "verify:runtimes": "node scripts/ci/verify-runtime-manifest.mjs",
     "verify:custom-core": "node scripts/ci/verify-custom-aether-pin.mjs",
     "verify:connection-configs": "node scripts/ci/verify-connection-config-matrix.mjs",
-    "verify:contracts": "node scripts/ci/verify-custom-core-contracts.mjs && npm run verify:connection-configs && node scripts/ci/verify-traffic-accounting.mjs && node scripts/ci/verify-dns-policy.mjs && node scripts/ci/verify-detectability-policy.mjs && node scripts/ci/verify-ui-ux-contracts.mjs && node scripts/ci/verify-ui-polish.mjs && node scripts/ci/verify-disconnect-lifecycle.mjs && node scripts/ci/verify-android-egress-recovery.mjs && node scripts/ci/verify-android-background-policy.mjs && node scripts/ci/verify-selection-state.mjs && node scripts/ci/verify-ip-family-policy.mjs && node scripts/ci/verify-profile-persistence.mjs && npm run verify:turbo-policy",
+    "verify:contracts": "node scripts/ci/verify-custom-core-contracts.mjs && npm run verify:connection-configs && node scripts/ci/verify-traffic-accounting.mjs && node scripts/ci/verify-dns-policy.mjs && node scripts/ci/verify-detectability-policy.mjs && node scripts/ci/verify-ui-ux-contracts.mjs && node scripts/ci/verify-ui-polish.mjs && node scripts/ci/verify-disconnect-lifecycle.mjs && node scripts/ci/verify-android-egress-recovery.mjs && node scripts/ci/verify-android-background-policy.mjs && node scripts/ci/verify-selection-state.mjs && node scripts/ci/verify-ip-family-policy.mjs && node scripts/ci/verify-profile-persistence.mjs && npm run verify:turbo-policy && npm run verify:timeout-policy",
     "verify:release": "npm run verify:version && npm run verify:runtimes && npm run verify:custom-core && npm run verify:contracts && npm run typecheck",
     "dev": "npm run prepare:app-icon && npm run prepare:aether && npm run prepare:sidecars && vite",
     "dev:custom": "npm run dev",
@@ -34,7 +34,8 @@
     "typecheck": "tsc -b --pretty false",
     "preview": "vite preview",
     "tauri": "tauri",
-    "verify:turbo-policy": "node scripts/tests/test_turbo_connect_policy.mjs"
+    "verify:turbo-policy": "node scripts/tests/test_turbo_connect_policy.mjs",
+    "verify:timeout-policy": "node scripts/tests/test_timeout_authority.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
