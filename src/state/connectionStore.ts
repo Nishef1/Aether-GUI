@@ -79,28 +79,6 @@ const DEFAULT_PROFILE: ConnectionProfile = {
   routes_file: "",
 };
 
-function androidStartupBudgetSecs(profile: ConnectionProfile): number {
-  const family = profile.protocol;
-  const transportCost = (masque: number, wireguard: number, gool: number) => {
-    if (family === "gool") return gool;
-    if (family === "wireguard") return wireguard;
-    return masque;
-  };
-
-  switch (profile.scan_mode) {
-    case "turbo":
-      return transportCost(60, 70, 90);
-    case "balanced":
-      return transportCost(120, 135, 165);
-    case "thorough":
-      return transportCost(300, 330, 360);
-    case "stealth":
-      return transportCost(210, 240, 270);
-    case "ironclad":
-      return transportCost(240, 270, 300);
-  }
-}
-
 interface ConnectionState {
   status: ConnectionStatus;
   profile: ConnectionProfile;
@@ -264,7 +242,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         runtimePathAttemptId: null,
         runtimeCapacity: null,
         runtimeCapacityAttemptId: null,
-        scanBudgetSecs: isAndroid ? androidStartupBudgetSecs(profile) : null,
+        scanBudgetSecs: null,
         attemptId,
       };
     });
