@@ -1,9 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import {
-  automaticAttemptBudgetMs,
-  buildAutomaticCandidates,
-  type AutomaticCandidate,
-} from "@/lib/automaticPolicy";
+import { buildAutomaticCandidates, type AutomaticCandidate } from "@/lib/automaticPolicy";
 import { profileForNativeInvoke } from "@/lib/nativeProfile";
 import { isAndroid } from "@/lib/platform";
 import { useAutomaticRuntimeStore } from "@/state/automaticRuntimeStore";
@@ -19,6 +15,10 @@ import type { ConnectionProfile, ConnectionStatus } from "@/types/connection";
 const RECONCILE_MS = 750;
 const STOP_TIMEOUT_MS = 8_000;
 const ANDROID_ACCEPTANCE_GRACE_MS = 5_000;
+// This is deliberately transport-agnostic. Native supervisors own scan
+// deadlines; the frontend only prevents a broken IPC/runtime from hanging the
+// Automatic coordinator forever.
+const AUTOMATIC_COORDINATOR_STALL_GUARD_MS = 10 * 60 * 1000;
 
 let automationEpoch = 0;
 
@@ -224,9 +224,8 @@ async function reconcileStatus(
 async function waitForOutcome(
   epoch: number,
   attemptId: number,
-  budgetMs: number,
 ): Promise<"connected" | "failed" | "cancelled" | "timeout"> {
-  let deadline = Date.now() + budgetMs;
+  let deadline = Date.now() + AUTOMATIC_COORDINATOR_STALL_GUARD_MS;
   while (attemptIsCurrent(epoch, attemptId)) {
     const status = await reconcileStatus(epoch, attemptId);
     if (status == null) return "cancelled";
@@ -234,7 +233,7 @@ async function waitForOutcome(
     if (status.state === "Error") return "failed";
 
     // Interactive Zero Trust input is user-paced and must not burn through the
-    // transport scan budget while the runtime is waiting for a one-time code.
+    // coordinator stall guard while the runtime waits for a one-time code.
     if (status.state === "AwaitingAccessCode") {
       deadline += RECONCILE_MS;
     } else if (Date.now() >= deadline) {
@@ -356,7 +355,6 @@ async function stopCandidateForFallback(epoch: number, attemptId: number): Promi
 
 function prepareAttempt(
   profile: ConnectionProfile,
-  budgetMs: number,
   label: string,
   index: number,
   total: number,
@@ -374,7 +372,9 @@ function prepareAttempt(
       runtimePathAttemptId: null,
       runtimeCapacity: null,
       runtimeCapacityAttemptId: null,
-      scanBudgetSecs: Math.max(1, Math.round(budgetMs / 1000) - 30),
+      // Determinate progress is populated only when the native/core log reports
+      // its real scan budget. The frontend no longer invents one.
+      scanBudgetSecs: null,
       sidecarError: null,
       attemptId,
     };
@@ -446,8 +446,7 @@ export async function connectWithAutomaticPolicy(
       return;
     }
 
-    const budgetMs = automaticAttemptBudgetMs(base);
-    const attemptId = prepareAttempt(base, budgetMs, singleProfileLabel(base), 1, 1);
+    const attemptId = prepareAttempt(base, singleProfileLabel(base), 1, 1);
     const launchError = await invokeCandidate(base);
     if (useConnectionStore.getState().attemptId !== attemptId) return;
     if (launchError != null) publishLaunchError(launchError, "launching");
@@ -478,10 +477,8 @@ export async function connectWithAutomaticPolicy(
   for (let index = 0; index < candidates.length; index += 1) {
     if (epoch !== automationEpoch) return;
     const candidate = candidates[index];
-    const budgetMs = automaticAttemptBudgetMs(candidate.profile);
     const attemptId = prepareAttempt(
       candidate.profile,
-      budgetMs,
       candidate.label,
       index + 1,
       candidates.length,
@@ -499,7 +496,7 @@ export async function connectWithAutomaticPolicy(
         return;
       }
     } else {
-      const outcome = await waitForOutcome(epoch, attemptId, budgetMs);
+      const outcome = await waitForOutcome(epoch, attemptId);
       if (outcome === "connected") {
         const acceptance = await verifyConnectedCandidate(epoch, attemptId, candidate);
         if (acceptance.cancelled) return;
@@ -526,7 +523,7 @@ export async function connectWithAutomaticPolicy(
         lastError =
           status.state === "Error"
             ? status.message
-            : `${candidate.label} did not finish within its bounded scan window`;
+            : `${candidate.label} did not report an outcome before the coordinator safety guard expired`;
         failureReason = classifyAutomaticFailure(lastError, candidate);
       }
     }
