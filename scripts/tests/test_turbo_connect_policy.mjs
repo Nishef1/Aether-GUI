@@ -43,6 +43,10 @@ requireContract(
   "desktop acceptance API must expose an explicit quality-measurement switch",
 );
 requireContract(
+  commands.includes("measure_quality: Option<bool>") && commands.includes("unwrap_or(true)"),
+  "desktop acceptance quality switch must remain backward compatible for callers that omit it",
+);
+requireContract(
   /if\s+measure_quality[\s\S]{0,500}quick_download_kbps/.test(acceptance),
   "desktop throughput probes must be conditional instead of mandatory",
 );
