@@ -42,9 +42,9 @@
 - Produces: Turbo candidate ordering that does not require quality-confidence/latency evidence.
 - Produces: post-connect capacity sampling that does not delay Ready.
 
-- [ ] Add a failing policy regression contract.
-- [ ] Verify the test fails for the current synchronous quality gates.
-- [ ] Implement the minimum policy split.
+- [x] Add a failing policy regression contract.
+- [x] Verify the test fails for the current synchronous quality gates.
+- [x] Implement the minimum policy split.
 - [ ] Verify focused tests/type checks/contracts.
 - [ ] Review for regressions in disconnect/recovery and Android fail-closed behavior.
 
