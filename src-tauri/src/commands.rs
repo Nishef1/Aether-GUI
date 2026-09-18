@@ -152,9 +152,12 @@ pub fn get_runtime_telemetry() -> RuntimeTelemetry {
 #[tauri::command]
 pub fn probe_connection_acceptance(
     socks_addr: String,
-    measure_quality: bool,
+    measure_quality: Option<bool>,
 ) -> ConnectionAcceptanceReport {
-    crate::connection_acceptance::probe_connection_acceptance(&socks_addr, measure_quality)
+    crate::connection_acceptance::probe_connection_acceptance(
+        &socks_addr,
+        measure_quality.unwrap_or(true),
+    )
 }
 
 #[tauri::command]
