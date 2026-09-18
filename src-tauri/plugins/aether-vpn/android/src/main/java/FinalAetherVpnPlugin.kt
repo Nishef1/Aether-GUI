@@ -652,7 +652,10 @@ class FinalAetherVpnService : VpnService() {
                 FinalServiceSnapshot("Verifying", socksAddr = profile.bindAddress),
             )
             updateNotification("Verifying protection", "Checking tunnel egress…")
-            val initialProbe = AndroidEgressProbe.probe(profile.bindAddress)
+            val initialProbe = AndroidEgressProbe.probe(
+                profile.bindAddress,
+                measureCapacity = profile.scanMode != "turbo",
+            )
             ensureActive(token)
             AndroidVpnRuntime.publishProbe(
                 initialProbe.publicIp,
@@ -1243,13 +1246,23 @@ class FinalAetherVpnService : VpnService() {
 
     private fun startEgressProbeLoop(token: Long, bindAddress: String) {
         probeExecutor.execute {
+            // Capacity is quality evidence, not a startup safety gate. Turbo
+            // reaches Tunneling first, then samples throughput here without
+            // delaying user traffic. Other modes normally already claimed this
+            // one-shot sample during initial verification, so this is a no-op.
+            if (sessionGate.isActive(token)) {
+                runCatching { AndroidEgressProbe.sampleCapacity(bindAddress) }
+                    .onFailure { log("Post-connect capacity sample failed: ${it.message}") }
+            }
+
             // runSession already performed the mandatory initial end-to-end
-            // verification. Wait a full interval before the first refresh so
-            // startup does not hit identity/geo providers twice back-to-back.
+            // verification. Wait a full interval before refreshing identity.
             if (!waitForNextEgressProbe(token)) return@execute
 
             while (sessionGate.isActive(token)) {
-                val result = runCatching { AndroidEgressProbe.probe(bindAddress) }
+                val result = runCatching {
+                    AndroidEgressProbe.probe(bindAddress, measureCapacity = false)
+                }
                 if (sessionGate.isActive(token)) {
                     result
                         .onSuccess { probe ->
