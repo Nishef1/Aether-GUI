@@ -33,10 +33,7 @@ pub fn port_is_live(addr: &SocketAddr) -> bool {
 /// WireGuard and WARP-in-WARP share the WireGuard prober; WiW asks that one scan
 /// for distinct hops rather than running a second independent deadline.
 fn core_scan_budget(profile: &ConnectionProfile) -> Duration {
-    let wireguard_family = matches!(
-        &profile.protocol,
-        Protocol::Wireguard | Protocol::Gool
-    );
+    let wireguard_family = matches!(&profile.protocol, Protocol::Wireguard | Protocol::Gool);
 
     match (&profile.scan_mode, wireguard_family) {
         (ScanMode::Turbo, true) => Duration::from_secs(30),
