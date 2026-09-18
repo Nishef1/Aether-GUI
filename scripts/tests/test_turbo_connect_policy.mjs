@@ -1,0 +1,69 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const read = (relative) => readFileSync(path.join(root, relative), "utf8");
+
+function requireContract(condition, message) {
+  if (!condition) throw new Error(`Turbo connect policy contract failed: ${message}`);
+}
+
+const automaticPolicy = read("src/lib/automaticPolicy.ts");
+const autoConnect = read("src/lib/autoConnect.ts");
+const commands = read("src-tauri/src/commands.rs");
+const acceptance = read("src-tauri/src/connection_acceptance.rs");
+const androidProbe = read(
+  "src-tauri/plugins/aether-vpn/android/src/main/java/AndroidEgressProbe.kt",
+);
+const androidService = read(
+  "src-tauri/plugins/aether-vpn/android/src/main/java/FinalAetherVpnPlugin.kt",
+);
+
+requireContract(
+  automaticPolicy.includes('scanMode === "turbo"') ||
+    automaticPolicy.includes('scan_mode === "turbo"'),
+  "historical ordering must explicitly distinguish Turbo from quality-ranked modes",
+);
+requireContract(
+  automaticPolicy.includes('if (scanMode === "turbo") return true;') &&
+    automaticPolicy.includes(
+      'scanMode === "turbo" ? (path.lastSuccessAt ?? path.lastSeenAt) : scorePath(path, now)',
+    ),
+  "Turbo history must use reachability/recency instead of quality scoring",
+);
+
+requireContract(
+  autoConnect.includes('candidate.profile.scan_mode !== "turbo"') &&
+    autoConnect.includes("measureQuality"),
+  "desktop Automatic must tell native acceptance to skip quality measurement in Turbo",
+);
+requireContract(
+  commands.includes("measure_quality") && acceptance.includes("measure_quality"),
+  "desktop acceptance API must expose an explicit quality-measurement switch",
+);
+requireContract(
+  commands.includes("measure_quality: Option<bool>") && commands.includes("unwrap_or(true)"),
+  "desktop acceptance quality switch must remain backward compatible for callers that omit it",
+);
+requireContract(
+  /if\s+measure_quality[\s\S]{0,500}quick_download_kbps/.test(acceptance),
+  "desktop throughput probes must be conditional instead of mandatory",
+);
+
+requireContract(
+  androidProbe.includes("measureCapacity: Boolean"),
+  "Android egress verification must separate mandatory safety from optional capacity sampling",
+);
+requireContract(
+  androidService.includes('profile.scanMode != "turbo"') &&
+    androidService.includes("measureCapacity"),
+  "Android Turbo startup must skip the capacity probe",
+);
+requireContract(
+  androidProbe.includes("sampleCapacity") &&
+    /startEgressProbeLoop[\s\S]{0,1800}sampleCapacity/.test(androidService),
+  "Android must still collect capacity asynchronously after the connection is ready",
+);
+
+console.log("Turbo reachability-first contracts verified");

@@ -20,14 +20,27 @@ function baselineTransport(profile: ConnectionProfile): AutomaticTransport {
   return profile.masque_http2 ? "h2" : "h3";
 }
 
-function eligibleHistoricalTransport(path: ObservedPath, now: number): boolean {
-  return (
+function eligibleHistoricalTransport(
+  path: ObservedPath,
+  now: number,
+  scanMode: ConnectionProfile["scan_mode"],
+): boolean {
+  const reachable =
     path.transport !== "unknown" &&
     path.health === "healthy" &&
     path.successes >= 2 &&
     path.confidence >= 0.25 &&
+    (path.cooldownUntil == null || path.cooldownUntil <= now);
+
+  if (!reachable) return false;
+
+  // Turbo remembers reachability only. Throughput, RTT/jitter-derived score and
+  // quality confidence are post-connect evidence and must never delay or veto
+  // the first usable route.
+  if (scanMode === "turbo") return true;
+
+  return (
     path.uploadLimited !== true &&
-    (path.cooldownUntil == null || path.cooldownUntil <= now) &&
     scorePath(path, now) >= 0.5 &&
     (path.qualityConfidence == null || path.qualityConfidence >= 40)
   );
@@ -36,12 +49,15 @@ function eligibleHistoricalTransport(path: ObservedPath, now: number): boolean {
 function historicalTransportOrder(
   paths: readonly ObservedPath[],
   now = Date.now(),
+  scanMode: ConnectionProfile["scan_mode"] = "balanced",
 ): AutomaticTransport[] {
   const best = new Map<AutomaticTransport, number>();
   for (const path of paths) {
-    if (!eligibleHistoricalTransport(path, now)) continue;
+    if (!eligibleHistoricalTransport(path, now, scanMode)) continue;
     const transport = path.transport as AutomaticTransport;
-    best.set(transport, Math.max(best.get(transport) ?? 0, scorePath(path, now)));
+    const priority =
+      scanMode === "turbo" ? (path.lastSuccessAt ?? path.lastSeenAt) : scorePath(path, now);
+    best.set(transport, Math.max(best.get(transport) ?? 0, priority));
   }
   return [...best.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -62,7 +78,10 @@ function provenHistoricalH2Mask(
   now: number,
 ): Exclude<H2MaskMode, "off"> | null {
   const candidates = paths
-    .filter((path) => path.transport === "h2" && eligibleHistoricalTransport(path, now))
+    .filter(
+      (path) =>
+        path.transport === "h2" && eligibleHistoricalTransport(path, now, "balanced"),
+    )
     .map((path) => ({ path, mask: maskFromPathId(path.id) }))
     .filter(
       (entry): entry is { path: ObservedPath; mask: Exclude<H2MaskMode, "off"> } =>
@@ -181,21 +200,13 @@ function h2MasksForAutomaticAttempt(
   // transports, but it does not silently A/B against a manually selected mask.
   if (selected !== "off") return [{ mask: selected, historical: false }];
 
-  const proven = provenHistoricalH2Mask(paths, now);
-
-  // Turbo is a first-healthy policy. Do not burn another full transport attempt
-  // on a speculative ClientHello mutation before trying a different carrier.
-  // A mask that has already proven itself on this underlay is the only automatic
-  // exception; otherwise compatibility masks stay a manual/Balanced rescue tool.
+  // Turbo is a first-usable policy. Compatibility A/B attempts belong to the
+  // slower modes; an explicit user-selected mask is handled above.
   if (base.scan_mode === "turbo") {
-    if (baseline && proven != null) {
-      return [
-        { mask: "off", historical: false },
-        { mask: proven, historical: true },
-      ];
-    }
-    return [{ mask: proven ?? "off", historical: proven != null }];
+    return [{ mask: "off", historical: false }];
   }
+
+  const proven = provenHistoricalH2Mask(paths, now);
 
   if (baseline) {
     return [
@@ -250,7 +261,7 @@ export function buildAutomaticCandidates(
   // add unavoidable RTT/MTU overhead that can become a website-visible signal;
   // keep WiW as the final reachability fallback unless the user selected it
   // explicitly as the protocol.
-  const history = historicalTransportOrder(paths, now).filter(
+  const history = historicalTransportOrder(paths, now, base.scan_mode).filter(
     (transport) => transport !== baseline && transport !== "gool",
   );
   const fallbacks = DEFAULT_TRANSPORT_ORDER.filter(
@@ -293,51 +304,4 @@ export function buildAutomaticCandidates(
   }
 
   return candidates;
-}
-
-function transportForAttempt(profile: ConnectionProfile): AutomaticTransport {
-  switch (profile.protocol) {
-    case "masque":
-      return profile.masque_http2 ? "h2" : "h3";
-    case "wireguard":
-      return "wg";
-    case "gool":
-      return "gool";
-    case "auto":
-      return baselineTransport(profile);
-  }
-}
-
-function automaticScanBudgetSecs(profile: ConnectionProfile): number {
-  const transport = transportForAttempt(profile);
-
-  switch (profile.scan_mode) {
-    case "turbo":
-      // Fast/Gaming: enough time for a genuine data-plane result, then move on.
-      if (transport === "gool") return 60;
-      if (transport === "wg") return 40;
-      return 30;
-    case "balanced":
-      if (transport === "gool") return 135;
-      if (transport === "wg") return 105;
-      return 90;
-    case "thorough":
-      if (transport === "gool") return 330;
-      if (transport === "wg") return 300;
-      return 270;
-    case "stealth":
-      if (transport === "gool") return 240;
-      if (transport === "wg") return 210;
-      return 180;
-    case "ironclad":
-      if (transport === "gool") return 270;
-      if (transport === "wg") return 240;
-      return 210;
-  }
-}
-
-export function automaticAttemptBudgetMs(profile: ConnectionProfile): number {
-  // Keep a fixed launch/stop grace outside the scan budget so slow process
-  // startup never gets confused with an unhealthy transport.
-  return (automaticScanBudgetSecs(profile) + 30) * 1000;
 }

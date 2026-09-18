@@ -288,13 +288,15 @@ class Aether19ParityTest(unittest.TestCase):
         self.assertIn("const OPTIONS: readonly NoizeProfile[]", source)
         self.assertIn("value={selected}", source)
 
-    def test_desktop_timeout_contract_matches_aether_19_core_budgets(self) -> None:
+    def test_desktop_timeout_contract_mirrors_core_transport_budgets_with_one_margin(self) -> None:
         source = self.read("src-tauri/src/aether/status.rs")
-        self.assertIn("Aether v1.9 keeps the MASQUE scan deadlines", source)
-        for seconds in (45, 120, 300, 180):
+        self.assertIn("Mirror the currently packaged core's own scan ceilings", source)
+        self.assertIn("Protocol::Wireguard | Protocol::Gool", source)
+        self.assertIn("connect_timeout(profile: &ConnectionProfile)", source)
+        for seconds in (30, 45, 80, 120, 150, 180, 250, 300):
             self.assertIn(f"Duration::from_secs({seconds})", source)
         self.assertIn("ESTABLISHMENT_MARGIN", source)
-        self.assertNotIn("Aether v1.5 scan budgets", source)
+        self.assertNotIn("Aether v1.9 keeps the MASQUE scan deadlines", source)
 
     def test_full_device_tunnel_failure_stays_fail_closed_and_actionable(self) -> None:
         engine = self.read("src-tauri/src/engine/mod.rs")

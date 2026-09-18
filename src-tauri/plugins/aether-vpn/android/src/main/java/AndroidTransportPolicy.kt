@@ -35,47 +35,42 @@ internal object AndroidTransportPolicy {
         else -> error("Unknown Android IP family: $value")
     }
 
+    private const val ESTABLISHMENT_MARGIN_MS = 15_000L
+
     /**
-     * Native SOCKS-readiness watchdog matched to the GUI Automatic watchdog.
+     * Mirror the packaged core's scan ceilings, then add one Android service /
+     * process-establishment margin. The core remains the route-selection
+     * authority; this watchdog only catches a stuck child/service boundary.
      *
-     * Turbo is deliberately fail-fast: a carrier that cannot produce a real
-     * SOCKS endpoint inside the bounded window should yield to the next carrier
-     * rather than monopolize the recovery ladder. Deeper modes preserve the
-     * larger windows needed for broad, quiet, or data-plane-heavy scans.
+     * WARP-in-WARP uses the WireGuard prober to request distinct hops in one
+     * bounded scan, so it does not get an invented second scan budget here.
      */
-    fun startupTimeoutMs(protocol: String, scanMode: String): Long {
-        val family = protocol.lowercase()
-        return when (scanMode.lowercase()) {
-            "turbo" -> when (family) {
-                "gool" -> 90_000L
-                "wireguard" -> 70_000L
-                else -> 60_000L
+    private fun coreScanBudgetMs(protocol: String, scanMode: String): Long {
+        val wireGuardFamily = when (protocol.lowercase()) {
+            "wireguard", "gool" -> true
+            else -> false
+        }
+        return if (wireGuardFamily) {
+            when (scanMode.lowercase()) {
+                "turbo" -> 30_000L
+                "balanced" -> 80_000L
+                "thorough" -> 250_000L
+                "stealth" -> 150_000L
+                "ironclad" -> 180_000L
+                else -> 80_000L
             }
-            "balanced" -> when (family) {
-                "gool" -> 165_000L
-                "wireguard" -> 135_000L
-                else -> 120_000L
-            }
-            "thorough" -> when (family) {
-                "gool" -> 360_000L
-                "wireguard" -> 330_000L
-                else -> 300_000L
-            }
-            "stealth" -> when (family) {
-                "gool" -> 270_000L
-                "wireguard" -> 240_000L
-                else -> 210_000L
-            }
-            "ironclad" -> when (family) {
-                "gool" -> 300_000L
-                "wireguard" -> 270_000L
-                else -> 240_000L
-            }
-            else -> when (family) {
-                "gool" -> 165_000L
-                "wireguard" -> 135_000L
+        } else {
+            when (scanMode.lowercase()) {
+                "turbo" -> 45_000L
+                "balanced" -> 120_000L
+                "thorough" -> 300_000L
+                "stealth" -> 180_000L
+                "ironclad" -> 180_000L
                 else -> 120_000L
             }
         }
     }
+
+    fun startupTimeoutMs(protocol: String, scanMode: String): Long =
+        coreScanBudgetMs(protocol, scanMode) + ESTABLISHMENT_MARGIN_MS
 }

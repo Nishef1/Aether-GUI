@@ -324,7 +324,10 @@ pub fn capture_underlay_baseline(network_key: Option<&str>) {
 pub fn capture_underlay_baseline(_network_key: Option<&str>) {}
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub fn probe_connection_acceptance(socks_addr: &str) -> ConnectionAcceptanceReport {
+pub fn probe_connection_acceptance(
+    socks_addr: &str,
+    measure_quality: bool,
+) -> ConnectionAcceptanceReport {
     let (public_ipv4, public_ipv6) = std::thread::scope(|scope| {
         let ipv4 = scope.spawn(|| proxy_public_ip(socks_addr, "https://api4.ipify.org/", false));
         let ipv6 = scope.spawn(|| proxy_public_ip(socks_addr, "https://api6.ipify.org/", true));
@@ -333,8 +336,13 @@ pub fn probe_connection_acceptance(socks_addr: &str) -> ConnectionAcceptanceRepo
 
     let baseline = underlay_state().lock().ok().and_then(|state| state.clone());
 
-    let download_kbps = quick_download_kbps(socks_addr);
-    let upload_kbps = download_kbps.and_then(|_| quick_upload_kbps(socks_addr));
+    let (download_kbps, upload_kbps) = if measure_quality {
+        let download_kbps = quick_download_kbps(socks_addr);
+        let upload_kbps = download_kbps.and_then(|_| quick_upload_kbps(socks_addr));
+        (download_kbps, upload_kbps)
+    } else {
+        (None, None)
+    };
 
     assess(
         baseline.as_ref(),
@@ -346,7 +354,10 @@ pub fn probe_connection_acceptance(socks_addr: &str) -> ConnectionAcceptanceRepo
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
-pub fn probe_connection_acceptance(_socks_addr: &str) -> ConnectionAcceptanceReport {
+pub fn probe_connection_acceptance(
+    _socks_addr: &str,
+    _measure_quality: bool,
+) -> ConnectionAcceptanceReport {
     ConnectionAcceptanceReport {
         reason: Some("desktop acceptance probe is not used on mobile".to_string()),
         ..ConnectionAcceptanceReport::default()

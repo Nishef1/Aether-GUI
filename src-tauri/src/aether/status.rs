@@ -1,4 +1,4 @@
-use super::profiles::ScanMode;
+use super::profiles::{ConnectionProfile, Protocol, ScanMode};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
@@ -25,24 +25,32 @@ pub fn port_is_live(addr: &SocketAddr) -> bool {
     TcpStream::connect_timeout(&probe_addr(addr), Duration::from_millis(300)).is_ok()
 }
 
-/// Aether v1.9 keeps the MASQUE scan deadlines at 45/120/300/180/180 seconds.
-/// WireGuard's own first-pass deadlines are no larger, and gool requests both
-/// missing hops from one WireGuard scan before its reconnect loop. The desktop
-/// supervisor therefore adds only a small fixed establishment margin instead
-/// of pretending Android's more conservative service-start timeouts are core
-/// scan budgets.
-fn core_scan_budget(scan_mode: &ScanMode) -> Duration {
-    match scan_mode {
-        ScanMode::Turbo => Duration::from_secs(45),
-        ScanMode::Balanced => Duration::from_secs(120),
-        ScanMode::Thorough => Duration::from_secs(300),
-        ScanMode::Stealth => Duration::from_secs(180),
-        ScanMode::Ironclad => Duration::from_secs(180),
+/// Mirror the currently packaged core's own scan ceilings. These are not a
+/// second selection policy: the core still decides when a scan succeeds or
+/// fails. The native wrapper only adds a fixed establishment margin so a stuck
+/// child process cannot hold the GUI forever.
+///
+/// WireGuard and WARP-in-WARP share the WireGuard prober; WiW asks that one scan
+/// for distinct hops rather than running a second independent deadline.
+fn core_scan_budget(profile: &ConnectionProfile) -> Duration {
+    let wireguard_family = matches!(&profile.protocol, Protocol::Wireguard | Protocol::Gool);
+
+    match (&profile.scan_mode, wireguard_family) {
+        (ScanMode::Turbo, true) => Duration::from_secs(30),
+        (ScanMode::Balanced, true) => Duration::from_secs(80),
+        (ScanMode::Thorough, true) => Duration::from_secs(250),
+        (ScanMode::Stealth, true) => Duration::from_secs(150),
+        (ScanMode::Ironclad, true) => Duration::from_secs(180),
+        (ScanMode::Turbo, false) => Duration::from_secs(45),
+        (ScanMode::Balanced, false) => Duration::from_secs(120),
+        (ScanMode::Thorough, false) => Duration::from_secs(300),
+        (ScanMode::Stealth, false) => Duration::from_secs(180),
+        (ScanMode::Ironclad, false) => Duration::from_secs(180),
     }
 }
 
-pub fn connect_timeout(scan_mode: &ScanMode) -> Duration {
-    core_scan_budget(scan_mode) + ESTABLISHMENT_MARGIN
+pub fn connect_timeout(profile: &ConnectionProfile) -> Duration {
+    core_scan_budget(profile) + ESTABLISHMENT_MARGIN
 }
 
 /// How long to wait after sending Ctrl-C before force-killing. Aether does not
@@ -128,18 +136,31 @@ mod tests {
     }
 
     #[test]
-    fn aether_19_masque_budgets_match_upstream_and_keep_small_gui_margin() {
-        let budgets = [
-            (ScanMode::Turbo, 45),
-            (ScanMode::Balanced, 120),
-            (ScanMode::Thorough, 300),
-            (ScanMode::Stealth, 180),
-            (ScanMode::Ironclad, 180),
+    fn supervisor_mirrors_core_scan_budgets_and_adds_one_margin() {
+        let cases = [
+            (Protocol::Masque, ScanMode::Turbo, 45),
+            (Protocol::Masque, ScanMode::Balanced, 120),
+            (Protocol::Masque, ScanMode::Thorough, 300),
+            (Protocol::Masque, ScanMode::Stealth, 180),
+            (Protocol::Masque, ScanMode::Ironclad, 180),
+            (Protocol::Wireguard, ScanMode::Turbo, 30),
+            (Protocol::Wireguard, ScanMode::Balanced, 80),
+            (Protocol::Wireguard, ScanMode::Thorough, 250),
+            (Protocol::Wireguard, ScanMode::Stealth, 150),
+            (Protocol::Wireguard, ScanMode::Ironclad, 180),
+            (Protocol::Gool, ScanMode::Turbo, 30),
+            (Protocol::Gool, ScanMode::Balanced, 80),
         ];
-        for (mode, budget) in budgets {
-            assert_eq!(core_scan_budget(&mode), Duration::from_secs(budget));
+
+        for (protocol, scan_mode, budget) in cases {
+            let profile = ConnectionProfile {
+                protocol,
+                scan_mode,
+                ..Default::default()
+            };
+            assert_eq!(core_scan_budget(&profile), Duration::from_secs(budget));
             assert_eq!(
-                connect_timeout(&mode),
+                connect_timeout(&profile),
                 Duration::from_secs(budget) + ESTABLISHMENT_MARGIN
             );
         }

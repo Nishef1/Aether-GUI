@@ -117,8 +117,11 @@ internal object AndroidEgressProbe {
         useDomainAddress = true,
     )
 
-    fun probe(bindAddress: String): EgressProbeResult = try {
-        probeInner(bindAddress)
+    fun probe(
+        bindAddress: String,
+        measureCapacity: Boolean = true,
+    ): EgressProbeResult = try {
+        probeInner(bindAddress, measureCapacity)
     } catch (error: Throwable) {
         // Only the final end-to-end outcome reaches this boundary. Individual
         // provider fallbacks and a recovered Core listener recycle are invisible
@@ -127,7 +130,7 @@ internal object AndroidEgressProbe {
         throw error
     }
 
-    private fun probeInner(bindAddress: String): EgressProbeResult {
+    private fun probeInner(bindAddress: String, measureCapacity: Boolean): EgressProbeResult {
         val underlayIps = AndroidEgressIdentityGuard.underlayPublicIps()
         val (proxyHost, proxyPort) = splitHostPort(bindAddress)
         val failures = mutableListOf<String>()
@@ -158,7 +161,9 @@ internal object AndroidEgressProbe {
                         }.getOrNull()
                         probe.copy(countryCode = geo?.countryCode)
                     }
-                    maybeProbeCapacity(proxyHost, proxyPort)
+                    if (measureCapacity) {
+                        maybeProbeCapacity(proxyHost, proxyPort)
+                    }
                     return finalProbe
                 }
 
@@ -267,6 +272,11 @@ internal object AndroidEgressProbe {
             }
         }
         return localProxyListening(proxyHost, proxyPort)
+    }
+
+    fun sampleCapacity(bindAddress: String) {
+        val (proxyHost, proxyPort) = splitHostPort(bindAddress)
+        maybeProbeCapacity(proxyHost, proxyPort)
     }
 
     private fun maybeProbeCapacity(proxyHost: String, proxyPort: Int) {

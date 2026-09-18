@@ -307,7 +307,7 @@ fn monitor_connect(
     profile: ConnectionProfile,
     generation: u64,
 ) {
-    let deadline = Instant::now() + status::connect_timeout(&profile.scan_mode);
+    let deadline = Instant::now() + status::connect_timeout(&profile);
     let socks = status::parse_bind_address(&profile.bind_address);
     let mut announced_connecting = false;
 
