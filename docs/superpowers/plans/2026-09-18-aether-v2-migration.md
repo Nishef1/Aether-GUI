@@ -45,8 +45,8 @@
 - [x] Add a failing policy regression contract.
 - [x] Verify the test fails for the current synchronous quality gates.
 - [x] Implement the minimum policy split.
-- [ ] Verify focused tests/type checks/contracts.
-- [ ] Review for regressions in disconnect/recovery and Android fail-closed behavior.
+- [x] Verify focused tests/type checks/contracts.
+- [x] Review for regressions in disconnect/recovery and Android fail-closed behavior.
 
 ### Task 2: Remove duplicate timeout authority
 
